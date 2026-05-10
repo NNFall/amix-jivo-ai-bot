@@ -106,3 +106,39 @@
 - Текущее состояние после commit:
   - первый этап каркаса зафиксирован в git;
   - следующий рабочий блок: уточнение реальных Jivo payload и XML-структуры AMIX.
+
+## 2026-05-10 21:20-21:27 +05:00 - Итерация 4
+
+- Повторно сверена официальная Jivo Bot API-документация по актуальным страницам:
+  - https://www.jivochat.com/docs/bot/
+  - https://www.jivochat.com/help/api/bot-api.html
+- Дополнительно зафиксировано по документации:
+  - входящий `CLIENT_MESSAGE` в публичных примерах несёт поля `site_id`, `channel`, `sender.url`, `sender.has_contacts`;
+  - `AGENT_JOINED` явно присутствует в help-документации и должен останавливать дальнейшие сообщения бота;
+  - бот-провайдер должен безопасно переживать события без текстового `message.text`, включая служебные и lifecycle events.
+- Усилены схемы Jivo:
+  - добавлены `JivoButton`, `JivoChannel`;
+  - расширены `JivoSender` и `JivoMessage`;
+  - `JivoIncomingEvent` теперь принимает дополнительные поля из официальных примеров.
+- Усилен runtime message processing:
+  - разделены terminal statuses чата: `agent_joined` и `closed`;
+  - добавлена защита от отправки ответа в чат со статусом `agent_joined` или `closed`.
+- Добавлены интеграционные тесты webhook через `fastapi.testclient`:
+  - invalid token;
+  - идемпотентность и дедупликация одного `CLIENT_MESSAGE`;
+  - сценарий product lookup по артикулу;
+  - сценарий handoff на менеджера;
+  - сценарий `AGENT_JOINED` с корректным terminal status.
+- Добавлен `tests/conftest.py` для изолированного SQLite-файла на каждый тест и подмены runtime settings/database engine.
+- Запущенные команды:
+  - `python -m pytest`
+  - `python -c "from main import app; print(app.title)"`
+  - `git status --short`
+  - `git diff --stat`
+- Результаты проверок:
+  - все тесты прошли: `13 passed`;
+  - импорт приложения успешен;
+  - приложение по-прежнему поднимается с title `amix-jivo`.
+- Состояние этапа:
+  - второй рабочий блок по Jivo webhook/idempotency/tests завершён;
+  - следующий блок: усиление XML importer под реальный production-like импорт.

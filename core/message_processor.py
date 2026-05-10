@@ -3,6 +3,7 @@ import logging
 from database.db import session_scope
 from database.repositories import (
     append_message,
+    get_chat_by_external_id,
     get_or_create_chat,
     get_or_create_customer,
     get_product_by_article,
@@ -15,7 +16,7 @@ from database.repositories import (
     mark_event_processed,
 )
 from jivo.client import JivoClient
-from jivo.events import JivoEventType, should_stop_bot_after_event
+from jivo.events import JivoEventType, get_terminal_chat_status, should_stop_bot_after_event
 from jivo.schemas import JivoIncomingEvent
 from llm.openai_client import OpenAIService
 from notifications.telegram import TelegramNotifier
@@ -89,7 +90,8 @@ class MessageProcessor:
         chat = get_or_create_chat(session, event.chat_id, customer.id)
 
         if should_stop_bot_after_event(event.event):
-            mark_chat_status(session, chat.external_chat_id, "closed")
+            terminal_status = get_terminal_chat_status(event.event) or "closed"
+            mark_chat_status(session, chat.external_chat_id, terminal_status)
             return
 
         if event.event == JivoEventType.AGENT_UNAVAILABLE:
@@ -150,6 +152,11 @@ class MessageProcessor:
 
     def _send_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
         if should_stop_bot_after_event(event.event):
+            return
+
+        chat = get_chat_by_external_id(session, event.chat_id)
+        if chat is not None and chat.status in {"agent_joined", "closed"}:
+            logger.info("Skipping bot reply for chat %s because status is %s", event.chat_id, chat.status)
             return
 
         self.jivo_client.send_text_message(event=event, text=text)

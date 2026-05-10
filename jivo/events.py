@@ -10,11 +10,15 @@ class JivoEventType(StrEnum):
     CHAT_CLOSED = "CHAT_CLOSED"
 
 
-TERMINAL_EVENTS = {
-    JivoEventType.AGENT_JOINED,
-    JivoEventType.CHAT_CLOSED,
+TERMINAL_EVENT_STATUSES = {
+    JivoEventType.AGENT_JOINED: "agent_joined",
+    JivoEventType.CHAT_CLOSED: "closed",
 }
 
 
 def should_stop_bot_after_event(event_name: str) -> bool:
-    return event_name in TERMINAL_EVENTS
+    return event_name in TERMINAL_EVENT_STATUSES
+
+
+def get_terminal_chat_status(event_name: str) -> str | None:
+    return TERMINAL_EVENT_STATUSES.get(event_name)

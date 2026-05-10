@@ -72,6 +72,10 @@ def get_or_create_chat(session, external_chat_id: str, customer_id: int) -> Chat
     return entity
 
 
+def get_chat_by_external_id(session, external_chat_id: str) -> Chat | None:
+    return session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
+
+
 def mark_chat_status(session, external_chat_id: str, status: str) -> None:
     entity = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
     if entity is None:
