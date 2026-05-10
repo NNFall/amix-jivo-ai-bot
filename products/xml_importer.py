@@ -22,9 +22,13 @@ FIELD_ALIASES = {
 
 @dataclass(slots=True)
 class XmlImportResult:
+    status: str = "completed"
     processed: int = 0
     created: int = 0
     updated: int = 0
+    skipped: int = 0
+    errors: int = 0
+    error_text: str | None = None
 
 
 def _normalize_tag(tag: str) -> str:
@@ -48,47 +52,79 @@ def _to_decimal(value: str | None) -> Decimal | None:
 class ProductXmlImporter:
     def import_file(self, xml_path: str | Path) -> XmlImportResult:
         source_path = Path(xml_path)
-        result = XmlImportResult()
+        result = XmlImportResult(status="completed")
+
+        if not source_path.exists():
+            raise FileNotFoundError(f"XML file was not found: {source_path}")
+        if not source_path.is_file():
+            raise ValueError(f"XML path is not a file: {source_path}")
 
         with session_scope() as session:
             import_row = create_product_import(session, source_path.name, str(source_path))
-
-            tree = ElementTree.parse(source_path)
-            root = tree.getroot()
-
-            for record in self._iter_candidate_records(root):
-                article = self._pick(record, "article")
-                code = self._pick(record, "code")
-                normalized_article = normalize_article(article) if article else ""
-                if not code and not normalized_article:
-                    continue
-
-                _, created = upsert_product(
+            try:
+                tree = ElementTree.parse(source_path)
+                root = tree.getroot()
+            except ElementTree.ParseError as exc:
+                result.status = "failed"
+                result.errors += 1
+                result.error_text = f"XML parse error: {exc}"
+                finish_product_import(
                     session,
-                    code=code,
-                    article=article or normalized_article,
-                    normalized_article=normalized_article,
-                    corporate_price=_to_decimal(self._pick(record, "corporate_price")),
-                    retail_price=_to_decimal(self._pick(record, "retail_price")),
-                    unit=self._pick(record, "unit"),
-                    weight=_to_decimal(self._pick(record, "weight")),
-                    volume=_to_decimal(self._pick(record, "volume")),
-                    free_stock=_to_decimal(self._pick(record, "free_stock")),
-                    raw_payload=record,
+                    import_row,
+                    status=result.status,
+                    imported_count=result.created,
+                    updated_count=result.updated,
+                    error_count=result.errors,
+                    error_text=result.error_text,
                 )
-                result.processed += 1
-                if created:
-                    result.created += 1
-                else:
-                    result.updated += 1
+                return result
+
+            try:
+                for record in self._iter_candidate_records(root):
+                    try:
+                        article = self._pick(record, "article")
+                        code = self._pick(record, "code")
+                        normalized_article = normalize_article(article) if article else ""
+
+                        if not code and not normalized_article:
+                            result.skipped += 1
+                            continue
+
+                        _, created = upsert_product(
+                            session,
+                            code=code,
+                            article=article or normalized_article,
+                            normalized_article=normalized_article,
+                            corporate_price=_to_decimal(self._pick(record, "corporate_price")),
+                            retail_price=_to_decimal(self._pick(record, "retail_price")),
+                            unit=self._pick(record, "unit"),
+                            weight=_to_decimal(self._pick(record, "weight")),
+                            volume=_to_decimal(self._pick(record, "volume")),
+                            free_stock=_to_decimal(self._pick(record, "free_stock")),
+                            raw_payload=record,
+                        )
+                    except Exception:
+                        result.errors += 1
+                        continue
+
+                    result.processed += 1
+                    if created:
+                        result.created += 1
+                    else:
+                        result.updated += 1
+            except Exception as exc:
+                result.status = "failed"
+                result.errors += 1
+                result.error_text = f"Import loop failed: {exc}"
 
             finish_product_import(
                 session,
                 import_row,
-                status="completed",
+                status=result.status,
                 imported_count=result.created,
                 updated_count=result.updated,
-                error_count=0,
+                error_count=result.errors,
+                error_text=result.error_text,
             )
 
         return result

@@ -142,3 +142,29 @@
 - Состояние этапа:
   - второй рабочий блок по Jivo webhook/idempotency/tests завершён;
   - следующий блок: усиление XML importer под реальный production-like импорт.
+
+## 2026-05-11 00:05-00:12 +05:00 - Итерация 5
+
+- Усилен блок XML-импорта в `products/xml_importer.py`:
+  - результат импорта расширен полями `status`, `skipped`, `errors`, `error_text`;
+  - добавлены проверки входного пути (`missing file`, `not a file`);
+  - добавлена fail-safe обработка `ElementTree.ParseError` с фиксацией `failed`-статуса в `product_imports`;
+  - добавлена защита по записям: если отдельная запись некорректна, увеличивается `errors`, но импорт продолжается.
+- Обновлён CLI-скрипт `scripts/import_xml.py`:
+  - добавлен bootstrap `sys.path` для корректного запуска как файла `python scripts/import_xml.py ...`;
+  - расширен вывод статистики импорта (`status`, `skipped`, `errors`, `error_text`);
+  - при ошибке пути или `failed`-импорте возвращается `exit code 1`.
+- Добавлены тесты `tests/test_xml_importer.py`:
+  - успешный импорт + повторный импорт с обновлением существующей позиции;
+  - parse-error сценарий с фиксацией failed-импорта в БД;
+  - сценарий skipped-записи при ненормализуемом артикуле.
+- Выполненные команды:
+  - `python -m pytest`
+  - `python scripts\import_xml.py --path data\incoming_xml\missing.xml`
+- Результаты:
+  - все тесты прошли: `16 passed`;
+  - CLI корректно отрабатывает ошибочный путь и печатает понятное сообщение;
+  - трассировки `ModuleNotFoundError` при запуске `scripts/import_xml.py` больше нет.
+- Состояние этапа:
+  - третий рабочий блок (XML importer hardening) завершён;
+  - следующий блок: усиление OpenAI routing и guardrails для handoff-решений.
