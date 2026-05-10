@@ -1,0 +1,12 @@
+services:
+  amix-jivo:
+    build:
+      context: .
+    container_name: amix-jivo
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      - ./data:/service/data

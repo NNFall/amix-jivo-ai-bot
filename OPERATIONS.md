@@ -1,0 +1,93 @@
+# OPERATIONS
+
+## 2026-05-10 21:14:46 +05:00 - Итерация 1
+
+- Изучен `AGENTS.md` как главный контекст проекта.
+- Подтверждена цель проекта: собрать production-oriented MVP сервиса `amix-jivo-ai-bot` для первой линии в Jivo.
+- Зафиксированы ключевые ограничения:
+  - быстрый HTTP-ответ webhook;
+  - фоновая обработка;
+  - SQLite для истории;
+  - XML как источник фактов о товарах;
+  - OpenAI только как диалоговый слой;
+  - handoff сложных кейсов через `INVITE_AGENT`.
+- Проверена актуальная документация Jivo Bot API:
+  - https://www.jivochat.com/docs/bot/
+  - https://www.jivo.ru/help/api/bot-api.html
+- Из документации Jivo зафиксированы критичные правила:
+  - входящий webhook должен отвечать не дольше 3 секунд;
+  - Jivo повторяет запрос до 2 раз при проблемах доставки;
+  - для исходящих действий бота используются события `BOT_MESSAGE` и `INVITE_AGENT`;
+  - для MVP критичны входящие события `CLIENT_MESSAGE`, `AGENT_UNAVAILABLE`, `CHAT_CLOSED`;
+  - событие `AGENT_JOINED` в текущей публичной Bot API-документации явно не раскрыто, поэтому каркас должен безопасно переживать неизвестные события и прекращать активность при закрытии чата.
+- Созданы каталоги каркаса проекта:
+  - `api/`
+  - `core/`
+  - `jivo/`
+  - `llm/`
+  - `products/`
+  - `database/`
+  - `notifications/`
+  - `scripts/`
+  - `data/`
+  - `tests/`
+- Запущенные команды:
+  - `Get-ChildItem -Force`
+  - `Get-Content AGENTS.md`
+  - `python -c ... Path('AGENTS.md').read_text(...)`
+  - `Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"`
+  - создание каталогов через `New-Item -ItemType Directory -Force`
+- Текущее действие: формирование первичного MVP-каркаса, конфигурации и служебных файлов.
+
+## 2026-05-10 21:15-21:18 +05:00 - Итерация 2
+
+- Создан первичный каркас проекта без папки `app`.
+- Добавлены root-файлы:
+  - `README.md`
+  - `PLAN.md`
+  - `OPERATIONS.md`
+  - `.env.example`
+  - `.gitignore`
+  - `requirements.txt`
+  - `Dockerfile`
+  - `docker-compose.yml`
+  - `settings.py`
+  - `main.py`
+- Добавлены рабочие каталоги и модули:
+  - `api/`
+  - `core/`
+  - `jivo/`
+  - `llm/`
+  - `products/`
+  - `database/`
+  - `notifications/`
+  - `scripts/`
+  - `tests/`
+- Реализована базовая логика:
+  - FastAPI приложение с lifespan-инициализацией базы;
+  - `GET /health` и `GET /ready`;
+  - `POST /webhooks/jivo/{bot_token}` с валидацией токена;
+  - быстрый ACK webhook и вынос обработки в `BackgroundTasks`;
+  - SQLite-модели для событий, чатов, сообщений, товаров, импортов, handoff и ошибок;
+  - репозитории для идемпотентной регистрации Jivo event и работы с историей;
+  - базовый `JivoClient` для `BOT_MESSAGE` и `INVITE_AGENT`;
+  - базовый `OpenAIService`;
+  - базовый XML importer и поиск товара по нормализованному артикулу;
+  - эвристики handoff для сложных кейсов.
+- Добавлены тесты:
+  - `tests/test_article_utils.py`
+  - `tests/test_product_search.py`
+  - `tests/test_jivo_events.py`
+- Запущенные команды:
+  - `python -m pip install -r requirements.txt`
+  - `python -m pytest`
+  - `python -c "from main import app; print(app.title)"`
+- Результаты проверок:
+  - все тесты прошли: `8 passed`;
+  - импорт приложения успешен;
+  - заголовок приложения: `amix-jivo`.
+- Исправлена техническая мелочь:
+  - заменён `datetime.utcnow()` на timezone-aware `datetime.now(UTC)`, чтобы убрать deprecation warnings в Python 3.13.
+- Состояние этапа:
+  - первый значимый этап "MVP-каркас проекта" завершён;
+  - следующий шаг: инициализация git и первый commit каркаса.
