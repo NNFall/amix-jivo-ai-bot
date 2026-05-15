@@ -266,3 +266,25 @@
 - Выявлен серверный follow-up:
   - текущий код в `/root/amix` на VPS ещё не содержит локальный commit с новой KIE-интеграцией;
   - после push нужен `git pull` на сервере и повторная серверная проверка LLM-вызова.
+
+## 2026-05-16 - Итерация 9
+
+- KIE-интеграция зафиксирована в Git:
+  - commit: `a832fa5`
+  - message: `Integrate KIE GPT-5.2 provider`
+  - push: `origin/master`
+- VPS синхронизирован с последним commit:
+  - `/root/amix` обновлен через `git pull --ff-only`
+  - актуальный commit на сервере: `a832fa5`
+- На VPS выполнены проверки KIE-интеграции:
+  - `cd /root/amix && .venv/bin/python -m pytest tests/test_llm_client.py` -> `1 passed`
+  - живой вызов через серверный `OpenAIService` при `LLM_PROVIDER=kie` отработал успешно
+- Итоговое состояние по KIE:
+  - документация изучена;
+  - клиент в коде поддерживает KIE;
+  - локальный live test успешен;
+  - raw HTTP test успешен;
+  - server-side live test успешен.
+- Текущее состояние:
+  - KIE провайдер полностью подключен и проверен end-to-end;
+  - главный незакрытый блок для заказческого демо — Telegram token + реальный XML AMIX + запуск самого demo service.
