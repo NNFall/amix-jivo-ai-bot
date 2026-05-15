@@ -334,3 +334,49 @@
 - Следующий шаг:
   - зафиксировать локальные изменения в GitHub;
   - затем синхронизировать VPS, импортировать XML и запустить Telegram demo service.
+
+## 2026-05-16 - Итерация 11
+
+- Локальный блок по реальному XML и guardrails зафиксирован в Git:
+  - commit: `c50b719`
+  - message: `Refine AMIX XML import and assistant guardrails`
+  - push: `origin/master`
+- Выполнена серверная синхронизация `/root/amix`:
+  - `git pull --ff-only`
+  - актуальный commit на VPS: `c50b719`
+- Telegram bot token проверен через `getMe`:
+  - token валиден;
+  - bot username: `testdemoNN_bot`
+  - Telegram API вернул `ok=true`.
+- На VPS обновлён `/root/amix/.env`:
+  - записан рабочий `TELEGRAM_BOT_TOKEN`;
+  - подтверждён `LLM_PROVIDER=kie`;
+  - секреты остались только в серверном `.env`, без попадания в Git.
+- Реальный XML AMIX загружен на VPS:
+  - локальный источник: `data/incoming_xml/prices.xml`
+  - серверный путь: `/root/amix/data/incoming_xml/prices.xml`
+- На VPS выполнен импорт XML:
+  - команда: `cd /root/amix && .venv/bin/python scripts/import_xml.py --path data/incoming_xml/prices.xml`
+  - результат: `status=completed processed=6904 created=5440 updated=1464 skipped=0 errors=0`
+- На VPS включён и запущен Telegram demo service:
+  - `systemctl daemon-reload`
+  - `systemctl enable amix-telegram-demo.service`
+  - `systemctl restart amix-telegram-demo.service`
+  - проверка `systemctl show` дала:
+    - `ActiveState=active`
+    - `SubState=running`
+    - `UnitFileState=enabled`
+- Проверка серверной базы после импорта:
+  - `total=5440`
+  - `retail=5353`
+- Проверка логов сервиса:
+  - `journalctl -u amix-telegram-demo.service -n 20 -o cat --no-pager`
+  - зафиксирован успешный старт: `Started amix-telegram-demo.service - AMIX Telegram Demo Bot.`
+- Дополнительное замечание по инструментарию:
+  - первичный серверный скрипт успешно выполнил импорт и запуск сервиса, но локально упал на выводе `systemctl status` из-за символа `●` и кодировки `cp1251`;
+  - проблема была только в отображении вывода на Windows-консоли, не в самом серверном деплое;
+  - статус был повторно считан через `systemctl show` и подтверждён как `active/running`.
+- Текущее состояние:
+  - Telegram demo поднят на VPS и готов к тестовому прогону;
+  - реальные товары AMIX уже в серверной SQLite;
+  - следующий рабочий блок — живой прогон через Telegram и затем возврат к боевой Jivo-интеграции.

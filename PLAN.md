@@ -2,7 +2,7 @@
 
 ## Текущий статус
 
-LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, локальные и серверные live-тесты API прошли. Реальный XML AMIX `prices.xml` уже скопирован в проект, импорт на локальной SQLite проверен, алиасы цен под фактические теги исправлены. Следующий шаг — синхронизировать эти доработки на VPS, импортировать XML и поднять Telegram demo service.
+LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, реальный XML AMIX `prices.xml` уже импортирован локально и на VPS, а Telegram demo service запущен на сервере и использует ту же SQLite-базу с `5440` товарами. Ближайший рабочий фокус теперь смещается с инфраструктуры на демонстрационный прогон и последующую Jivo-интеграцию с реальными payload.
 
 ## Этапы MVP
 
@@ -28,7 +28,7 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
    Статус: completed.
    Состав: `INVITE_AGENT`, обработка `AGENT_UNAVAILABLE`, опциональные Telegram-уведомления.
 7. Локальная проверка, тесты и подготовка к VPS.
-   Статус: in progress.
+   Статус: completed.
    Состав: pytest, скрипты симуляции, Docker, README, финальная сверка `.env` и `.gitignore`.
 8. Telegram demo для предпросмотра заказчиком.
    Статус: completed.
@@ -106,16 +106,29 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - на импорт реальных русских тегов цен;
   - на нормализацию артикулов с кириллическими суффиксами.
 - Выполнена повторная проверка: `python -m pytest` -> `24 passed`.
+- Локальный блок автоматически зафиксирован в GitHub:
+  - commit: `c50b719`
+  - message: `Refine AMIX XML import and assistant guardrails`
+- VPS синхронизирован с commit `c50b719`.
+- На VPS выполнено:
+  - `git pull --ff-only` в `/root/amix`;
+  - загрузка `prices.xml` в `/root/amix/data/incoming_xml/prices.xml`;
+  - обновление серверного `.env` с рабочим `TELEGRAM_BOT_TOKEN`;
+  - импорт `prices.xml` в серверную SQLite;
+  - включение и запуск `amix-telegram-demo.service`.
+- Состояние Telegram demo на VPS:
+  - systemd unit `amix-telegram-demo.service` — `enabled`;
+  - сервис — `active/running`;
+  - серверная база содержит `5440` товаров и `5353` розничных цен.
+- Валидность Telegram bot token подтверждена через `getMe`; bot username: `testdemoNN_bot`.
 
 ## Что осталось сделать
 
 - Уточнить реальные payload-структуры Jivo на стенде и скорректировать схемы/обработчик.
 - Проверить реальные исходящие вызовы `BOT_MESSAGE` и `INVITE_AGENT` против рабочего endpoint Jivo.
 - Довести OpenAI routing: отделить intent detection от генерации ответа и добавить явные guardrails для сложных консультаций.
-- Задеплоить Telegram demo на VPS, поднять venv/systemd и проверить живой polling.
-- Заполнить `/root/amix/.env` рабочими значениями и импортировать реальный XML в SQLite.
-- Запустить и проверить `amix-telegram-demo.service` на живом Telegram-боте.
 - Проверить живой Telegram demo на сервере и подготовить ссылку/инструкцию для показа заказчику.
+- Подготовить тестовый прогон с заказчиком через `@testdemoNN_bot`.
 
 ## Открытые вопросы
 
@@ -136,4 +149,4 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 
 ## Ближайший следующий шаг
 
-Сделать commit/push локальных доработок по реальному XML AMIX, затем синхронизировать VPS, импортировать `prices.xml` и запустить `amix-telegram-demo.service`.
+Проверить живой диалог через `@testdemoNN_bot`, затем вернуться к следующему продуктному блоку: реальные Jivo payload и боевой `BOT_MESSAGE`/`INVITE_AGENT` flow.
