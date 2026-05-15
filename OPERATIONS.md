@@ -208,3 +208,31 @@
 - Состояние этапа:
   - Telegram demo код готов к commit/push;
   - следующий шаг: push в GitHub и серверный деплой в `/root/amix`.
+
+## 2026-05-15 - Итерация 7
+
+- Telegram demo блок отправлен в GitHub:
+  - commit: `20f6746`
+  - message: `Add Telegram demo bot runtime`
+  - push: `origin/master`
+- На VPS выполнена подготовка окружения для демонстрационной версии:
+  - `apt-get update`
+  - установка `python3-pip`, `python3-venv`
+  - clone репозитория `https://github.com/NNFall/amix-jivo-ai-bot.git` в `/root/amix`
+  - создание virtualenv `/root/amix/.venv`
+  - установка Python-зависимостей из `requirements.txt`
+  - создание `/root/amix/.env` из `.env.example`
+  - установка systemd unit `/etc/systemd/system/amix-telegram-demo.service`
+  - `systemctl daemon-reload`
+- Проверено состояние VPS после деплоя:
+  - в `/root/amix` находится актуальный код с commit `20f6746`;
+  - зависимости установлены успешно;
+  - unit `amix-telegram-demo.service` загружен в systemd;
+  - сервис пока не запущен и не включён в autostart, так как в `.env` отсутствуют реальные секреты.
+- Зафиксированные блокеры live demo:
+  - `TELEGRAM_BOT_TOKEN` пустой;
+  - `OPENAI_API_KEY` пустой;
+  - товарная база пока не наполнена реальным XML AMIX.
+- Текущее состояние:
+  - сервер приведён в состояние ready-to-run;
+  - для финального запуска нужен только рабочий `.env` и импорт XML.
