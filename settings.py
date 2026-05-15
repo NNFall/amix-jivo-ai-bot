@@ -21,8 +21,14 @@ class Settings(BaseSettings):
     jivo_bot_api_url: str = ""
     jivo_api_timeout_seconds: int = 10
 
+    llm_provider: str = "openai"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5-mini"
+    kie_api_key: str | None = None
+    kie_api_base_url: str = "https://api.kie.ai"
+    kie_chat_model_path: str = "/gpt-5-2/v1/chat/completions"
+    kie_reasoning_effort: str = "high"
+    kie_enable_web_search: bool = False
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None

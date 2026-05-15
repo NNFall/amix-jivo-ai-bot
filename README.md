@@ -25,9 +25,12 @@ python main.py
 
 ## Переменные окружения
 
+- `LLM_PROVIDER`: `openai` или `kie`.
 - `JIVO_WEBHOOK_TOKEN`: токен в URL входящего webhook.
 - `JIVO_BOT_API_URL`: исходящий endpoint Jivo Bot API для отправки сообщений и `INVITE_AGENT`.
 - `OPENAI_API_KEY`: ключ OpenAI API.
+- `KIE_API_KEY`: ключ KIE API для модели `gpt-5-2`.
+- `KIE_CHAT_MODEL_PATH`: путь chat completions endpoint, по умолчанию `/gpt-5-2/v1/chat/completions`.
 - `DATABASE_URL`: SQLite-путь или другой SQLAlchemy-compatible DSN.
 
 ## Полезные команды

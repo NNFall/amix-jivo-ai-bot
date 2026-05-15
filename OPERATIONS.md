@@ -236,3 +236,33 @@
 - Текущее состояние:
   - сервер приведён в состояние ready-to-run;
   - для финального запуска нужен только рабочий `.env` и импорт XML.
+
+## 2026-05-16 - Итерация 8
+
+- Получен новый внешний LLM-провайдер для проекта:
+  - документация: `https://docs.kie.ai/market/chat/gpt-5-2`
+  - цель: использовать KIE `gpt-5-2` вместо текущего прямого OpenAI-провайдера.
+- По документации KIE зафиксировано:
+  - endpoint модели: `POST https://api.kie.ai/gpt-5-2/v1/chat/completions`
+  - авторизация: `Authorization: Bearer <API_KEY>`
+  - поддерживается параметр `reasoning_effort`
+  - формат ответа совместим с `choices[0].message.content`
+- Локально расширен LLM-клиент:
+  - `settings.py` и `.env.example` дополнены провайдер-независимыми и KIE-specific переменными;
+  - `llm/openai_client.py` теперь поддерживает `LLM_PROVIDER=openai|kie`;
+  - для KIE реализован raw `httpx` вызов `chat/completions`;
+  - сохранена обратная совместимость с текущим OpenAI flow.
+- Добавлены тесты:
+  - `tests/test_llm_client.py` покрывает KIE request payload и разбор ответа;
+  - обновлён `tests/conftest.py` для очистки KIE env в изолированных тестах.
+- Локальные проверки:
+  - `python -m pytest` -> `20 passed`
+  - live-вызов через проектный LLM-слой прошёл успешно и вернул осмысленный ответ от KIE
+  - raw HTTP-проверка по документации вернула `HTTP 200` и ответ `OK`
+- На VPS сделана предварительная настройка `.env` под KIE:
+  - `LLM_PROVIDER=kie`
+  - настроены `KIE_API_BASE_URL`, `KIE_CHAT_MODEL_PATH`, `KIE_REASONING_EFFORT`, `KIE_ENABLE_WEB_SEARCH`
+  - секретный `KIE_API_KEY` записан только в серверный `.env`, без попадания в репозиторий
+- Выявлен серверный follow-up:
+  - текущий код в `/root/amix` на VPS ещё не содержит локальный commit с новой KIE-интеграцией;
+  - после push нужен `git pull` на сервере и повторная серверная проверка LLM-вызова.
