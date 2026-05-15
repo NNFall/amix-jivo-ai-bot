@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    telegram_demo_poll_timeout_seconds: int = 30
 
     model_config = SettingsConfigDict(
         env_file=".env",

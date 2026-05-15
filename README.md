@@ -36,7 +36,18 @@ python main.py
 pytest
 python scripts\simulate_jivo_event.py --text "Есть артикул AB-123?"
 python scripts\import_xml.py --path data\incoming_xml\products.xml
+python scripts\run_telegram_demo.py
 ```
+
+## Telegram Demo
+
+Для демонстрационной версии без Jivo можно запустить Telegram-бота long polling:
+
+- заполнить `.env` минимум полями `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL`;
+- при необходимости заранее импортировать XML в базу;
+- запустить `python scripts\run_telegram_demo.py`.
+
+Telegram demo использует ту же SQLite-базу, историю диалогов, товарный поиск и guardrails по handoff. Для вопросов, требующих менеджера, бот честно сообщает, что в рабочем Jivo-сценарии передал бы диалог оператору.
 
 ## Дальше по плану
 

@@ -2,7 +2,7 @@
 
 ## Текущий статус
 
-Завершён третий значимый блок MVP: XML importer усилен под fail-safe сценарии, добавлена расширенная отчётность импорта и тесты на success/parse-fail/skipped записи.
+Завершён четвёртый значимый блок MVP: выделен общий текстовый assistant layer и добавлена Telegram demo-версия для показов заказчику без Jivo.
 
 ## Этапы MVP
 
@@ -19,7 +19,7 @@
    Статус: completed.
    Состав: парсинг XML, нормализация артикулов, upsert товаров, поиск точного и похожих артикулов.
 5. OpenAI-слой и сценарии ответа.
-   Статус: in progress.
+   Статус: completed.
    Состав: безопасный prompt, диалоговый ответ без выдумывания фактов, вызов product lookup перед LLM-ответом.
 6. Передача менеджеру и дополнительные уведомления.
    Статус: completed.
@@ -27,6 +27,9 @@
 7. Локальная проверка, тесты и подготовка к VPS.
    Статус: in progress.
    Состав: pytest, скрипты симуляции, Docker, README, финальная сверка `.env` и `.gitignore`.
+8. Telegram demo для предпросмотра заказчиком.
+   Статус: completed.
+   Состав: long polling bot, reuse SQLite/history/product lookup, demo-handoff сценарий, VPS-friendly runner.
 
 ## Уже сделано
 
@@ -53,6 +56,18 @@
   - возвращается `exit code 1` при failed-статусе или некорректном пути.
 - Добавлены тесты `tests/test_xml_importer.py` для success/update, parse-fail и skipped-case.
 - Выполнена повторная проверка: `python -m pytest` -> `16 passed`.
+- Добавлен общий `core/assistant_service.py` для текстовой обработки сообщений вне привязки к Jivo transport.
+- `core/message_processor.py` переведён на reuse общего assistant layer.
+- Добавлен Telegram demo runtime:
+  - `notifications/telegram_demo_bot.py`;
+  - `scripts/run_telegram_demo.py`;
+  - `deploy/amix-telegram-demo.service`.
+- Добавлены тесты `tests/test_assistant_service.py`.
+- Выполнена повторная проверка: `python -m pytest` -> `19 passed`.
+- Выполнено первичное SSH-обследование VPS:
+  - каталог `/root/amix` пуст;
+  - на сервере есть `python3`, `git`, `systemd`;
+  - на сервере пока нет `pip` и `docker`.
 
 ## Что осталось сделать
 
@@ -61,6 +76,8 @@
 - Проверить реальные исходящие вызовы `BOT_MESSAGE` и `INVITE_AGENT` против рабочего endpoint Jivo.
 - Довести OpenAI routing: отделить intent detection от генерации ответа и добавить явные guardrails для сложных консультаций.
 - Проверить XML importer на реальном файле AMIX и уточнить alias-набор под фактические теги.
+- Задеплоить Telegram demo на VPS, поднять venv/systemd и проверить живой polling.
+- Получить реальные `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY` и XML-файл AMIX для рабочего демо.
 
 ## Открытые вопросы
 
@@ -69,6 +86,8 @@
 - Нужно подтвердить фактический формат исходящего webhook URL Jivo для конкретного bot channel.
 - Нужно понять, достаточно ли `BackgroundTasks` для пилота AMIX или нужен более надёжный local queue/worker уже на MVP-этапе.
 - Нужно определить допустимую политику повторных импортов одного и того же файла (по checksum/mtime) для production-режима.
+- Нужны реальные секреты для live demo: Telegram bot token и OpenAI API key.
+- Нужен реальный XML-файл или источник XML для наполнения демо-базы товарами.
 
 ## Технические риски
 
@@ -77,7 +96,8 @@
 - `BackgroundTasks` подходит для MVP, но не даёт надёжной очереди при падении процесса.
 - Без sandbox-стенда Jivo пока невозможно полноценно подтвердить формат реальных исходящих payload и handoff-ответов.
 - Без production-файла AMIX остаётся риск неполного покрытия нестандартных XML-тегов.
+- Без реального Telegram bot token сервис нельзя довести до живого публичного демо на VPS.
 
 ## Ближайший следующий шаг
 
-Перейти к более жёсткому OpenAI routing (intent + guardrails + handoff decision) и затем к проверке на реальных payload/XML.
+Запушить Telegram demo блок, затем развернуть его на VPS и проверить живой запуск. Если секретов для live demo пока нет, довести сервер до состояния ready-to-run.

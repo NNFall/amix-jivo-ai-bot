@@ -168,3 +168,43 @@
 - Состояние этапа:
   - третий рабочий блок (XML importer hardening) завершён;
   - следующий блок: усиление OpenAI routing и guardrails для handoff-решений.
+
+## 2026-05-15 - Итерация 6
+
+- Выполнено SSH-подключение к VPS для подготовки демонстрационной версии.
+- По серверу зафиксировано:
+  - рабочий пользователь `root`;
+  - каталог проекта `/root/amix` существует, но пустой;
+  - установлен `python3`;
+  - установлен `git`;
+  - доступен `systemd`;
+  - `pip` и `docker` на сервере отсутствуют.
+- Для демонстрации в Telegram реализован transport-independent assistant layer:
+  - добавлен `core/assistant_service.py`;
+  - вынесены общие сценарии: exact article lookup, similar products, safe fallback, handoff decision.
+- `core/message_processor.py` переведён на reuse общего assistant layer, чтобы Jivo и Telegram не расходились по логике.
+- Добавлен Telegram demo runtime:
+  - `notifications/telegram_demo_bot.py` — long polling через Telegram Bot API;
+  - `scripts/run_telegram_demo.py` — серверный runner;
+  - `deploy/amix-telegram-demo.service` — systemd unit-шаблон.
+- Telegram demo особенности:
+  - та же SQLite-база и история сообщений;
+  - дедупликация входящих `update_id` через `external_event_id`;
+  - команды `/start`, `/help`, `/reset`;
+  - для manager-only кейсов бот честно сообщает, что в рабочем режиме передал бы диалог оператору.
+- Добавлены тесты:
+  - `tests/test_assistant_service.py`
+- Обновлены конфигурация и документация:
+  - `.env.example` расширен `TELEGRAM_DEMO_POLL_TIMEOUT_SECONDS`;
+  - `README.md` дополнен инструкцией по Telegram demo.
+- Запущенные команды:
+  - `python -m pytest`
+  - проверка импорта `notifications.telegram_demo_bot`
+  - SSH-обследование VPS через `paramiko`
+- Результаты:
+  - локальные тесты проходят: `19 passed`;
+  - импорт Telegram demo runtime успешен;
+  - сервер обследован и готов к дальнейшей установке окружения.
+- Состояние этапа:
+  - Telegram demo код готов к commit/push;
+  - следующий шаг: push в GitHub и серверный деплой в `/root/amix`.

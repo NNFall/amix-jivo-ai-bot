@@ -1,0 +1,14 @@
+[Unit]
+Description=AMIX Telegram Demo Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/amix
+EnvironmentFile=/root/amix/.env
+ExecStart=/root/amix/.venv/bin/python /root/amix/scripts/run_telegram_demo.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

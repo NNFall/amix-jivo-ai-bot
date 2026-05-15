@@ -6,8 +6,6 @@ from database.repositories import (
     get_chat_by_external_id,
     get_or_create_chat,
     get_or_create_customer,
-    get_product_by_article,
-    get_similar_products,
     get_stored_event,
     log_processing_error,
     mark_chat_status,
@@ -18,24 +16,14 @@ from database.repositories import (
 from jivo.client import JivoClient
 from jivo.events import JivoEventType, get_terminal_chat_status, should_stop_bot_after_event
 from jivo.schemas import JivoIncomingEvent
-from llm.openai_client import OpenAIService
 from notifications.telegram import TelegramNotifier
-from products.article_utils import extract_article_candidates
-from products.product_search import ProductSearchService
 from settings import get_settings
 
-from .dialog_service import DialogService
-from .handoff_service import HandoffService
+from .assistant_service import AssistantService
 
 
 logger = logging.getLogger(__name__)
 
-
-SAFE_FALLBACK_TEXT = (
-    "Я могу помочь с артикулами, наличием, остатками и ценами. "
-    "Если пришлёте артикул, я проверю базу. "
-    "Если нужен подбор или техническая консультация, я передам вопрос менеджеру."
-)
 
 AGENT_UNAVAILABLE_TEXT = (
     "Сейчас менеджер недоступен. Можете оставить телефон или e-mail, "
@@ -46,11 +34,8 @@ AGENT_UNAVAILABLE_TEXT = (
 class MessageProcessor:
     def __init__(self) -> None:
         settings = get_settings()
-        self.dialog_service = DialogService(history_limit=settings.history_limit)
-        self.handoff_service = HandoffService()
+        self.assistant_service = AssistantService()
         self.jivo_client = JivoClient(settings)
-        self.openai_service = OpenAIService(settings)
-        self.product_search = ProductSearchService()
         self.telegram_notifier = TelegramNotifier(settings)
 
     def process_event_record(self, event_record_id: int) -> None:
@@ -96,7 +81,7 @@ class MessageProcessor:
 
         if event.event == JivoEventType.AGENT_UNAVAILABLE:
             mark_chat_status(session, chat.external_chat_id, "waiting_contact")
-            self._send_bot_reply(
+            self._send_and_store_bot_reply(
                 session,
                 event=event,
                 text=AGENT_UNAVAILABLE_TEXT,
@@ -108,49 +93,23 @@ class MessageProcessor:
             return
 
         client_text = event.message.text if event.message else ""
-        append_message(
+        assistant_reply = self.assistant_service.handle_client_message(
             session,
             external_chat_id=chat.external_chat_id,
-            sender_role="client",
-            text=client_text,
-            external_event_id=event.id,
-            payload=event.model_dump(mode="json"),
-        )
-
-        handoff_decision = self.handoff_service.evaluate(client_text)
-        if handoff_decision.should_handoff and handoff_decision.reason:
-            self._handoff_to_agent(session, event, reason=handoff_decision.reason)
-            return
-
-        article_candidates = extract_article_candidates(client_text)
-        for candidate in article_candidates:
-            product = get_product_by_article(session, candidate)
-            if product is not None:
-                reply = self.product_search.build_product_reply(product)
-                self._send_bot_reply(session, event=event, text=reply)
-                return
-
-        if article_candidates:
-            similar_products = get_similar_products(session, article_candidates[0], limit=5)
-            if similar_products:
-                reply = self.product_search.build_similar_products_reply(article_candidates[0], similar_products)
-                self._send_bot_reply(session, event=event, text=reply)
-                return
-
-        transcript = self.dialog_service.get_transcript(session, chat.external_chat_id)
-        llm_reply = self.openai_service.generate_reply(
+            external_client_id=event.client_id,
+            customer_name=event.sender.name if event.sender else None,
             customer_text=client_text,
-            transcript=transcript,
+            inbound_event_id=event.id,
+            outbound_event_id=f"{event.id}:bot",
+            payload=event.model_dump(mode="json"),
+            handoff_mode="jivo",
         )
-        self._send_bot_reply(session, event=event, text=llm_reply or SAFE_FALLBACK_TEXT)
 
-    def _handoff_to_agent(self, session, event: JivoIncomingEvent, reason: str) -> None:
-        self.handoff_service.register_handoff(session, event.chat_id, reason)
-        notice = "Передаю ваш вопрос менеджеру."
-        self._send_bot_reply(session, event=event, text=notice)
-        self.jivo_client.invite_agent(event=event, reason=reason)
+        self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
+        if assistant_reply.handoff_reason:
+            self.jivo_client.invite_agent(event=event, reason=assistant_reply.handoff_reason)
 
-    def _send_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
+    def _deliver_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
         if should_stop_bot_after_event(event.event):
             return
 
@@ -160,6 +119,9 @@ class MessageProcessor:
             return
 
         self.jivo_client.send_text_message(event=event, text=text)
+
+    def _send_and_store_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
+        self._deliver_bot_reply(session, event=event, text=text)
         append_message(
             session,
             external_chat_id=event.chat_id,

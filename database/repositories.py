@@ -109,6 +109,12 @@ def append_message(
     return entity
 
 
+def message_exists_by_external_event_id(session, external_event_id: str) -> bool:
+    return session.scalar(
+        select(Message.id).where(Message.external_event_id == external_event_id).limit(1)
+    ) is not None
+
+
 def list_recent_messages(session, external_chat_id: str, limit: int = 20) -> list[Message]:
     chat = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
     if chat is None:
