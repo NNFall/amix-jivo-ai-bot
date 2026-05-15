@@ -17,9 +17,9 @@ from .handoff_service import HandoffService
 
 
 SAFE_FALLBACK_TEXT = (
-    "Я могу помочь с артикулами, наличием, остатками и ценами. "
-    "Если пришлете артикул, я проверю базу. "
-    "Если нужен подбор или техническая консультация, я передам вопрос менеджеру."
+    "Я могу проверить по базе артикул, свободный остаток, цену, единицу измерения, вес и объём. "
+    "Если пришлёте артикул, сразу посмотрю данные. "
+    "Если нужен подбор, аналог или техническая консультация, лучше передать вопрос менеджеру."
 )
 
 JIVO_HANDOFF_TEXT = "Передаю ваш вопрос менеджеру."
@@ -27,6 +27,11 @@ JIVO_HANDOFF_TEXT = "Передаю ваш вопрос менеджеру."
 TELEGRAM_DEMO_HANDOFF_TEXT = (
     "Этот вопрос требует менеджера. В рабочем режиме я бы передал диалог оператору. "
     "В демо-режиме могу продолжить только по артикулам, наличию, остаткам и ценам."
+)
+
+ARTICLE_REQUIRED_TEXT = (
+    "Чтобы проверить наличие, остаток или цену, пришлите артикул товара. "
+    "По текущей базе я могу проверить артикул, остаток, цену, единицу измерения, вес и объём."
 )
 
 
@@ -87,6 +92,16 @@ class AssistantService:
             return AssistantReply(text=handoff_text, handoff_reason=handoff_decision.reason)
 
         article_candidates = extract_article_candidates(customer_text)
+        if not article_candidates and self._needs_article_lookup(customer_text):
+            self._append_bot_message(
+                session,
+                external_chat_id=chat.external_chat_id,
+                text=ARTICLE_REQUIRED_TEXT,
+                outbound_event_id=outbound_event_id,
+                payload={"source": "article_required"},
+            )
+            return AssistantReply(text=ARTICLE_REQUIRED_TEXT)
+
         for candidate in article_candidates:
             product = get_product_by_article(session, candidate)
             if product is not None:
@@ -101,17 +116,32 @@ class AssistantService:
                 return AssistantReply(text=reply_text)
 
         if article_candidates:
-            similar_products = get_similar_products(session, article_candidates[0], limit=5)
+            requested_article = article_candidates[0]
+            similar_products = get_similar_products(session, requested_article, limit=5)
             if similar_products:
-                reply_text = self.product_search.build_similar_products_reply(article_candidates[0], similar_products)
+                reply_text = self.product_search.build_similar_products_reply(requested_article, similar_products)
                 self._append_bot_message(
                     session,
                     external_chat_id=chat.external_chat_id,
                     text=reply_text,
                     outbound_event_id=outbound_event_id,
-                    payload={"similar_for": article_candidates[0]},
+                    payload={"similar_for": requested_article},
                 )
                 return AssistantReply(text=reply_text)
+
+            reply_text = (
+                f"Не нашёл артикул {requested_article} в текущей выгрузке. "
+                "Проверьте написание артикула. "
+                "Если нужен подбор или аналог, лучше передать вопрос менеджеру."
+            )
+            self._append_bot_message(
+                session,
+                external_chat_id=chat.external_chat_id,
+                text=reply_text,
+                outbound_event_id=outbound_event_id,
+                payload={"missing_article": requested_article},
+            )
+            return AssistantReply(text=reply_text)
 
         transcript = self.dialog_service.get_transcript(session, chat.external_chat_id)
         llm_reply = self.openai_service.generate_reply(
@@ -133,6 +163,22 @@ class AssistantService:
         if handoff_mode == "demo":
             return TELEGRAM_DEMO_HANDOFF_TEXT
         return JIVO_HANDOFF_TEXT
+
+    @staticmethod
+    def _needs_article_lookup(customer_text: str) -> bool:
+        text = customer_text.lower()
+        keywords = (
+            "артикул",
+            "налич",
+            "остат",
+            "цена",
+            "стоит",
+            "стоим",
+            "сколько",
+            "есть в наличии",
+            "в наличии",
+        )
+        return any(keyword in text for keyword in keywords)
 
     @staticmethod
     def _append_bot_message(

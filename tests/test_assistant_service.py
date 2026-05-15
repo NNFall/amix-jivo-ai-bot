@@ -1,6 +1,11 @@
 from decimal import Decimal
 
-from core.assistant_service import AssistantService, SAFE_FALLBACK_TEXT, TELEGRAM_DEMO_HANDOFF_TEXT
+from core.assistant_service import (
+    ARTICLE_REQUIRED_TEXT,
+    AssistantService,
+    SAFE_FALLBACK_TEXT,
+    TELEGRAM_DEMO_HANDOFF_TEXT,
+)
 from database.db import session_scope
 from database.models import Handoff, Message, Product
 
@@ -82,3 +87,39 @@ def test_assistant_service_uses_safe_fallback_without_openai(isolated_app_env) -
         )
 
     assert reply.text == SAFE_FALLBACK_TEXT
+
+
+def test_assistant_service_requests_article_for_stock_question(isolated_app_env) -> None:
+    with session_scope() as session:
+        reply = AssistantService().handle_client_message(
+            session,
+            external_chat_id="telegram:4",
+            external_client_id="telegram-user:4",
+            customer_name="Demo User",
+            customer_text="Подскажите цену и наличие",
+            inbound_event_id="tg-4",
+            outbound_event_id="tg-4:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == ARTICLE_REQUIRED_TEXT
+    assert reply.handoff_reason is None
+
+
+def test_assistant_service_reports_missing_article_when_not_found(isolated_app_env) -> None:
+    with session_scope() as session:
+        reply = AssistantService().handle_client_message(
+            session,
+            external_chat_id="telegram:5",
+            external_client_id="telegram-user:5",
+            customer_name="Demo User",
+            customer_text="Есть артикул ZZ-999?",
+            inbound_event_id="tg-5",
+            outbound_event_id="tg-5:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Не нашёл артикул ZZ999" in reply.text
+    assert "Проверьте написание артикула." in reply.text

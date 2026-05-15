@@ -7,6 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from database.db import create_db_and_tables
 from products.xml_importer import ProductXmlImporter
 
 
@@ -14,6 +15,8 @@ def main() -> None:
     parser = ArgumentParser(description="Import product XML into the local database.")
     parser.add_argument("--path", required=True, help="Path to the XML file")
     args = parser.parse_args()
+
+    create_db_and_tables()
 
     try:
         result = ProductXmlImporter().import_file(args.path)

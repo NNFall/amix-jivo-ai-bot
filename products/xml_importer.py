@@ -11,8 +11,20 @@ from products.article_utils import normalize_article
 FIELD_ALIASES = {
     "code": {"code", "код", "guid", "id"},
     "article": {"article", "артикул", "vendorcode", "sku"},
-    "corporate_price": {"corporateprice", "корпоративнаяцена", "pricecorp", "priceopt"},
-    "retail_price": {"retailprice", "розничнаяцена", "priceretail", "price"},
+    "corporate_price": {
+        "corporateprice",
+        "корпоративнаяцена",
+        "ценакорпоративная",
+        "pricecorp",
+        "priceopt",
+    },
+    "retail_price": {
+        "retailprice",
+        "розничнаяцена",
+        "ценарозничная",
+        "priceretail",
+        "price",
+    },
     "unit": {"unit", "единицаизмерения", "uom"},
     "weight": {"weight", "вес"},
     "volume": {"volume", "объем", "объём"},

@@ -115,3 +115,37 @@ def test_xml_importer_skips_non_normalizable_article(isolated_app_env, tmp_path:
     assert result.created == 1
     assert result.skipped == 1
     assert result.errors == 0
+
+
+def test_xml_importer_supports_real_russian_price_tags(isolated_app_env, tmp_path: Path) -> None:
+    xml_path = tmp_path / "amix_like.xml"
+    xml_path.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<КоммерческаяИнформация>
+  <record>
+    <Код>22608</Код>
+    <Артикул>P-AM02/B-S</Артикул>
+    <ЦенаКорпоративная>150.25</ЦенаКорпоративная>
+    <ЦенаРозничная>199.99</ЦенаРозничная>
+    <ЕдиницаИзмерения>шт</ЕдиницаИзмерения>
+    <Вес>0.638</Вес>
+    <Объем>0.111</Объем>
+    <СвободныйОстаток>1.00</СвободныйОстаток>
+  </record>
+</КоммерческаяИнформация>
+""",
+        encoding="utf-8",
+    )
+
+    result = ProductXmlImporter().import_file(xml_path)
+
+    assert result.status == "completed"
+    assert result.processed == 1
+    assert result.created == 1
+
+    with session_scope() as session:
+        product = session.query(Product).filter(Product.code == "22608").one()
+
+    assert str(product.corporate_price) == "150.25"
+    assert str(product.retail_price) == "199.99"
+    assert str(product.free_stock) == "1.000"
