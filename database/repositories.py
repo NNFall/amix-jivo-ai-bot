@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from database.models import Chat, Customer, Handoff, JivoEvent, Message, ProcessingError, Product, ProductImport
-from products.article_utils import normalize_article
+from products.article_utils import build_normalized_article_variants, normalize_article
 
 
 def create_event_if_new(session, event):
@@ -211,22 +211,32 @@ def upsert_product(
 
 
 def get_product_by_article(session, article: str) -> Product | None:
-    normalized = normalize_article(article)
-    return session.scalar(select(Product).where(Product.normalized_article == normalized))
+    normalized_variants = build_normalized_article_variants(article)
+    if not normalized_variants:
+        return None
+
+    return session.scalar(
+        select(Product)
+        .where(Product.normalized_article.in_(normalized_variants))
+        .order_by(Product.id.asc())
+    )
 
 
 def get_similar_products(session, article: str, limit: int = 5) -> list[Product]:
-    normalized = normalize_article(article)
-    token = normalized[:6] or normalized
-    if not token:
+    normalized_variants = build_normalized_article_variants(article)
+    if not normalized_variants:
         return []
 
-    return session.scalars(
-        select(Product)
-        .where(Product.normalized_article.like(f"%{token}%"))
-        .order_by(Product.article.asc())
-        .limit(limit)
-    ).all()
+    clauses = []
+    for normalized in normalized_variants:
+        token = normalized[:6] or normalized
+        if token:
+            clauses.append(Product.normalized_article.like(f"%{token}%"))
+
+    if not clauses:
+        return []
+
+    return session.scalars(select(Product).where(or_(*clauses)).order_by(Product.article.asc()).limit(limit)).all()
 
 
 def create_product_import(session, filename: str, source_path: str) -> ProductImport:

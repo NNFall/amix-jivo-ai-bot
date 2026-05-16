@@ -36,6 +36,24 @@ def test_get_product_by_article_finds_exact_match() -> None:
         assert product.article == "AB-123"
 
 
+def test_get_product_by_article_finds_keyboard_variant_match() -> None:
+    with build_session() as session:
+        session.add(
+            Product(
+                code="2",
+                article="OZ/700",
+                normalized_article="OZ700",
+                raw_payload={},
+            )
+        )
+        session.commit()
+
+        product = get_product_by_article(session, "ОЗ/700")
+
+        assert product is not None
+        assert product.article == "OZ/700"
+
+
 def test_get_similar_products_returns_candidates() -> None:
     with build_session() as session:
         session.add_all(

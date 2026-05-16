@@ -123,3 +123,34 @@ def test_assistant_service_reports_missing_article_when_not_found(isolated_app_e
 
     assert "Не нашёл артикул ZZ999" in reply.text
     assert "Проверьте написание артикула." in reply.text
+
+
+def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="77",
+                article="MP28CK",
+                normalized_article="MP28CK",
+                free_stock=Decimal("2"),
+                unit="шт.",
+                retail_price=Decimal("500"),
+                corporate_price=Decimal("450"),
+                raw_payload={},
+            )
+        )
+
+    with session_scope() as session:
+        reply = AssistantService().handle_client_message(
+            session,
+            external_chat_id="telegram:6",
+            external_client_id="telegram-user:6",
+            customer_name="Demo User",
+            customer_text="МП 28ск",
+            inbound_event_id="tg-6",
+            outbound_event_id="tg-6:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "MP28CK" in reply.text

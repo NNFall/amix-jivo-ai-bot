@@ -1,7 +1,44 @@
 import re
 
 
-ARTICLE_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-я0-9][A-Za-zА-Яа-я0-9\-_/\.]{2,}")
+ARTICLE_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9\-_/\.]*")
+
+
+CYR_TO_LAT = str.maketrans(
+    {
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "З": "Z",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "У": "Y",
+        "Х": "X",
+    }
+)
+
+LAT_TO_CYR = str.maketrans(
+    {
+        "A": "А",
+        "B": "В",
+        "C": "С",
+        "E": "Е",
+        "H": "Н",
+        "K": "К",
+        "M": "М",
+        "O": "О",
+        "P": "Р",
+        "T": "Т",
+        "X": "Х",
+        "Y": "У",
+        "Z": "З",
+    }
+)
 
 
 def normalize_article(article: str) -> str:
@@ -9,19 +46,56 @@ def normalize_article(article: str) -> str:
     return re.sub(r"[^0-9A-ZА-Я]+", "", prepared)
 
 
+def build_normalized_article_variants(article: str) -> list[str]:
+    normalized = normalize_article(article)
+    if not normalized:
+        return []
+
+    variants = [normalized]
+    cyr_to_lat = normalized.translate(CYR_TO_LAT)
+    lat_to_cyr = normalized.translate(LAT_TO_CYR)
+
+    for variant in (cyr_to_lat, lat_to_cyr):
+        if variant and variant not in variants:
+            variants.append(variant)
+
+    return variants
+
+
 def extract_article_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
+    tokens = ARTICLE_TOKEN_RE.findall(text)
 
-    for raw_candidate in ARTICLE_TOKEN_RE.findall(text):
-        if not any(character.isdigit() for character in raw_candidate):
-            continue
+    def _push(raw_value: str) -> None:
+        if not any(character.isdigit() for character in raw_value):
+            return
 
-        normalized = normalize_article(raw_candidate)
+        normalized = normalize_article(raw_value)
         if len(normalized) < 3 or normalized in seen:
-            continue
+            return
 
         seen.add(normalized)
         candidates.append(normalized)
+
+    for index, raw_candidate in enumerate(tokens):
+        _push(raw_candidate)
+
+        if index == 0:
+            continue
+
+        previous = tokens[index - 1]
+        if any(character.isdigit() for character in previous):
+            continue
+
+        previous_normalized = normalize_article(previous)
+        current_normalized = normalize_article(raw_candidate)
+        if not previous_normalized or not current_normalized:
+            continue
+
+        if len(previous_normalized) < 2 or len(previous_normalized) > 4:
+            continue
+
+        _push(f"{previous_normalized}{current_normalized}")
 
     return candidates
