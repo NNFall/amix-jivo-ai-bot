@@ -1,0 +1,268 @@
+[
+  {
+    "id": "T-001",
+    "customer_text": "Здравствуйте",
+    "expected_action": "company_or_direct_reply",
+    "expected_meaning": "Обычное приветствие менеджера без поиска товаров.",
+    "criteria": [
+      "no_product_lookup",
+      "no_handoff",
+      "offers_help"
+    ]
+  },
+  {
+    "id": "T-002",
+    "customer_text": "Где вы находитесь?",
+    "expected_action": "company_answer",
+    "expected_meaning": "Адрес AMIX: Санкт-Петербург, ул. Якорная, д. 15, лит. Б.",
+    "criteria": [
+      "no_product_lookup",
+      "no_handoff",
+      "company_context"
+    ]
+  },
+  {
+    "id": "T-003",
+    "customer_text": "Как с вами связаться?",
+    "expected_action": "company_answer",
+    "expected_meaning": "Телефон +7 (812) 372-66-07 и email market@amix.spb.ru.",
+    "criteria": [
+      "no_product_lookup",
+      "no_handoff",
+      "company_context"
+    ]
+  },
+  {
+    "id": "T-004",
+    "customer_text": "Есть 14.025пр.?",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Точный артикул 14.025пр., остаток 7, розничная 238, корпоративная 165.98.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "not_similar",
+      "shows_stock",
+      "shows_price"
+    ]
+  },
+  {
+    "id": "T-005",
+    "customer_text": "Проверьте код 1364",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "По коду 1364 найден артикул 14.025пр.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "search_by_code"
+    ]
+  },
+  {
+    "id": "T-006",
+    "customer_text": "1364 есть?",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Число 1364 найдено как код товара.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "search_by_code"
+    ]
+  },
+  {
+    "id": "T-007",
+    "customer_text": "P-AM02/B-S есть в наличии?",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Точный артикул P-AM02/B-S, остаток 1, цена отсутствует.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "no_fake_price"
+    ]
+  },
+  {
+    "id": "T-008",
+    "customer_text": "Есть ABC-100?",
+    "expected_action": "multiple_exact_product_lookup",
+    "expected_meaning": "Несколько точных позиций: 10001 и 10002.",
+    "criteria": [
+      "product_lookup",
+      "multiple_exact",
+      "shows_all_exact",
+      "asks_for_code"
+    ]
+  },
+  {
+    "id": "T-009",
+    "customer_text": "10002",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Уточнение по коду 10002, артикул ABC-100, остаток 8, цена 140.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "dialog_continuation"
+    ]
+  },
+  {
+    "id": "T-010",
+    "customer_text": "14.023",
+    "expected_action": "similar_product_lookup",
+    "expected_meaning": "Точного нет, похожие 14.023л. и 14.023пр.",
+    "criteria": [
+      "product_lookup",
+      "similar_found",
+      "not_exact_wording"
+    ]
+  },
+  {
+    "id": "T-011",
+    "customer_text": "14.023пр.",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Точный артикул 14.023пр., остаток 220, цена 473.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "not_similar"
+    ]
+  },
+  {
+    "id": "T-012",
+    "customer_text": "14.025пр есть?",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Артикул найден без точки в конце.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "normalized_article"
+    ]
+  },
+  {
+    "id": "T-013",
+    "customer_text": "а p am02 b s есть?",
+    "expected_action": "product_lookup",
+    "expected_meaning": "Грязный ввод должен найти или предложить P-AM02/B-S.",
+    "criteria": [
+      "product_lookup",
+      "no_fake_price"
+    ]
+  },
+  {
+    "id": "T-014",
+    "customer_text": "Проверьте наличие 14.023пр. и 14.025пр.",
+    "expected_action": "multi_product_lookup",
+    "expected_meaning": "Нужно проверить оба артикула, не потеряв один из них.",
+    "criteria": [
+      "product_lookup",
+      "multiple_queries"
+    ]
+  },
+  {
+    "id": "T-015",
+    "customer_text": "Есть XYZ-999?",
+    "expected_action": "not_found_product_lookup",
+    "expected_meaning": "Товар не найден, без выдумывания.",
+    "criteria": [
+      "product_lookup",
+      "not_found",
+      "no_fake_product"
+    ]
+  },
+  {
+    "id": "T-016",
+    "customer_text": "Сколько стоит направляющая?",
+    "expected_action": "clarify",
+    "expected_meaning": "Нужен артикул или код, цену нельзя выдумывать.",
+    "criteria": [
+      "no_fake_price",
+      "asks_for_article"
+    ]
+  },
+  {
+    "id": "T-017",
+    "customer_text": "Чем 14.023л. отличается от 14.023пр.?",
+    "expected_action": "product_lookup_then_handoff",
+    "expected_meaning": "Не выдумывать отличия, передать менеджеру.",
+    "criteria": [
+      "handoff",
+      "no_fake_specs"
+    ]
+  },
+  {
+    "id": "T-018",
+    "customer_text": "Мне нужны направляющие для шкафа, что посоветуете?",
+    "expected_action": "handoff",
+    "expected_meaning": "Технический подбор, менеджер.",
+    "criteria": [
+      "handoff",
+      "no_fake_recommendation"
+    ]
+  },
+  {
+    "id": "T-019",
+    "customer_text": "Позовите менеджера",
+    "expected_action": "handoff",
+    "expected_meaning": "Передать менеджеру.",
+    "criteria": [
+      "handoff"
+    ]
+  },
+  {
+    "id": "T-020",
+    "customer_text": "Хочу заказать 10 штук 14.023пр.",
+    "expected_action": "product_lookup_then_handoff",
+    "expected_meaning": "Оформление заказа через менеджера.",
+    "criteria": [
+      "handoff",
+      "order_request"
+    ]
+  },
+  {
+    "id": "T-021",
+    "customer_text": "Нужно 5 штук P-AM02/B-S",
+    "expected_action": "product_lookup_then_handoff",
+    "expected_meaning": "Остаток 1 меньше 5, нужен менеджер.",
+    "criteria": [
+      "product_lookup",
+      "stock_less_than_requested",
+      "handoff"
+    ]
+  },
+  {
+    "id": "T-022",
+    "customer_text": "Сколько стоит P-AM02/B-S?",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Товар найден, цена отсутствует, не выдумывать.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "no_fake_price"
+    ]
+  },
+  {
+    "id": "T-023",
+    "customer_text": "Доставляете по России?",
+    "expected_action": "company_answer",
+    "expected_meaning": "Доставка по России возможна, условия уточняет менеджер.",
+    "criteria": [
+      "no_product_lookup",
+      "company_context"
+    ]
+  },
+  {
+    "id": "T-024",
+    "customer_text": "Можно сделать возврат в субботу?",
+    "expected_action": "company_answer",
+    "expected_meaning": "По субботам возврат не осуществляется.",
+    "criteria": [
+      "no_product_lookup",
+      "company_context"
+    ]
+  },
+  {
+    "id": "T-025",
+    "customer_text": "Вы вообще можете нормально ответить? Дайте человека",
+    "expected_action": "handoff",
+    "expected_meaning": "Недовольный клиент просит человека, передать менеджеру.",
+    "criteria": [
+      "handoff"
+    ]
+  }
+]
