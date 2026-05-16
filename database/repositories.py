@@ -239,6 +239,48 @@ def get_similar_products(session, article: str, limit: int = 5) -> list[Product]
     return session.scalars(select(Product).where(or_(*clauses)).order_by(Product.article.asc()).limit(limit)).all()
 
 
+def lookup_products(session, query: str, exact_limit: int = 20, similar_limit: int = 20) -> tuple[list[Product], list[Product]]:
+    query_clean = (query or "").strip()
+    if not query_clean:
+        return [], []
+
+    variants = build_normalized_article_variants(query_clean)
+    exact_clauses = [Product.code == query_clean]
+    if variants:
+        exact_clauses.append(Product.normalized_article.in_(variants))
+
+    exact_matches = session.scalars(
+        select(Product).where(or_(*exact_clauses)).order_by(Product.article.asc(), Product.code.asc()).limit(exact_limit)
+    ).all()
+
+    exact_ids = {product.id for product in exact_matches}
+    similar_clauses = []
+    for variant in variants:
+        token = variant[:6] or variant
+        if token:
+            similar_clauses.append(Product.normalized_article.like(f"%{token}%"))
+
+    if query_clean:
+        similar_clauses.append(Product.code.like(f"%{query_clean}%"))
+
+    if not similar_clauses:
+        return exact_matches, []
+
+    similar_all = session.scalars(
+        select(Product).where(or_(*similar_clauses)).order_by(Product.article.asc(), Product.code.asc()).limit(similar_limit * 3)
+    ).all()
+
+    similar_matches: list[Product] = []
+    for product in similar_all:
+        if product.id in exact_ids:
+            continue
+        similar_matches.append(product)
+        if len(similar_matches) >= similar_limit:
+            break
+
+    return exact_matches, similar_matches
+
+
 def create_product_import(session, filename: str, source_path: str) -> ProductImport:
     entity = ProductImport(filename=filename, source_path=source_path, status="started")
     session.add(entity)

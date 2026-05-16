@@ -435,3 +435,33 @@
 - Примечание по проверке:
   - первая probe-команда дала старое поведение из-за кодировки запроса на стороне Windows-консоли;
   - повторная probe с unicode-escape строками подтвердила корректную работу фикса на VPS.
+
+## 2026-05-16 - Итерация 14
+
+- По запросу на смену архитектуры чата начат переход на LLM-first поток:
+  - LLM-планировщик возвращает JSON-решение (`lookup` / `clarify` / `handoff`);
+  - backend вызывает lookup-функцию к БД (артикул/код);
+  - отдельный LLM-шаг формирует финальный ответ строго по фактам lookup.
+- Обновлены prompt-файлы:
+  - `llm/prompts.py`:
+    - `LOOKUP_PLANNER_SYSTEM_PROMPT`;
+    - `FACTS_RESPONSE_SYSTEM_PROMPT`;
+    - `build_lookup_planner_prompt(...)`;
+    - `build_facts_response_prompt(...)`.
+- Обновлен LLM-клиент:
+  - `llm/openai_client.py`:
+    - `generate_text(system_prompt, user_prompt)`;
+    - `generate_lookup_plan(customer_text, transcript)` с JSON parse.
+- Добавлена lookup-функция репозитория:
+  - `database/repositories.py` -> `lookup_products(session, query, exact_limit, similar_limit)`;
+  - поддерживает exact по `code`, exact по `normalized_article` и similar-выдачу.
+- Переписан `core/assistant_service.py`:
+  - новый путь `_handle_via_llm(...)` как основной при доступной LLM;
+  - legacy-механика сохранена в `_handle_via_legacy_fallback(...)` только как аварийный режим;
+  - добавлена сериализация товарных фактов в LLM-подсказку.
+- Тесты:
+  - обновлен `tests/test_product_search.py`, добавлен сценарий multi-exact и code lookup;
+  - общий прогон: `python -m pytest` -> `30 passed`.
+- Текущее состояние:
+  - локальный код готов для деплоя LLM-first логики;
+  - следующий шаг: commit/push и синхронизация VPS с перезапуском `amix-telegram-demo.service`.

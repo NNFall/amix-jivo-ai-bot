@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal
 
 from database.repositories import (
     append_message,
@@ -6,8 +7,10 @@ from database.repositories import (
     get_or_create_customer,
     get_product_by_article,
     get_similar_products,
+    lookup_products,
 )
 from llm.openai_client import OpenAIService
+from llm.prompts import FACTS_RESPONSE_SYSTEM_PROMPT, build_facts_response_prompt
 from products.article_utils import extract_article_candidates
 from products.product_search import ProductSearchService
 from settings import get_settings
@@ -17,8 +20,8 @@ from .handoff_service import HandoffService
 
 
 SAFE_FALLBACK_TEXT = (
-    "Я могу проверить по базе артикул, свободный остаток, цену, единицу измерения, вес и объём. "
-    "Если пришлёте артикул, сразу посмотрю данные. "
+    "Я могу проверить по базе артикул, код, свободный остаток, цену, единицу измерения, вес и объём. "
+    "Если пришлёте артикул или код, сразу посмотрю данные. "
     "Если нужен подбор, аналог или техническая консультация, лучше передать вопрос менеджеру."
 )
 
@@ -26,12 +29,12 @@ JIVO_HANDOFF_TEXT = "Передаю ваш вопрос менеджеру."
 
 TELEGRAM_DEMO_HANDOFF_TEXT = (
     "Этот вопрос требует менеджера. В рабочем режиме я бы передал диалог оператору. "
-    "В демо-режиме могу продолжить только по артикулам, наличию, остаткам и ценам."
+    "В демо-режиме могу продолжить только по артикулам, кодам, наличию, остаткам и ценам."
 )
 
 ARTICLE_REQUIRED_TEXT = (
-    "Чтобы проверить наличие, остаток или цену, пришлите артикул товара. "
-    "По текущей базе я могу проверить артикул, остаток, цену, единицу измерения, вес и объём."
+    "Чтобы проверить наличие, остаток или цену, пришлите артикул или код товара. "
+    "По текущей базе я могу проверить артикул, код, остаток, цену, единицу измерения, вес и объём."
 )
 
 
@@ -39,6 +42,14 @@ ARTICLE_REQUIRED_TEXT = (
 class AssistantReply:
     text: str
     handoff_reason: str | None = None
+
+
+@dataclass(slots=True)
+class LookupPlan:
+    mode: str
+    lookup_query: str = ""
+    clarify_text: str = ""
+    handoff_reason: str = ""
 
 
 class AssistantService:
@@ -78,16 +89,132 @@ class AssistantService:
             payload=payload or {},
         )
 
-        handoff_decision = self.handoff_service.evaluate(customer_text)
-        if handoff_decision.should_handoff and handoff_decision.reason:
-            self.handoff_service.register_handoff(session, chat.external_chat_id, handoff_decision.reason)
+        if self.openai_service.enabled:
+            return self._handle_via_llm(
+                session,
+                external_chat_id=chat.external_chat_id,
+                customer_text=customer_text,
+                outbound_event_id=outbound_event_id,
+                handoff_mode=handoff_mode,
+            )
+
+        return self._handle_via_legacy_fallback(
+            session,
+            external_chat_id=chat.external_chat_id,
+            customer_text=customer_text,
+            outbound_event_id=outbound_event_id,
+            handoff_mode=handoff_mode,
+        )
+
+    def _handle_via_llm(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        outbound_event_id: str | None,
+        handoff_mode: str,
+    ) -> AssistantReply:
+        transcript = self.dialog_service.get_transcript(session, external_chat_id)
+        plan_payload = self.openai_service.generate_lookup_plan(customer_text=customer_text, transcript=transcript)
+        plan = self._parse_plan(plan_payload, customer_text)
+
+        if plan.mode == "handoff":
+            reason = plan.handoff_reason or "llm_requested_manager"
+            self.handoff_service.register_handoff(session, external_chat_id, reason)
             handoff_text = self._resolve_handoff_text(handoff_mode)
             self._append_bot_message(
                 session,
-                external_chat_id=chat.external_chat_id,
+                external_chat_id=external_chat_id,
                 text=handoff_text,
                 outbound_event_id=outbound_event_id,
-                payload={"handoff_reason": handoff_decision.reason},
+                payload={"handoff_reason": reason, "source": "llm_plan"},
+            )
+            return AssistantReply(text=handoff_text, handoff_reason=reason)
+
+        if plan.mode == "clarify":
+            clarify_text = plan.clarify_text or ARTICLE_REQUIRED_TEXT
+            self._append_bot_message(
+                session,
+                external_chat_id=external_chat_id,
+                text=clarify_text,
+                outbound_event_id=outbound_event_id,
+                payload={"source": "llm_plan", "mode": "clarify"},
+            )
+            return AssistantReply(text=clarify_text)
+
+        lookup_query = plan.lookup_query
+        if not lookup_query:
+            # Safety fallback if planner produced empty lookup query.
+            candidates = extract_article_candidates(customer_text)
+            lookup_query = candidates[0] if candidates else ""
+
+        if not lookup_query:
+            self._append_bot_message(
+                session,
+                external_chat_id=external_chat_id,
+                text=ARTICLE_REQUIRED_TEXT,
+                outbound_event_id=outbound_event_id,
+                payload={"source": "llm_plan", "mode": "empty_lookup"},
+            )
+            return AssistantReply(text=ARTICLE_REQUIRED_TEXT)
+
+        exact_matches, similar_matches = lookup_products(session, lookup_query)
+        exact_payload = [self._serialize_product(product) for product in exact_matches]
+        similar_payload = [self._serialize_product(product) for product in similar_matches[:10]]
+
+        facts_prompt = build_facts_response_prompt(
+            customer_text=customer_text,
+            transcript=transcript,
+            lookup_query=lookup_query,
+            exact_matches=exact_payload,
+            similar_matches=similar_payload,
+        )
+        llm_reply = self.openai_service.generate_text(
+            system_prompt=FACTS_RESPONSE_SYSTEM_PROMPT,
+            user_prompt=facts_prompt,
+        )
+
+        if not llm_reply:
+            llm_reply = self._build_programmatic_lookup_fallback(
+                lookup_query=lookup_query,
+                exact_matches=exact_matches,
+                similar_matches=similar_matches,
+            )
+
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=llm_reply,
+            outbound_event_id=outbound_event_id,
+            payload={
+                "source": "llm_facts",
+                "lookup_query": lookup_query,
+                "exact_count": len(exact_matches),
+                "similar_count": len(similar_matches),
+            },
+        )
+        return AssistantReply(text=llm_reply)
+
+    def _handle_via_legacy_fallback(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        outbound_event_id: str | None,
+        handoff_mode: str,
+    ) -> AssistantReply:
+        handoff_decision = self.handoff_service.evaluate(customer_text)
+        if handoff_decision.should_handoff and handoff_decision.reason:
+            self.handoff_service.register_handoff(session, external_chat_id, handoff_decision.reason)
+            handoff_text = self._resolve_handoff_text(handoff_mode)
+            self._append_bot_message(
+                session,
+                external_chat_id=external_chat_id,
+                text=handoff_text,
+                outbound_event_id=outbound_event_id,
+                payload={"handoff_reason": handoff_decision.reason, "source": "legacy"},
             )
             return AssistantReply(text=handoff_text, handoff_reason=handoff_decision.reason)
 
@@ -95,10 +222,10 @@ class AssistantService:
         if not article_candidates and self._needs_article_lookup(customer_text):
             self._append_bot_message(
                 session,
-                external_chat_id=chat.external_chat_id,
+                external_chat_id=external_chat_id,
                 text=ARTICLE_REQUIRED_TEXT,
                 outbound_event_id=outbound_event_id,
-                payload={"source": "article_required"},
+                payload={"source": "legacy", "mode": "clarify"},
             )
             return AssistantReply(text=ARTICLE_REQUIRED_TEXT)
 
@@ -108,10 +235,10 @@ class AssistantService:
                 reply_text = self.product_search.build_product_reply(product)
                 self._append_bot_message(
                     session,
-                    external_chat_id=chat.external_chat_id,
+                    external_chat_id=external_chat_id,
                     text=reply_text,
                     outbound_event_id=outbound_event_id,
-                    payload={"matched_article": candidate},
+                    payload={"matched_article": candidate, "source": "legacy"},
                 )
                 return AssistantReply(text=reply_text)
 
@@ -122,10 +249,10 @@ class AssistantService:
                 reply_text = self.product_search.build_similar_products_reply(requested_article, similar_products)
                 self._append_bot_message(
                     session,
-                    external_chat_id=chat.external_chat_id,
+                    external_chat_id=external_chat_id,
                     text=reply_text,
                     outbound_event_id=outbound_event_id,
-                    payload={"similar_for": requested_article},
+                    payload={"similar_for": requested_article, "source": "legacy"},
                 )
                 return AssistantReply(text=reply_text)
 
@@ -136,14 +263,14 @@ class AssistantService:
             )
             self._append_bot_message(
                 session,
-                external_chat_id=chat.external_chat_id,
+                external_chat_id=external_chat_id,
                 text=reply_text,
                 outbound_event_id=outbound_event_id,
-                payload={"missing_article": requested_article},
+                payload={"missing_article": requested_article, "source": "legacy"},
             )
             return AssistantReply(text=reply_text)
 
-        transcript = self.dialog_service.get_transcript(session, chat.external_chat_id)
+        transcript = self.dialog_service.get_transcript(session, external_chat_id)
         llm_reply = self.openai_service.generate_reply(
             customer_text=customer_text,
             transcript=transcript,
@@ -151,12 +278,99 @@ class AssistantService:
         reply_text = llm_reply or SAFE_FALLBACK_TEXT
         self._append_bot_message(
             session,
-            external_chat_id=chat.external_chat_id,
+            external_chat_id=external_chat_id,
             text=reply_text,
             outbound_event_id=outbound_event_id,
-            payload={"source": "llm" if llm_reply else "fallback"},
+            payload={"source": "legacy_llm" if llm_reply else "legacy_fallback"},
         )
         return AssistantReply(text=reply_text)
+
+    @staticmethod
+    def _parse_plan(plan_payload: dict | None, customer_text: str) -> LookupPlan:
+        if not isinstance(plan_payload, dict):
+            return LookupPlan(mode="lookup", lookup_query="")
+
+        mode_raw = str(plan_payload.get("mode", "")).strip().lower()
+        if mode_raw not in {"lookup", "clarify", "handoff"}:
+            mode_raw = "lookup"
+
+        lookup_query = str(plan_payload.get("lookup_query", "")).strip()
+        clarify_text = str(plan_payload.get("clarify_text", "")).strip()
+        handoff_reason = str(plan_payload.get("handoff_reason", "")).strip()
+
+        # Keep explicit manager requests safe even if planner made a weak decision.
+        if "менеджер" in customer_text.lower() and mode_raw != "handoff":
+            mode_raw = "handoff"
+            handoff_reason = handoff_reason or "client_requested_manager"
+
+        return LookupPlan(
+            mode=mode_raw,
+            lookup_query=lookup_query,
+            clarify_text=clarify_text,
+            handoff_reason=handoff_reason,
+        )
+
+    @staticmethod
+    def _build_programmatic_lookup_fallback(
+        *,
+        lookup_query: str,
+        exact_matches: list,
+        similar_matches: list,
+    ) -> str:
+        if len(exact_matches) == 1:
+            return ProductSearchService().build_product_reply(exact_matches[0])
+
+        if len(exact_matches) > 1:
+            prices = [
+                product.retail_price
+                for product in exact_matches
+                if isinstance(product.retail_price, Decimal)
+            ]
+            price_span = ""
+            if prices:
+                values = sorted(prices)
+                low = values[0]
+                high = values[-1]
+                if low == high:
+                    price_span = f" Цена: {low} руб."
+                else:
+                    price_span = f" Цена от {low} до {high} руб."
+
+            code_list = ", ".join(
+                (product.code or "-")
+                for product in exact_matches[:6]
+            )
+            return (
+                f"По запросу {lookup_query} найдено несколько вариантов: {code_list}."
+                f"{price_span} Уточните, пожалуйста, какой код вы видите на сайте."
+            )
+
+        if similar_matches:
+            return ProductSearchService().build_similar_products_reply(lookup_query, similar_matches[:5])
+
+        return (
+            f"Не нашёл точные данные по запросу {lookup_query}. "
+            "Уточните, пожалуйста, артикул или код, и я проверю ещё раз."
+        )
+
+    @staticmethod
+    def _serialize_product(product) -> dict:
+        return {
+            "code": product.code,
+            "article": product.article,
+            "retail_price": AssistantService._decimal_to_float(product.retail_price),
+            "corporate_price": AssistantService._decimal_to_float(product.corporate_price),
+            "free_stock": AssistantService._decimal_to_float(product.free_stock),
+            "unit": product.unit,
+            "weight": AssistantService._decimal_to_float(product.weight),
+            "volume": AssistantService._decimal_to_float(product.volume),
+        }
+
+    @staticmethod
+    def _decimal_to_float(value: Decimal | None) -> float | None:
+        if value is None:
+            return None
+        return float(value)
 
     @staticmethod
     def _resolve_handoff_text(handoff_mode: str) -> str:
@@ -169,11 +383,11 @@ class AssistantService:
         text = customer_text.lower()
         keywords = (
             "артикул",
+            "код",
             "налич",
             "остат",
             "цена",
             "стоит",
-            "стоим",
             "сколько",
             "есть в наличии",
             "в наличии",

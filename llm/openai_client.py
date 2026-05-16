@@ -1,9 +1,15 @@
 import logging
+from json import JSONDecodeError, loads
 
 import httpx
 from openai import OpenAI
 
-from llm.prompts import SYSTEM_PROMPT, build_user_prompt
+from llm.prompts import (
+    LOOKUP_PLANNER_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+    build_lookup_planner_prompt,
+    build_user_prompt,
+)
 from llm.tools import trim_text
 
 
@@ -31,26 +37,46 @@ class OpenAIService:
             return None
 
         prompt = build_user_prompt(customer_text=customer_text, transcript=trim_text(transcript))
+        return self.generate_text(system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
+
+    def generate_lookup_plan(self, customer_text: str, transcript: str) -> dict | None:
+        if not self.enabled:
+            return None
+
+        prompt = build_lookup_planner_prompt(customer_text=customer_text, transcript=trim_text(transcript))
+        raw = self.generate_text(system_prompt=LOOKUP_PLANNER_SYSTEM_PROMPT, user_prompt=prompt)
+        if not raw:
+            return None
+
+        try:
+            return loads(raw)
+        except JSONDecodeError:
+            logger.warning("Lookup planner returned non-JSON payload")
+            return None
+
+    def generate_text(self, *, system_prompt: str, user_prompt: str) -> str | None:
+        if not self.enabled:
+            return None
 
         if self.provider == "kie":
-            return self._generate_via_kie(prompt)
+            return self._generate_via_kie(system_prompt=system_prompt, user_prompt=user_prompt)
 
-        return self._generate_via_openai(prompt)
+        return self._generate_via_openai(system_prompt=system_prompt, user_prompt=user_prompt)
 
     def _is_enabled(self) -> bool:
         if self.provider == "kie":
             return bool(self.kie_api_key)
         return bool(self.openai_api_key)
 
-    def _generate_via_openai(self, prompt: str) -> str | None:
+    def _generate_via_openai(self, *, system_prompt: str, user_prompt: str) -> str | None:
         if self.client is None:
             return None
 
         try:
             response = self.client.responses.create(
                 model=self.model,
-                instructions=SYSTEM_PROMPT,
-                input=prompt,
+                instructions=system_prompt,
+                input=user_prompt,
             )
         except Exception:  # pragma: no cover - external API failure path
             logger.exception("OpenAI request failed")
@@ -59,7 +85,7 @@ class OpenAIService:
         output_text = getattr(response, "output_text", "")
         return output_text.strip() or None
 
-    def _generate_via_kie(self, prompt: str) -> str | None:
+    def _generate_via_kie(self, *, system_prompt: str, user_prompt: str) -> str | None:
         if not self.kie_api_key:
             return None
 
@@ -68,11 +94,11 @@ class OpenAIService:
             "messages": [
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+                    "content": [{"type": "text", "text": system_prompt}],
                 },
                 {
                     "role": "user",
-                    "content": [{"type": "text", "text": prompt}],
+                    "content": [{"type": "text", "text": user_prompt}],
                 },
             ],
             "reasoning_effort": self.kie_reasoning_effort,

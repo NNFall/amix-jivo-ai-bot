@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from database.models import Base, Product
-from database.repositories import get_product_by_article, get_similar_products
+from database.repositories import get_product_by_article, get_similar_products, lookup_products
 from products.product_search import ProductSearchService
 
 
@@ -83,6 +83,43 @@ def test_get_similar_products_returns_candidates() -> None:
         products = get_similar_products(session, "ab-123", limit=5)
 
         assert [product.article for product in products] == ["AB-123", "AB-123-XL"]
+
+
+def test_lookup_products_returns_multiple_exact_by_article_and_code() -> None:
+    with build_session() as session:
+        session.add_all(
+            [
+                Product(
+                    code="A-1",
+                    article="ART-55",
+                    normalized_article="ART55",
+                    retail_price=Decimal("100"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="A-2",
+                    article="ART-55",
+                    normalized_article="ART55",
+                    retail_price=Decimal("120"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="B-9",
+                    article="ART-559",
+                    normalized_article="ART559",
+                    raw_payload={},
+                ),
+            ]
+        )
+        session.commit()
+
+        exact_by_article, similar_by_article = lookup_products(session, "ART-55")
+        exact_by_code, _ = lookup_products(session, "A-2")
+
+        assert [product.code for product in exact_by_article] == ["A-1", "A-2"]
+        assert any(product.code == "B-9" for product in similar_by_article)
+        assert len(exact_by_code) == 1
+        assert exact_by_code[0].article == "ART-55"
 
 
 def test_product_search_service_builds_readable_reply() -> None:
