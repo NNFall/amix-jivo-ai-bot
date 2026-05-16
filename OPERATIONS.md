@@ -719,3 +719,13 @@
 - Проверки:
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`;
   - `python -m pytest -q` -> `46 passed`.
+- GitHub:
+  - commit: `06c3840`
+  - message: `Add grouped product facts backend actions`
+  - push: `origin/master`
+- VPS синхронизирован с GitHub:
+  - `/root/amix` обновлён до `06c3840`;
+  - `.venv/bin/python -m pytest tests/test_assistant_service.py tests/test_dialog_regression.py tests/test_llm_client.py -q` -> `17 passed`;
+  - `.venv/bin/python scripts/run_dialog_regression_eval.py --output /tmp/amix_dialog_eval.md` -> `OK=31 PARTIAL=0 FAIL=0`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `ActiveState=active`, `SubState=running`, `UnitFileState=enabled`;
+  - рабочее дерево на VPS чистое.

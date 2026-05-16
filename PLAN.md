@@ -2,7 +2,7 @@
 
 ## Update 2026-05-17 (Grouped Product Facts + Backend Actions)
 
-- Status: completed locally
+- Status: completed and deployed
 - Done:
   - Updated product facts prompt to understand grouped lookup results: `queries`, `results`/`per_query_results`, `summary`.
   - Added `backend_actions` context for product-answer generation so the model knows whether search and handoff were already executed.
@@ -14,8 +14,13 @@
 - Checks:
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
   - `python -m pytest -q` -> `46 passed`.
+- Deployed:
+  - Commit `06c3840` pushed to GitHub.
+  - VPS `/root/amix` pulled to `06c3840`.
+  - Server checks: focused pytest -> `17 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+  - `amix-telegram-demo.service` restarted and verified `active/running`.
 - Next:
-  - Commit/push and sync the VPS Telegram demo service with the updated runtime logic.
+  - Run live Telegram demo checks on the customer-facing scenarios and tune wording if real LLM output differs from regression fallback.
 
 ## Update 2026-05-16 (Dialog Eval Logging)
 
