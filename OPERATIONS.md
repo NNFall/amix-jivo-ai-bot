@@ -630,3 +630,7 @@
 - Проверки:
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=25 PARTIAL=0 FAIL=0`;
   - `python -m pytest -q` -> `41 passed`.
+- Изменения отправлены в GitHub:
+  - commit: `802654c`
+  - message: `Make dialog eval report human-readable`
+- VPS синхронизирован до `802654c`, рабочее дерево чистое, `amix-telegram-demo.service` остался `active/running`; перезапуск не требовался, так как runtime-логика не менялась.
