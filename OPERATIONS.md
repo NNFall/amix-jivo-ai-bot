@@ -745,3 +745,13 @@
   - `python -m pytest tests/test_llm_client.py tests/test_assistant_service.py tests/test_dialog_regression.py -q` -> `17 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`;
   - `python -m pytest -q` -> `46 passed`.
+- GitHub:
+  - commit: `4256d2c`
+  - message: `Restore readable product facts prompt`
+  - push: `origin/master`
+- VPS синхронизирован с GitHub:
+  - `/root/amix` обновлён до `4256d2c`;
+  - focused pytest -> `17 passed`;
+  - dialog regression -> `OK=31 PARTIAL=0 FAIL=0`;
+  - проверка `llm/prompts.py` на `????` и literal `\u04xx` -> `False`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running`.
