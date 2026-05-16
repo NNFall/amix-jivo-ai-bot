@@ -21,7 +21,6 @@ import database.db as db_module
 from core.assistant_service import AssistantService
 from database.db import create_db_and_tables, session_scope
 from database.models import Base, Product
-from database.repositories import search_products_structured
 from llm.openai_client import LLMTurnResult
 from products.article_utils import extract_article_candidates
 
@@ -212,7 +211,31 @@ def _fake_llm_turn(**kwargs) -> LLMTurnResult:
     return LLMTurnResult(text=None, tool_calls=[])
 
 
-def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool) -> None:
+ACTION_LABELS = {
+    "company_or_direct_reply": "Обычный ответ без поиска товара",
+    "company_answer": "Ответ по справочной информации AMIX",
+    "clarify": "Уточняющий вопрос: нужен артикул или код",
+    "exact_product_lookup": "Поиск товара: найдено точное совпадение",
+    "multiple_exact_product_lookup": "Поиск товара: найдено несколько точных позиций",
+    "similar_product_lookup": "Поиск товара: точного нет, показаны похожие",
+    "not_found_product_lookup": "Поиск товара: ничего не найдено",
+    "multi_product_lookup": "Поиск нескольких товаров",
+    "product_lookup": "Поиск товара в базе",
+    "product_lookup_then_handoff": "Сначала поиск товара, затем передача менеджеру",
+    "handoff": "Передача менеджеру",
+}
+
+
+HANDOFF_LABELS = {
+    "explicit_manager_request": "клиент попросил менеджера",
+    "complex_technical_question": "сложный технический вопрос",
+    "order_request": "оформление заказа",
+    "requested_quantity_exceeds_stock": "нужного количества больше, чем свободный остаток",
+    "client_dissatisfied": "клиент недоволен и просит человека",
+}
+
+
+def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool, append: bool) -> None:
     temp_dir = None
     if isolated:
         temp_dir = tempfile.TemporaryDirectory()
@@ -259,6 +282,7 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool)
                 {
                     "id": case["id"],
                     "question": customer_text,
+                    "candidates": candidates,
                     "expected_action": case["expected_action"],
                     "actual_action": actual_action,
                     "expected_meaning": case["expected_meaning"],
@@ -272,7 +296,7 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool)
                 }
             )
 
-    _append_report(output_path=output_path, started_at=started_at, rows=rows)
+    _write_report(output_path=output_path, started_at=started_at, rows=rows, append=append)
     print(f"Dialog regression eval saved to: {output_path}")
     print(f"OK={sum(row['status'] == 'OK' for row in rows)} PARTIAL={sum(row['status'] == 'PARTIAL' for row in rows)} FAIL={sum(row['status'] == 'FAIL' for row in rows)}")
     if temp_dir is not None:
@@ -280,31 +304,69 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool)
         temp_dir.cleanup()
 
 
-def _append_report(*, output_path: Path, started_at: datetime, rows: list[dict[str, Any]]) -> None:
-    with output_path.open("a", encoding="utf-8") as fp:
-        fp.write(f"\n## Regression Run {started_at.isoformat()}\n\n")
-        fp.write("| ID | Question | Expected Action | Actual Action | Lookup | Handoff | Status | Comment |\n")
-        fp.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
-        for row in rows:
-            lookup_text = f"{row['lookup_status']} e={row['exact_count']} s={row['similar_count']}" if row["lookup_status"] else "-"
-            fp.write(
-                "| {id} | {question} | `{expected_action}` | `{actual_action}` | {lookup} | {handoff} | **{status}** | {comment} |\n".format(
-                    id=row["id"],
-                    question=row["question"].replace("|", "\\|"),
-                    expected_action=row["expected_action"],
-                    actual_action=row["actual_action"],
-                    lookup=lookup_text,
-                    handoff=row["handoff_reason"] or "-",
-                    status=row["status"],
-                    comment=(row["comment"] or "").replace("|", "\\|"),
-                )
-            )
+def _write_report(*, output_path: Path, started_at: datetime, rows: list[dict[str, Any]], append: bool) -> None:
+    mode = "a" if append else "w"
+    ok_count = sum(row["status"] == "OK" for row in rows)
+    partial_count = sum(row["status"] == "PARTIAL" for row in rows)
+    fail_count = sum(row["status"] == "FAIL" for row in rows)
 
-        fp.write("\n### Answers\n\n")
+    with output_path.open(mode, encoding="utf-8") as fp:
+        if append:
+            fp.write("\n---\n\n")
+        fp.write("# Отчёт по автопроверке диалогов AMIX-бота\n\n")
+        fp.write(f"Дата прогона: `{started_at.isoformat()}`\n\n")
+        fp.write("Что проверялось: бот должен отвечать как менеджер первой линии, искать товарные факты только в SQLite, не выдумывать цены/остатки/характеристики и передавать сложные вопросы менеджеру.\n\n")
+        fp.write(f"Итог: OK — {ok_count}, частично — {partial_count}, ошибки — {fail_count}.\n\n")
+        fp.write("Пояснение по функциям:\n")
+        fp.write("- `search_products` — поиск товара в базе по артикулу или коду.\n")
+        fp.write("- `handoff_to_manager` — передача диалога менеджеру.\n")
+        fp.write("- `нет` — функция не нужна, бот отвечает сам по справке или задаёт уточняющий вопрос.\n\n")
+
         for row in rows:
-            fp.write(f"#### {row['id']}\n")
-            fp.write(f"- Expected meaning: {row['expected_meaning']}\n")
-            fp.write(f"- Answer: {row['answer']}\n\n")
+            fp.write(f"## {row['id']} — {row['status']}\n\n")
+            fp.write(f"Вопрос клиента: {row['question']}\n\n")
+            fp.write(f"Что ожидали: {row['expected_meaning']}\n\n")
+            fp.write(f"Что сделал backend: {_describe_action(row['actual_action'])}\n\n")
+            fp.write("Какие функции были вызваны:\n")
+            for call in _describe_function_calls(row):
+                fp.write(f"- {call}\n")
+            fp.write(f"\nОтвет бота: {row['answer']}\n\n")
+            if row["comment"]:
+                fp.write(f"Комментарий проверки: {row['comment']}\n\n")
+
+
+def _describe_action(action: str) -> str:
+    return ACTION_LABELS.get(action, action)
+
+
+def _describe_function_calls(row: dict[str, Any]) -> list[str]:
+    calls: list[str] = []
+    if row["lookup_status"]:
+        calls.append(
+            "search_products: искал товар по артикулу/коду из сообщения клиента; результат: {status}, точных позиций {exact}, похожих {similar}".format(
+                status=_describe_lookup_status(row["lookup_status"]),
+                exact=row["exact_count"],
+                similar=row["similar_count"],
+            )
+        )
+    if row["handoff_reason"]:
+        reason = HANDOFF_LABELS.get(row["handoff_reason"], row["handoff_reason"])
+        calls.append(f"handoff_to_manager: {reason}")
+    if not calls:
+        calls.append("нет")
+    return calls
+
+
+def _describe_lookup_status(status: str) -> str:
+    labels = {
+        "exact_found": "найдено точное совпадение",
+        "multiple_exact": "найдено несколько точных совпадений",
+        "similar_found": "точного совпадения нет, есть похожие",
+        "not_found": "ничего не найдено",
+        "invalid_query": "нечего искать",
+        "error": "ошибка поиска",
+    }
+    return labels.get(status, status)
 
 
 def main() -> None:
@@ -313,6 +375,7 @@ def main() -> None:
     parser.add_argument("--output", default="DIALOG_EVALS.md")
     parser.add_argument("--no-seed", action="store_true", help="Do not add stable test products before running.")
     parser.add_argument("--use-current-db", action="store_true", help="Run against the configured project database instead of an isolated test DB.")
+    parser.add_argument("--append", action="store_true", help="Append the report instead of replacing the output file.")
     args = parser.parse_args()
 
     run_eval(
@@ -320,6 +383,7 @@ def main() -> None:
         output_path=Path(args.output),
         seed=not args.no_seed,
         isolated=not args.use_current_db,
+        append=args.append,
     )
 
 
