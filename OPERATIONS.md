@@ -666,3 +666,15 @@
 - Проверки:
   - `python -m pytest -q` -> `44 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=25 PARTIAL=0 FAIL=0`.
+- Изменения отправлены в GitHub:
+  - commit: `731cccd`
+  - message: `Tighten dialog regression and multi-query lookup`
+- VPS синхронизирован до `731cccd`.
+- На VPS выполнены проверки:
+  - `.venv/bin/python -m pytest tests/test_article_utils.py tests/test_product_search.py tests/test_dialog_regression.py tests/test_assistant_service.py tests/test_jivo_webhook.py -q` -> `36 passed`;
+  - `.venv/bin/python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=25 PARTIAL=0 FAIL=0`.
+- `amix-telegram-demo.service` перезапущен и проверен:
+  - `ActiveState=active`;
+  - `SubState=running`;
+  - `UnitFileState=enabled`.
+- После серверного проверочного прогона временный diff `DIALOG_EVALS.md` на VPS очищен; рабочее дерево VPS чистое.
