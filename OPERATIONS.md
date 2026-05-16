@@ -611,3 +611,4 @@
   - `ActiveState=active`;
   - `SubState=running`;
   - `UnitFileState=enabled`.
+- После финальной синхронизации на VPS убран временный локальный diff `DIALOG_EVALS.md`, созданный серверным проверочным прогоном; рабочее дерево на VPS оставлено чистым.
