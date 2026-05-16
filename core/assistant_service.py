@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from decimal import Decimal
+import json
 import logging
+from typing import Any
 
 from database.repositories import (
     append_message,
@@ -8,10 +11,11 @@ from database.repositories import (
     get_or_create_customer,
     get_product_by_article,
     get_similar_products,
-    lookup_products,
+    search_products_structured,
 )
 from llm.openai_client import OpenAIService
-from llm.prompts import FACTS_RESPONSE_SYSTEM_PROMPT, build_facts_response_prompt
+from llm.prompts import build_llm_messages, build_product_facts_messages
+from llm.tool_schemas import OPENAI_TOOLS
 from products.article_utils import extract_article_candidates
 from products.product_search import ProductSearchService
 from settings import get_settings
@@ -46,15 +50,6 @@ ARTICLE_REQUIRED_TEXT = (
 class AssistantReply:
     text: str
     handoff_reason: str | None = None
-
-
-@dataclass(slots=True)
-class LookupPlan:
-    mode: str
-    lookup_query: str = ""
-    direct_response: str = ""
-    clarify_text: str = ""
-    handoff_reason: str = ""
 
 
 class AssistantService:
@@ -96,7 +91,7 @@ class AssistantService:
         )
 
         if self.openai_service.enabled:
-            return self._handle_via_llm(
+            return self._handle_via_backend_first_llm(
                 session,
                 external_chat_id=chat.external_chat_id,
                 customer_text=customer_text,
@@ -112,7 +107,7 @@ class AssistantService:
             handoff_mode=handoff_mode,
         )
 
-    def _handle_via_llm(
+    def _handle_via_backend_first_llm(
         self,
         session,
         *,
@@ -122,109 +117,226 @@ class AssistantService:
         handoff_mode: str,
     ) -> AssistantReply:
         transcript = self.dialog_service.get_transcript(session, external_chat_id)
-        plan_payload = self.openai_service.generate_lookup_plan(customer_text=customer_text, transcript=transcript)
-        plan = self._parse_plan(plan_payload, customer_text)
-        self._log_plan(customer_text=customer_text, plan_payload=plan_payload, parsed_plan=plan)
 
-        if (
-            plan.mode == "handoff"
-            and not self._is_explicit_manager_request(customer_text)
-            and self._is_price_stock_request(customer_text)
-            and self._has_lookup_candidate(customer_text)
-        ):
-            forced_query = plan.lookup_query or self._first_lookup_candidate(customer_text)
-            plan = LookupPlan(
-                mode="lookup",
-                lookup_query=forced_query,
-                handoff_reason=plan.handoff_reason,
+        if self._is_explicit_manager_request(customer_text):
+            return self._handoff_reply(
+                session,
+                external_chat_id=external_chat_id,
+                handoff_mode=handoff_mode,
+                outbound_event_id=outbound_event_id,
+                reason="client_requested_manager",
+                source="backend_rule",
             )
-            self._log_forced_lookup_override(customer_text=customer_text, lookup_query=forced_query)
 
-        if plan.mode == "respond":
-            direct_response = plan.direct_response or self.openai_service.generate_reply(
+        prelookup_result = self._run_backend_prelookup(session, customer_text)
+        if prelookup_result is not None:
+            self._log_lookup_result(stage="prelookup", payload=prelookup_result)
+            return self._reply_from_product_result(
+                session,
+                external_chat_id=external_chat_id,
                 customer_text=customer_text,
                 transcript=transcript,
+                product_lookup_result=prelookup_result,
+                outbound_event_id=outbound_event_id,
+                payload_source="backend_prelookup",
             )
-            reply_text = direct_response or SAFE_FALLBACK_TEXT
+
+        messages = build_llm_messages(
+            transcript=transcript,
+            customer_text=customer_text,
+            product_lookup_result=None,
+        )
+        first_turn = self.openai_service.run_messages(messages=messages, tools=OPENAI_TOOLS, tool_choice="auto")
+        self._log_tool_turn(customer_text=customer_text, turn=first_turn)
+
+        if first_turn.tool_calls:
+            tool_reply = self._handle_tool_calls(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                transcript=transcript,
+                tool_calls=first_turn.tool_calls,
+                outbound_event_id=outbound_event_id,
+                handoff_mode=handoff_mode,
+            )
+            if tool_reply is not None:
+                return tool_reply
+
+        if first_turn.text:
             self._append_bot_message(
                 session,
                 external_chat_id=external_chat_id,
-                text=reply_text,
+                text=first_turn.text,
                 outbound_event_id=outbound_event_id,
                 payload={"source": "llm_direct"},
             )
-            return AssistantReply(text=reply_text)
+            return AssistantReply(text=first_turn.text)
 
-        if plan.mode == "handoff":
-            reason = plan.handoff_reason or "llm_requested_manager"
-            self.handoff_service.register_handoff(session, external_chat_id, reason)
-            handoff_text = self._resolve_handoff_text(handoff_mode)
-            self._append_bot_message(
-                session,
-                external_chat_id=external_chat_id,
-                text=handoff_text,
-                outbound_event_id=outbound_event_id,
-                payload={"handoff_reason": reason, "source": "llm_plan"},
-            )
-            return AssistantReply(text=handoff_text, handoff_reason=reason)
-
-        if plan.mode == "clarify":
-            clarify_text = plan.clarify_text or ARTICLE_REQUIRED_TEXT
-            self._append_bot_message(
-                session,
-                external_chat_id=external_chat_id,
-                text=clarify_text,
-                outbound_event_id=outbound_event_id,
-                payload={"source": "llm_plan", "mode": "clarify"},
-            )
-            return AssistantReply(text=clarify_text)
-
-        lookup_query = plan.lookup_query or self._first_lookup_candidate(customer_text)
-        if not lookup_query:
+        if self._is_price_stock_request(customer_text):
             self._append_bot_message(
                 session,
                 external_chat_id=external_chat_id,
                 text=ARTICLE_REQUIRED_TEXT,
                 outbound_event_id=outbound_event_id,
-                payload={"source": "llm_plan", "mode": "empty_lookup"},
+                payload={"source": "fallback", "mode": "article_required"},
             )
             return AssistantReply(text=ARTICLE_REQUIRED_TEXT)
-
-        exact_matches, similar_matches = lookup_products(session, lookup_query)
-        self._log_lookup_call(lookup_query=lookup_query, exact_matches=exact_matches, similar_matches=similar_matches)
-
-        facts_prompt = build_facts_response_prompt(
-            customer_text=customer_text,
-            transcript=transcript,
-            lookup_query=lookup_query,
-            exact_matches=[self._serialize_product(product) for product in exact_matches],
-            similar_matches=[self._serialize_product(product) for product in similar_matches[:10]],
-        )
-        llm_reply = self.openai_service.generate_text(
-            system_prompt=FACTS_RESPONSE_SYSTEM_PROMPT,
-            user_prompt=facts_prompt,
-        )
-
-        if not llm_reply:
-            llm_reply = self._build_programmatic_lookup_fallback(
-                lookup_query=lookup_query,
-                exact_matches=exact_matches,
-                similar_matches=similar_matches,
-            )
 
         self._append_bot_message(
             session,
             external_chat_id=external_chat_id,
-            text=llm_reply,
+            text=SAFE_FALLBACK_TEXT,
+            outbound_event_id=outbound_event_id,
+            payload={"source": "fallback"},
+        )
+        return AssistantReply(text=SAFE_FALLBACK_TEXT)
+
+    def _handle_tool_calls(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        transcript: str,
+        tool_calls: list,
+        outbound_event_id: str | None,
+        handoff_mode: str,
+    ) -> AssistantReply | None:
+        for call in tool_calls:
+            if call.name == "handoff_to_manager":
+                reason = str(call.arguments.get("reason") or "llm_requested_manager")
+                return self._handoff_reply(
+                    session,
+                    external_chat_id=external_chat_id,
+                    handoff_mode=handoff_mode,
+                    outbound_event_id=outbound_event_id,
+                    reason=reason,
+                    source="llm_tool",
+                )
+
+            if call.name != "search_products":
+                continue
+
+            queries = call.arguments.get("queries", [])
+            if not isinstance(queries, list):
+                queries = []
+            queries = [str(item).strip() for item in queries if str(item).strip()]
+            if not queries:
+                continue
+
+            lookup = self._search_products_by_queries(session, queries=queries, reason=str(call.arguments.get("reason") or "unknown"))
+            self._log_lookup_result(stage="tool_call", payload=lookup)
+            return self._reply_from_product_result(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                transcript=transcript,
+                product_lookup_result=lookup,
+                outbound_event_id=outbound_event_id,
+                payload_source="llm_tool_search",
+            )
+        return None
+
+    def _reply_from_product_result(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        transcript: str,
+        product_lookup_result: dict,
+        outbound_event_id: str | None,
+        payload_source: str,
+    ) -> AssistantReply:
+        fact_messages = build_product_facts_messages(
+            transcript=transcript,
+            customer_text=customer_text,
+            product_lookup_result=product_lookup_result,
+        )
+        turn = self.openai_service.run_messages(messages=fact_messages)
+        reply_text = turn.text or self._build_programmatic_lookup_fallback(product_lookup_result)
+
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=reply_text,
             outbound_event_id=outbound_event_id,
             payload={
-                "source": "llm_facts",
-                "lookup_query": lookup_query,
-                "exact_count": len(exact_matches),
-                "similar_count": len(similar_matches),
+                "source": payload_source,
+                "product_lookup_status": product_lookup_result.get("status"),
+                "exact_matches_count": product_lookup_result.get("exact_matches_count"),
+                "similar_matches_count": product_lookup_result.get("similar_matches_count"),
             },
         )
-        return AssistantReply(text=llm_reply)
+        return AssistantReply(text=reply_text)
+
+    def _run_backend_prelookup(self, session, customer_text: str) -> dict[str, Any] | None:
+        candidates = extract_article_candidates(customer_text)
+        if not candidates:
+            return None
+        reason = self._guess_lookup_reason(customer_text)
+        return self._search_products_by_queries(session, queries=candidates, reason=reason)
+
+    def _search_products_by_queries(self, session, *, queries: list[str], reason: str) -> dict:
+        per_query_results: list[dict] = []
+        best: dict | None = None
+        priority = {
+            "multiple_exact": 0,
+            "exact_found": 1,
+            "similar_found": 2,
+            "not_found": 3,
+            "invalid_query": 4,
+            "error": 5,
+        }
+
+        for query in queries:
+            item = search_products_structured(session, query=query, search_type="auto")
+            per_query_results.append(item)
+            if best is None:
+                best = item
+                continue
+            if priority.get(item["status"], 99) < priority.get(best["status"], 99):
+                best = item
+
+        if best is None:
+            return {
+                "queries": queries,
+                "reason": reason,
+                "status": "invalid_query",
+                "exact_matches_count": 0,
+                "similar_matches_count": 0,
+                "exact_matches": [],
+                "similar_matches": [],
+                "backend_notes": ["No valid queries"],
+            }
+
+        return {
+            "queries": queries,
+            "reason": reason,
+            **best,
+            "per_query_results": per_query_results,
+        }
+
+    def _handoff_reply(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        handoff_mode: str,
+        outbound_event_id: str | None,
+        reason: str,
+        source: str,
+    ) -> AssistantReply:
+        self.handoff_service.register_handoff(session, external_chat_id, reason)
+        handoff_text = self._resolve_handoff_text(handoff_mode)
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=handoff_text,
+            outbound_event_id=outbound_event_id,
+            payload={"source": source, "handoff_reason": reason},
+        )
+        return AssistantReply(text=handoff_text, handoff_reason=reason)
 
     def _handle_via_legacy_fallback(
         self,
@@ -237,19 +349,17 @@ class AssistantService:
     ) -> AssistantReply:
         handoff_decision = self.handoff_service.evaluate(customer_text)
         if handoff_decision.should_handoff and handoff_decision.reason:
-            self.handoff_service.register_handoff(session, external_chat_id, handoff_decision.reason)
-            handoff_text = self._resolve_handoff_text(handoff_mode)
-            self._append_bot_message(
+            return self._handoff_reply(
                 session,
                 external_chat_id=external_chat_id,
-                text=handoff_text,
+                handoff_mode=handoff_mode,
                 outbound_event_id=outbound_event_id,
-                payload={"handoff_reason": handoff_decision.reason, "source": "legacy"},
+                reason=handoff_decision.reason,
+                source="legacy",
             )
-            return AssistantReply(text=handoff_text, handoff_reason=handoff_decision.reason)
 
         article_candidates = extract_article_candidates(customer_text)
-        if not article_candidates and self._needs_article_lookup(customer_text):
+        if not article_candidates and self._is_price_stock_request(customer_text):
             self._append_bot_message(
                 session,
                 external_chat_id=external_chat_id,
@@ -300,46 +410,14 @@ class AssistantService:
             )
             return AssistantReply(text=reply_text)
 
-        transcript = self.dialog_service.get_transcript(session, external_chat_id)
-        llm_reply = self.openai_service.generate_reply(
-            customer_text=customer_text,
-            transcript=transcript,
-        )
-        reply_text = llm_reply or SAFE_FALLBACK_TEXT
         self._append_bot_message(
             session,
             external_chat_id=external_chat_id,
-            text=reply_text,
+            text=SAFE_FALLBACK_TEXT,
             outbound_event_id=outbound_event_id,
-            payload={"source": "legacy_llm" if llm_reply else "legacy_fallback"},
+            payload={"source": "legacy_fallback"},
         )
-        return AssistantReply(text=reply_text)
-
-    @staticmethod
-    def _parse_plan(plan_payload: dict | None, customer_text: str) -> LookupPlan:
-        if not isinstance(plan_payload, dict):
-            return LookupPlan(mode="respond")
-
-        mode_raw = str(plan_payload.get("mode", "")).strip().lower()
-        if mode_raw not in {"respond", "lookup", "clarify", "handoff"}:
-            mode_raw = "respond"
-
-        lookup_query = str(plan_payload.get("lookup_query", "")).strip()
-        direct_response = str(plan_payload.get("direct_response", "")).strip()
-        clarify_text = str(plan_payload.get("clarify_text", "")).strip()
-        handoff_reason = str(plan_payload.get("handoff_reason", "")).strip()
-
-        if "менеджер" in customer_text.lower() and mode_raw != "handoff":
-            mode_raw = "handoff"
-            handoff_reason = handoff_reason or "client_requested_manager"
-
-        return LookupPlan(
-            mode=mode_raw,
-            lookup_query=lookup_query,
-            direct_response=direct_response,
-            clarify_text=clarify_text,
-            handoff_reason=handoff_reason,
-        )
+        return AssistantReply(text=SAFE_FALLBACK_TEXT)
 
     @staticmethod
     def _is_explicit_manager_request(customer_text: str) -> bool:
@@ -350,123 +428,70 @@ class AssistantService:
     @staticmethod
     def _is_price_stock_request(customer_text: str) -> bool:
         text = customer_text.lower()
-        keywords = ("цен", "стоит", "стоим", "налич", "остат", "сколько")
+        keywords = ("цен", "стоит", "стоим", "налич", "остат", "сколько", "артикул", "код")
         return any(keyword in text for keyword in keywords)
 
     @staticmethod
-    def _has_lookup_candidate(customer_text: str) -> bool:
-        return bool(AssistantService._first_lookup_candidate(customer_text))
+    def _guess_lookup_reason(customer_text: str) -> str:
+        text = customer_text.lower()
+        if "цена" in text or "стоит" in text:
+            return "price"
+        if "остат" in text or "в наличии" in text or "налич" in text:
+            return "stock"
+        if "сравн" in text:
+            return "compare"
+        return "product_info"
 
-    @staticmethod
-    def _first_lookup_candidate(customer_text: str) -> str:
-        candidates = extract_article_candidates(customer_text)
-        return candidates[0] if candidates else ""
+    def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
+        if not self.debug_lookup_logs:
+            return
+        logger.info("assistant_lookup_%s payload=%s", stage, json.dumps(payload, ensure_ascii=False))
 
-    def _log_plan(self, *, customer_text: str, plan_payload: dict | None, parsed_plan: LookupPlan) -> None:
+    def _log_tool_turn(self, *, customer_text: str, turn) -> None:
         if not self.debug_lookup_logs:
             return
         logger.info(
-            "assistant_lookup_plan customer_text=%r raw=%s parsed_mode=%s parsed_lookup_query=%r parsed_handoff_reason=%r",
+            "assistant_tool_turn customer_text=%r tool_calls=%s text=%r",
             customer_text,
-            plan_payload,
-            parsed_plan.mode,
-            parsed_plan.lookup_query,
-            parsed_plan.handoff_reason,
-        )
-
-    def _log_forced_lookup_override(self, *, customer_text: str, lookup_query: str) -> None:
-        if not self.debug_lookup_logs:
-            return
-        logger.info(
-            "assistant_lookup_plan_override reason=price_stock_with_candidate customer_text=%r forced_lookup_query=%r",
-            customer_text,
-            lookup_query,
-        )
-
-    def _log_lookup_call(self, *, lookup_query: str, exact_matches: list, similar_matches: list) -> None:
-        if not self.debug_lookup_logs:
-            return
-        exact_preview = [{"code": product.code, "article": product.article} for product in exact_matches[:5]]
-        similar_preview = [{"code": product.code, "article": product.article} for product in similar_matches[:5]]
-        logger.info(
-            "assistant_lookup_call query=%r exact_count=%d similar_count=%d exact_preview=%s similar_preview=%s",
-            lookup_query,
-            len(exact_matches),
-            len(similar_matches),
-            exact_preview,
-            similar_preview,
+            [{"name": call.name, "arguments": call.arguments} for call in turn.tool_calls],
+            turn.text,
         )
 
     @staticmethod
-    def _build_programmatic_lookup_fallback(
-        *,
-        lookup_query: str,
-        exact_matches: list,
-        similar_matches: list,
-    ) -> str:
-        if len(exact_matches) == 1:
-            return ProductSearchService().build_product_reply(exact_matches[0])
+    def _build_programmatic_lookup_fallback(product_lookup_result: dict) -> str:
+        status = product_lookup_result.get("status")
+        exact = product_lookup_result.get("exact_matches", [])
+        similar = product_lookup_result.get("similar_matches", [])
+        query = product_lookup_result.get("query", "")
 
-        if len(exact_matches) > 1:
-            prices = [product.retail_price for product in exact_matches if isinstance(product.retail_price, Decimal)]
-            price_span = ""
-            if prices:
-                values = sorted(prices)
-                low = values[0]
-                high = values[-1]
-                price_span = f" Цена: {low} руб." if low == high else f" Цена от {low} до {high} руб."
+        if status in {"exact_found", "multiple_exact"} and exact:
+            if len(exact) == 1:
+                item = exact[0]
+                return (
+                    f"Артикул {item.get('article') or query} найден. "
+                    f"Свободный остаток: {item.get('stock') or 'н/д'} {item.get('unit') or 'шт.'}. "
+                    f"Розничная цена: {item.get('retail_price') or 'н/д'} руб."
+                )
+            lines = [f"Нашёл несколько позиций по запросу {query}:"]
+            for index, item in enumerate(exact[:5], start=1):
+                lines.append(
+                    f"{index}. Код {item.get('code') or '-'} — остаток {item.get('stock') or 'н/д'} {item.get('unit') or 'шт.'}, "
+                    f"цена {item.get('retail_price') or 'н/д'} ₽."
+                )
+            lines.append("Уточните, пожалуйста, какой код товара вам нужен.")
+            return " ".join(lines)
 
-            code_list = ", ".join((product.code or "-") for product in exact_matches[:6])
-            return (
-                f"По запросу {lookup_query} найдено несколько вариантов: {code_list}."
-                f"{price_span} Уточните, пожалуйста, какой код вы видите на сайте."
-            )
+        if status == "similar_found" and similar:
+            preview = ", ".join((item.get("article") or "-") for item in similar[:5])
+            return f"Точного совпадения не нашёл, но есть похожие варианты: {preview}. Уточните, пожалуйста, нужный артикул или код."
 
-        if similar_matches:
-            return ProductSearchService().build_similar_products_reply(lookup_query, similar_matches[:5])
-
-        return (
-            f"Не нашёл точные данные по запросу {lookup_query}. "
-            "Уточните, пожалуйста, артикул или код, и я проверю ещё раз."
-        )
-
-    @staticmethod
-    def _serialize_product(product) -> dict:
-        return {
-            "code": product.code,
-            "article": product.article,
-            "retail_price": AssistantService._decimal_to_float(product.retail_price),
-            "corporate_price": AssistantService._decimal_to_float(product.corporate_price),
-            "free_stock": AssistantService._decimal_to_float(product.free_stock),
-            "unit": product.unit,
-            "weight": AssistantService._decimal_to_float(product.weight),
-            "volume": AssistantService._decimal_to_float(product.volume),
-        }
-
-    @staticmethod
-    def _decimal_to_float(value: Decimal | None) -> float | None:
-        return float(value) if value is not None else None
+        return "Не нашёл точные данные по запросу. Проверьте артикул или код и пришлите ещё раз."
 
     @staticmethod
     def _resolve_handoff_text(handoff_mode: str) -> str:
         if handoff_mode == "demo":
             return TELEGRAM_DEMO_HANDOFF_TEXT
         return JIVO_HANDOFF_TEXT
-
-    @staticmethod
-    def _needs_article_lookup(customer_text: str) -> bool:
-        text = customer_text.lower()
-        keywords = (
-            "артикул",
-            "код",
-            "налич",
-            "остат",
-            "цен",
-            "стоит",
-            "сколько",
-            "в наличии",
-        )
-        return any(keyword in text for keyword in keywords)
 
     @staticmethod
     def _append_bot_message(

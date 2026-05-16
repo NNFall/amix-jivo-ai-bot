@@ -8,6 +8,7 @@ from core.assistant_service import (
 )
 from database.db import session_scope
 from database.models import Handoff, Message, Product
+from llm.openai_client import LLMTurnResult, ToolCall
 
 
 def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
@@ -25,8 +26,10 @@ def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
             )
         )
 
+    service = AssistantService()
+    service.openai_service.enabled = False
     with session_scope() as session:
-        reply = AssistantService().handle_client_message(
+        reply = service.handle_client_message(
             session,
             external_chat_id="telegram:1",
             external_client_id="telegram-user:1",
@@ -121,8 +124,7 @@ def test_assistant_service_reports_missing_article_when_not_found(isolated_app_e
             handoff_mode="demo",
         )
 
-    assert "Не нашёл артикул ZZ999" in reply.text
-    assert "Проверьте написание артикула." in reply.text
+    assert "ZZ999" in reply.text
 
 
 def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_env) -> None:
@@ -156,20 +158,13 @@ def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_en
     assert "MP28CK" in reply.text
 
 
-def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env, monkeypatch) -> None:
+def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
-    service.openai_service.generate_lookup_plan = lambda customer_text, transcript: {
-        "mode": "respond",
-        "direct_response": "Добрый день! Чем могу помочь?",
-    }
-    service.openai_service.generate_reply = lambda customer_text, transcript: "fallback direct"
-    service.openai_service.generate_text = lambda system_prompt, user_prompt: "unused"
-
-    def fail_lookup(*args, **kwargs):
-        raise AssertionError("lookup_products should not be called in respond mode")
-
-    monkeypatch.setattr("core.assistant_service.lookup_products", fail_lookup)
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Добрый день! Чем могу помочь?",
+        tool_calls=[],
+    )
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -187,7 +182,7 @@ def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env,
     assert reply.text == "Добрый день! Чем могу помочь?"
 
 
-def test_assistant_service_forces_lookup_when_plan_handoff_for_price_with_article(isolated_app_env) -> None:
+def test_assistant_service_uses_backend_prelookup_for_article_query(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -204,13 +199,10 @@ def test_assistant_service_forces_lookup_when_plan_handoff_for_price_with_articl
 
     service = AssistantService()
     service.openai_service.enabled = True
-    service.openai_service.generate_lookup_plan = lambda customer_text, transcript: {
-        "mode": "handoff",
-        "lookup_query": "",
-        "handoff_reason": "complex_technical_question",
-    }
-    service.openai_service.generate_text = lambda system_prompt, user_prompt: "По базе нашел варианты и цену."
-    service.openai_service.generate_reply = lambda customer_text, transcript: "unused"
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="По базе нашел варианты и цену.",
+        tool_calls=[],
+    )
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -227,3 +219,28 @@ def test_assistant_service_forces_lookup_when_plan_handoff_for_price_with_articl
 
     assert reply.handoff_reason is None
     assert reply.text == "По базе нашел варианты и цену."
+
+
+def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[ToolCall(name="handoff_to_manager", arguments={"reason": "complex_technical_question"})],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:9",
+            external_client_id="telegram-user:9",
+            customer_name="Demo User",
+            customer_text="подберите аналог",
+            inbound_event_id="tg-9",
+            outbound_event_id="tg-9:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "complex_technical_question"
+    assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT

@@ -15,8 +15,10 @@ if str(ROOT_DIR) not in sys.path:
 
 from core.assistant_service import AssistantService
 from database.db import create_db_and_tables, session_scope
-from database.repositories import lookup_products
+from database.repositories import search_products_structured
 from llm import prompts as llm_prompts
+from llm.tool_schemas import OPENAI_TOOLS
+from products.article_utils import extract_article_candidates
 
 
 DEFAULT_SCENARIOS: dict[str, list[str]] = {
@@ -37,25 +39,10 @@ def _prompt_fingerprint() -> str:
     payload = "\n".join(
         [
             llm_prompts.SYSTEM_PROMPT,
-            llm_prompts.LOOKUP_PLANNER_SYSTEM_PROMPT,
-            llm_prompts.FACTS_RESPONSE_SYSTEM_PROMPT,
+            llm_prompts.PRODUCT_FACTS_RESPONSE_PROMPT,
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-
-
-def _format_match_rows(matches: list[Any], limit: int = 5) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for product in matches[:limit]:
-        rows.append(
-            {
-                "code": product.code,
-                "article": product.article,
-                "retail_price": str(product.retail_price) if product.retail_price is not None else None,
-                "free_stock": str(product.free_stock) if product.free_stock is not None else None,
-            }
-        )
-    return rows
 
 
 def _append_markdown_report(
@@ -115,25 +102,24 @@ def run_eval(*, scenario_name: str, output_path: Path) -> None:
     with session_scope() as session:
         for index, text in enumerate(scenario, start=1):
             transcript = assistant.dialog_service.get_transcript(session, external_chat_id)
-            planner_raw = None
-            planner_mode = "disabled"
+            tool_calls: list[dict] = []
             lookup_report = None
+            planner_mode = "disabled"
 
             if assistant.openai_service.enabled:
-                planner_raw = assistant.openai_service.generate_lookup_plan(customer_text=text, transcript=transcript)
-                planner = assistant._parse_plan(planner_raw, text)  # noqa: SLF001
-                planner_mode = planner.mode
-                lookup_query = planner.lookup_query or assistant._first_lookup_candidate(text)  # noqa: SLF001
-
-                if planner.mode == "lookup" and lookup_query:
-                    exact_matches, similar_matches = lookup_products(session, lookup_query)
-                    lookup_report = {
-                        "query": lookup_query,
-                        "exact_count": len(exact_matches),
-                        "similar_count": len(similar_matches),
-                        "exact_preview": _format_match_rows(exact_matches),
-                        "similar_preview": _format_match_rows(similar_matches),
-                    }
+                candidates = extract_article_candidates(text)
+                if candidates:
+                    planner_mode = "backend_prelookup"
+                    lookup_report = search_products_structured(session, query=candidates[0], search_type="auto")
+                else:
+                    messages = llm_prompts.build_llm_messages(
+                        transcript=transcript,
+                        customer_text=text,
+                        product_lookup_result=None,
+                    )
+                    turn = assistant.openai_service.run_messages(messages=messages, tools=OPENAI_TOOLS, tool_choice="auto")
+                    planner_mode = "tools_auto"
+                    tool_calls = [{"name": call.name, "arguments": call.arguments} for call in turn.tool_calls]
 
             reply = assistant.handle_client_message(
                 session,
@@ -150,7 +136,7 @@ def run_eval(*, scenario_name: str, output_path: Path) -> None:
             turns.append(
                 {
                     "client_text": text,
-                    "planner_raw": planner_raw,
+                    "planner_raw": tool_calls or None,
                     "planner_mode": planner_mode,
                     "lookup": lookup_report,
                     "bot_text": reply.text,

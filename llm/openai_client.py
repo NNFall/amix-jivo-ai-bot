@@ -1,19 +1,31 @@
+from __future__ import annotations
+
 import logging
-from json import JSONDecodeError, loads
+from dataclasses import dataclass
+from json import JSONDecodeError, dumps, loads
+from typing import Any
 
 import httpx
 from openai import OpenAI
 
-from llm.prompts import (
-    LOOKUP_PLANNER_SYSTEM_PROMPT,
-    SYSTEM_PROMPT,
-    build_lookup_planner_prompt,
-    build_user_prompt,
-)
+from llm.prompts import build_llm_messages
 from llm.tools import trim_text
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ToolCall:
+    name: str
+    arguments: dict[str, Any]
+    call_id: str | None = None
+
+
+@dataclass(slots=True)
+class LLMTurnResult:
+    text: str | None
+    tool_calls: list[ToolCall]
 
 
 class OpenAIService:
@@ -35,76 +47,94 @@ class OpenAIService:
     def generate_reply(self, customer_text: str, transcript: str) -> str | None:
         if not self.enabled:
             return None
+        messages = build_llm_messages(
+            transcript=trim_text(transcript),
+            customer_text=customer_text,
+            product_lookup_result=None,
+        )
+        turn = self.run_messages(messages=messages)
+        return turn.text
 
-        prompt = build_user_prompt(customer_text=customer_text, transcript=trim_text(transcript))
-        return self.generate_text(system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
-
-    def generate_lookup_plan(self, customer_text: str, transcript: str) -> dict | None:
+    def run_messages(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str = "auto",
+    ) -> LLMTurnResult:
         if not self.enabled:
-            return None
-
-        prompt = build_lookup_planner_prompt(customer_text=customer_text, transcript=trim_text(transcript))
-        raw = self.generate_text(system_prompt=LOOKUP_PLANNER_SYSTEM_PROMPT, user_prompt=prompt)
-        if not raw:
-            return None
-
-        try:
-            return loads(raw)
-        except JSONDecodeError:
-            logger.warning("Lookup planner returned non-JSON payload")
-            return None
-
-    def generate_text(self, *, system_prompt: str, user_prompt: str) -> str | None:
-        if not self.enabled:
-            return None
+            return LLMTurnResult(text=None, tool_calls=[])
 
         if self.provider == "kie":
-            return self._generate_via_kie(system_prompt=system_prompt, user_prompt=user_prompt)
-
-        return self._generate_via_openai(system_prompt=system_prompt, user_prompt=user_prompt)
+            return self._run_via_kie(messages=messages, tools=tools, tool_choice=tool_choice)
+        return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
         if self.provider == "kie":
             return bool(self.kie_api_key)
         return bool(self.openai_api_key)
 
-    def _generate_via_openai(self, *, system_prompt: str, user_prompt: str) -> str | None:
+    def _run_via_openai(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice: str,
+    ) -> LLMTurnResult:
         if self.client is None:
-            return None
+            return LLMTurnResult(text=None, tool_calls=[])
+
+        kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
 
         try:
-            response = self.client.responses.create(
-                model=self.model,
-                instructions=system_prompt,
-                input=user_prompt,
-            )
+            response = self.client.chat.completions.create(**kwargs)
         except Exception:  # pragma: no cover - external API failure path
             logger.exception("OpenAI request failed")
-            return None
+            return LLMTurnResult(text=None, tool_calls=[])
 
-        output_text = getattr(response, "output_text", "")
-        return output_text.strip() or None
+        try:
+            message = response.choices[0].message
+        except Exception:  # pragma: no cover - defensive
+            return LLMTurnResult(text=None, tool_calls=[])
 
-    def _generate_via_kie(self, *, system_prompt: str, user_prompt: str) -> str | None:
+        tool_calls: list[ToolCall] = []
+        for call in getattr(message, "tool_calls", []) or []:
+            name = getattr(call.function, "name", "")
+            arguments_raw = getattr(call.function, "arguments", "") or ""
+            arguments = self._safe_json_loads(arguments_raw)
+            call_id = getattr(call, "id", None)
+            if name:
+                tool_calls.append(ToolCall(name=name, arguments=arguments, call_id=call_id))
+
+        content = getattr(message, "content", None)
+        text = content.strip() if isinstance(content, str) and content.strip() else None
+        return LLMTurnResult(text=text, tool_calls=tool_calls)
+
+    def _run_via_kie(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice: str,
+    ) -> LLMTurnResult:
         if not self.kie_api_key:
-            return None
+            return LLMTurnResult(text=None, tool_calls=[])
 
         url = f"{self.kie_api_base_url}{self.kie_chat_model_path}"
-        payload = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_prompt}],
-                },
-            ],
+        payload_messages = [{"role": msg["role"], "content": [{"type": "text", "text": msg["content"]}]} for msg in messages]
+        payload: dict[str, Any] = {
+            "messages": payload_messages,
             "reasoning_effort": self.kie_reasoning_effort,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
         if self.kie_enable_web_search:
-            payload["tools"] = [{"type": "web_search"}]
+            payload.setdefault("tools", [])
+            payload["tools"] = [*payload["tools"], {"type": "web_search"}]
 
         headers = {
             "Authorization": f"Bearer {self.kie_api_key}",
@@ -118,9 +148,11 @@ class OpenAIService:
                 data = response.json()
         except Exception:  # pragma: no cover - external API failure path
             logger.exception("KIE request failed")
-            return None
+            return LLMTurnResult(text=None, tool_calls=[])
 
-        return self._extract_kie_text(data)
+        text = self._extract_kie_text(data)
+        tool_calls = self._extract_kie_tool_calls(data)
+        return LLMTurnResult(text=text, tool_calls=tool_calls)
 
     @staticmethod
     def _extract_kie_text(data: dict) -> str | None:
@@ -141,8 +173,48 @@ class OpenAIService:
                 text_value = part.get("text")
                 if isinstance(text_value, str) and text_value.strip():
                     text_parts.append(text_value.strip())
-
             if text_parts:
                 return "\n".join(text_parts)
-
         return None
+
+    def _extract_kie_tool_calls(self, data: dict) -> list[ToolCall]:
+        try:
+            raw_calls = data["choices"][0]["message"].get("tool_calls", [])
+        except (KeyError, IndexError, TypeError, AttributeError):
+            return []
+
+        parsed: list[ToolCall] = []
+        for call in raw_calls or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            name = function.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            arguments_raw = function.get("arguments", "")
+            if isinstance(arguments_raw, dict):
+                arguments = arguments_raw
+            else:
+                arguments = self._safe_json_loads(str(arguments_raw or ""))
+            parsed.append(ToolCall(name=name, arguments=arguments, call_id=call.get("id")))
+        return parsed
+
+    @staticmethod
+    def _safe_json_loads(value: str) -> dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            payload = loads(value)
+        except JSONDecodeError:
+            logger.warning("Failed to decode tool call arguments: %s", value)
+            return {}
+        if isinstance(payload, dict):
+            return payload
+        return {"value": payload}
+
+    @staticmethod
+    def build_tool_result_message(*, tool_call_id: str | None, result: dict[str, Any]) -> dict[str, Any]:
+        content = dumps(result, ensure_ascii=False)
+        if tool_call_id:
+            return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+        return {"role": "tool", "content": content}

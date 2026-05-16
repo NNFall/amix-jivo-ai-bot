@@ -4,7 +4,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from database.models import Base, Product
-from database.repositories import get_product_by_article, get_similar_products, lookup_products
+from database.repositories import (
+    get_product_by_article,
+    get_similar_products,
+    lookup_products,
+    search_products_structured,
+)
 from products.product_search import ProductSearchService
 
 
@@ -120,6 +125,42 @@ def test_lookup_products_returns_multiple_exact_by_article_and_code() -> None:
         assert any(product.code == "B-9" for product in similar_by_article)
         assert len(exact_by_code) == 1
         assert exact_by_code[0].article == "ART-55"
+
+
+def test_search_products_structured_prioritizes_exact_and_excludes_duplicates() -> None:
+    with build_session() as session:
+        session.add_all(
+            [
+                Product(
+                    code="X-1",
+                    article="ABC-100",
+                    normalized_article="ABC100",
+                    raw_payload={},
+                ),
+                Product(
+                    code="X-2",
+                    article="ABC-100",
+                    normalized_article="ABC100",
+                    raw_payload={},
+                ),
+                Product(
+                    code="X-3",
+                    article="ABC-100-ALT",
+                    normalized_article="ABC100ALT",
+                    raw_payload={},
+                ),
+            ]
+        )
+        session.commit()
+
+        result = search_products_structured(session, query="ABC-100")
+
+    assert result["status"] == "multiple_exact"
+    assert result["exact_matches_count"] == 2
+    assert result["similar_matches_count"] >= 1
+    exact_codes = {item["code"] for item in result["exact_matches"]}
+    similar_codes = {item["code"] for item in result["similar_matches"]}
+    assert exact_codes.isdisjoint(similar_codes)
 
 
 def test_product_search_service_builds_readable_reply() -> None:

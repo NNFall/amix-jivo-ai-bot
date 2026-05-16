@@ -281,6 +281,77 @@ def lookup_products(session, query: str, exact_limit: int = 20, similar_limit: i
     return exact_matches, similar_matches
 
 
+def search_products_structured(
+    session,
+    *,
+    query: str,
+    search_type: str = "auto",
+    exact_limit: int = 20,
+    similar_limit: int = 20,
+) -> dict:
+    query_raw = (query or "").strip()
+    query_normalized = normalize_article(query_raw)
+
+    result = {
+        "query": query_raw,
+        "query_normalized": query_normalized,
+        "search_type": search_type,
+        "status": "invalid_query",
+        "exact_matches_count": 0,
+        "similar_matches_count": 0,
+        "exact_matches": [],
+        "similar_matches": [],
+        "backend_notes": [],
+    }
+    if not query_raw:
+        result["backend_notes"].append("Empty query")
+        return result
+
+    exact_matches, similar_matches = lookup_products(
+        session,
+        query=query_raw,
+        exact_limit=exact_limit,
+        similar_limit=similar_limit,
+    )
+    exact_ids = {product.id for product in exact_matches}
+    strict_similar = [product for product in similar_matches if product.id not in exact_ids]
+
+    result["exact_matches"] = [_serialize_product(product) for product in exact_matches]
+    result["similar_matches"] = [_serialize_product(product) for product in strict_similar]
+    result["exact_matches_count"] = len(result["exact_matches"])
+    result["similar_matches_count"] = len(result["similar_matches"])
+
+    if result["exact_matches_count"] == 1:
+        result["status"] = "exact_found"
+        result["backend_notes"].append("Exact match by code/article/normalized_article")
+    elif result["exact_matches_count"] > 1:
+        result["status"] = "multiple_exact"
+        result["backend_notes"].append("Multiple exact matches returned")
+    elif result["similar_matches_count"] > 0:
+        result["status"] = "similar_found"
+        result["backend_notes"].append("No exact match, similar candidates returned")
+    else:
+        result["status"] = "not_found"
+        result["backend_notes"].append("No exact or similar matches")
+
+    return result
+
+
+def _serialize_product(product: Product) -> dict:
+    return {
+        "code": product.code,
+        "article": product.article,
+        "retail_price": str(product.retail_price) if product.retail_price is not None else None,
+        "corporate_price": str(product.corporate_price) if product.corporate_price is not None else None,
+        "unit": product.unit,
+        "weight": str(product.weight) if product.weight is not None else None,
+        "volume": str(product.volume) if product.volume is not None else None,
+        "stock": str(product.free_stock) if product.free_stock is not None else None,
+        "category": "",
+        "tags": [],
+    }
+
+
 def create_product_import(session, filename: str, source_path: str) -> ProductImport:
     entity = ProductImport(filename=filename, source_path=source_path, status="started")
     session.add(entity)

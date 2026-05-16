@@ -1,5 +1,31 @@
 # OPERATIONS
 
+## 2026-05-16 - Iteration 16
+
+- Получена внешняя спецификация по целевой архитектуре (backend-first поиск + 2 tools) и принята как базовый ориентир доработки.
+- Добавлена фиксация спецификации в репозитории:
+  - `docs/LLM_IMPLEMENTATION_SPEC.md` — архитектурные правила и приоритеты.
+  - `docs/PROMPTS_AND_TOOLS_REFERENCE.md` — полный snapshot промптов и tool-схем.
+- Выполнен рефакторинг LLM-слоя и ассистента:
+  - `llm/prompts.py` переписан на единый `SYSTEM_PROMPT` + `PRODUCT_FACTS_RESPONSE_PROMPT`;
+  - `llm/tool_schemas.py` добавлены `search_products` и `handoff_to_manager`;
+  - `llm/openai_client.py` добавлена поддержка tool-calls для OpenAI/KIE chat completion style;
+  - `core/assistant_service.py` переведён на backend-first поток:
+    - prelookup по кандидатам до LLM;
+    - LLM tools auto при отсутствии prelookup;
+    - handoff через tool/rule;
+    - логирование lookup/tool-этапов.
+- Усилен поиск в БД:
+  - `database/repositories.py` добавлен `search_products_structured(...)` со status/notes/exact/similar-count;
+  - исключение дублей exact в similar.
+- Актуализированы QA-скрипты и тесты:
+  - `scripts/run_dialog_eval.py` адаптирован под новый flow;
+  - `tests/test_assistant_service.py` переписан под backend-first + tools;
+  - `tests/test_product_search.py` переписан, добавлен test на structured-result и disjoint exact/similar.
+- Запуск проверок:
+  - `python -m pytest -q` -> `34 passed`.
+  - `python scripts/run_dialog_eval.py --scenario products_only --output DIALOG_EVALS.md` -> успешно.
+
 ## 2026-05-16 - Iteration 15
 
 - Goal: add persistent history for dialog test runs and make LLM/planner/lookup behavior auditable.

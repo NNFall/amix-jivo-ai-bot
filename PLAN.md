@@ -16,6 +16,26 @@
   - Run eval script on VPS with active KIE key to capture real LLM planner/function-call behavior in logs and markdown.
   - Sync latest commit to server and restart `amix-telegram-demo.service`.
 
+## Update 2026-05-16 (Backend-First Search + Tools)
+
+- Status: completed
+- Done:
+  - Replaced planner-centric flow with backend-first lookup in `AssistantService`.
+  - Added structured search result object in `database/repositories.py` via `search_products_structured(...)` with statuses:
+    `exact_found`, `multiple_exact`, `similar_found`, `not_found`, `invalid_query`.
+  - Added two explicit tool schemas in `llm/tool_schemas.py`:
+    `search_products`, `handoff_to_manager`.
+  - Rebuilt prompts to single main role + product-facts response:
+    `SYSTEM_PROMPT`, `PRODUCT_FACTS_RESPONSE_PROMPT` in `llm/prompts.py`.
+  - Refactored `llm/openai_client.py` to support tool-call parsing for OpenAI/KIE chat-completions style responses.
+  - Added formal spec files:
+    - `docs/LLM_IMPLEMENTATION_SPEC.md`
+    - `docs/PROMPTS_AND_TOOLS_REFERENCE.md` (full snapshot of prompts/tools).
+  - Updated and expanded tests under new architecture.
+  - Regression: `python -m pytest -q` -> `34 passed`.
+- Next:
+  - Deploy this branch to VPS and run dialog eval with active KIE API key to verify real tool-calling behavior in runtime logs.
+
 ## Текущий статус
 
 LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, реальный XML AMIX `prices.xml` уже импортирован локально и на VPS, а Telegram demo service запущен на сервере и использует ту же SQLite-базу с `5440` товарами. Ближайший рабочий фокус теперь смещается с инфраструктуры на демонстрационный прогон и последующую Jivo-интеграцию с реальными payload.
