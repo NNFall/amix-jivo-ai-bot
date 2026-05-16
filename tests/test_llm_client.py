@@ -1,6 +1,7 @@
 import httpx
 
 from llm.openai_client import OpenAIService
+from llm.prompts import build_product_facts_messages
 from settings import get_settings
 
 
@@ -58,3 +59,31 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["json"]["reasoning_effort"] == "high"
     assert collector["json"]["messages"][0]["role"] == "system"
     assert collector["json"]["messages"][1]["role"] == "user"
+
+
+def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
+    messages = build_product_facts_messages(
+        transcript="Клиент: тест",
+        customer_text="Сравните 14.023л. и 14.023пр.",
+        product_lookup_result={
+            "queries": ["14.023л.", "14.023пр."],
+            "results": [
+                {"query": "14.023л.", "status": "exact_found", "exact_matches": [{"code": "769"}]},
+                {"query": "14.023пр.", "status": "exact_found", "exact_matches": [{"code": "770"}]},
+            ],
+            "summary": {"total_queries": 2, "total_exact_matches": 2},
+        },
+        backend_actions={
+            "search_products_called": True,
+            "handoff_to_manager_called": True,
+            "handoff_reason": "complex_technical_question",
+        },
+    )
+
+    user_content = messages[1]["content"]
+
+    assert "Данные для ответа" in user_content
+    assert "backend_actions" in user_content
+    assert "handoff_to_manager_called" in user_content
+    assert "results" in user_content
+    assert "14.023л." in user_content

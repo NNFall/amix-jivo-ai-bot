@@ -678,3 +678,44 @@
   - `SubState=running`;
   - `UnitFileState=enabled`.
 - После серверного проверочного прогона временный diff `DIALOG_EVALS.md` на VPS очищен; рабочее дерево VPS чистое.
+## 2026-05-17 - Итерация 18
+
+- Доработаны промпты под новую grouped-структуру результата поиска:
+  - `product_lookup_result.queries`;
+  - `product_lookup_result.results` / `per_query_results`;
+  - `product_lookup_result.summary`.
+- В `build_product_facts_messages` добавлен параметр `backend_actions`.
+- В product facts context теперь передаётся:
+  - `search_products_called`;
+  - `handoff_to_manager_called`;
+  - `handoff_reason`.
+- В prompt добавлены запреты на служебные клиентские формулировки:
+  - `в демо-режиме`;
+  - `в рабочем режиме`;
+  - `backend`;
+  - `product_lookup_result`;
+  - `exact_matches`;
+  - `similar_matches`;
+  - `handoff_to_manager`;
+  - `tool call` / `function call`.
+- `AssistantService` обновлён:
+  - если в сообщении есть артикулы/коды и одновременно нужен менеджер, backend сначала выполняет поиск товаров, затем создаёт handoff;
+  - в ответах с handoff используется пользовательская формулировка `Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.`;
+  - результат multi-query поиска отдаёт alias `results`, чтобы LLM и автопроверка работали с одной grouped-структурой.
+- Улучшена обработка compact-кандидатов:
+  - успешное exact-совпадение не дублируется похожими alias-запросами;
+  - добавлены стоп-слова для извлечения артикулов из фраз вроде `Проверьте код 1364`, `Сколько стоят ...`, `Сравните ...`.
+- Добавлены новые сценарии автопроверки T-026..T-031:
+  - смешанный результат exact + not_found;
+  - два exact-query в одном сообщении;
+  - несколько точных товаров по одному query плюс один точный товар по другому;
+  - заказ количества больше остатка;
+  - сравнение двух артикулов с явной просьбой менеджера;
+  - два товара, где у одного нет цены.
+- Обновлены тесты:
+  - проверка передачи `backend_actions` в product facts prompt;
+  - проверка grouped-result payload в LLM messages.
+- Перегенерирован `DIALOG_EVALS.md`.
+- Проверки:
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`;
+  - `python -m pytest -q` -> `46 passed`.

@@ -1,5 +1,22 @@
 # PLAN
 
+## Update 2026-05-17 (Grouped Product Facts + Backend Actions)
+
+- Status: completed locally
+- Done:
+  - Updated product facts prompt to understand grouped lookup results: `queries`, `results`/`per_query_results`, `summary`.
+  - Added `backend_actions` context for product-answer generation so the model knows whether search and handoff were already executed.
+  - Added explicit bans on internal/service wording in customer replies: demo-mode phrases, backend/tool names, `product_lookup_result`, `exact_matches`, `handoff_to_manager`.
+  - Adjusted assistant flow so product lookup can happen before manager handoff when a message contains both product IDs and a manager request.
+  - Improved compact article candidate handling so alias queries do not duplicate a successful exact match.
+  - Added grouped-result and handoff regression scenarios T-026..T-031.
+  - Regenerated `DIALOG_EVALS.md` in the human-readable format.
+- Checks:
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+  - `python -m pytest -q` -> `46 passed`.
+- Next:
+  - Commit/push and sync the VPS Telegram demo service with the updated runtime logic.
+
 ## Update 2026-05-16 (Dialog Eval Logging)
 
 - Status: completed

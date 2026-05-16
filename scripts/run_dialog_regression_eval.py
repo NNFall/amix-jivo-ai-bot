@@ -113,11 +113,7 @@ def _classify_action(case: dict, lookup: dict | None, reply_handoff_reason: str 
         if any(word in text for word in ("цена", "стоит", "наличие", "остаток")):
             return "clarify"
         return "company_or_direct_reply"
-    successful_queries = [
-        item for item in lookup.get("per_query_results", [])
-        if item.get("status") in {"exact_found", "multiple_exact"}
-    ]
-    if len(successful_queries) > 1:
+    if len(lookup.get("per_query_results", [])) > 1:
         return "multi_product_lookup"
     status = lookup.get("status")
     if status == "multiple_exact":
@@ -194,6 +190,13 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
             failures.append("multiple queries were not checked")
         if int(summary.get("total_exact_matches") or 0) < 2:
             failures.append("multiple queries did not return two exact products")
+    if "mixed_found_not_found" in criteria and lookup:
+        statuses = {item.get("status") for item in lookup.get("per_query_results", [])}
+        if not (statuses & {"exact_found", "multiple_exact"} and "not_found" in statuses):
+            failures.append("mixed exact/not_found grouped result expected")
+    if "grouped_results" in criteria and lookup:
+        if not lookup.get("results"):
+            failures.append("grouped results alias was not present")
     if "stock_less_than_requested" in criteria and lookup:
         exact = lookup.get("exact_matches", [])
         if exact and Decimal(exact[0].get("stock") or "0") >= Decimal("5"):

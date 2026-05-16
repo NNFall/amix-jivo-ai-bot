@@ -93,6 +93,25 @@ class AssistantService:
         outbound_event_id: str | None,
         handoff_mode: str,
     ) -> AssistantReply:
+        article_candidates = extract_article_candidates(customer_text)
+        if self._is_explicit_manager_request(customer_text) and article_candidates:
+            lookup_result = self._search_products_by_queries(
+                session,
+                queries=article_candidates,
+                reason=self._guess_lookup_reason(customer_text),
+            )
+            return self._reply_from_product_result(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                transcript=transcript,
+                product_lookup_result=lookup_result,
+                outbound_event_id=outbound_event_id,
+                payload_source="backend_manager_prelookup",
+                force_handoff_reason="client_requested_manager",
+                handoff_mode=handoff_mode,
+            )
+
         if self._is_explicit_manager_request(customer_text):
             return self._handoff_reply(
                 session,
@@ -103,7 +122,6 @@ class AssistantService:
                 source="backend_rule",
             )
 
-        article_candidates = extract_article_candidates(customer_text)
         handoff_decision = self.handoff_service.evaluate(customer_text)
 
         if handoff_decision.should_handoff and handoff_decision.reason == "order_request" and article_candidates:
@@ -271,32 +289,30 @@ class AssistantService:
         force_handoff_reason: str | None = None,
         handoff_mode: str = "jivo",
     ) -> AssistantReply:
+        requested_quantity = self._extract_requested_quantity(customer_text)
+        stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
+        handoff_reason = force_handoff_reason or stock_handoff_reason
+        backend_actions = {
+            "search_products_called": True,
+            "handoff_to_manager_called": bool(handoff_reason),
+            "handoff_reason": handoff_reason,
+        }
+
         turn = None
         if self.openai_service.enabled:
             fact_messages = build_product_facts_messages(
                 transcript=transcript,
                 customer_text=customer_text,
                 product_lookup_result=product_lookup_result,
+                backend_actions=backend_actions,
             )
             turn = self.openai_service.run_messages(messages=fact_messages)
 
         reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(product_lookup_result)
-        requested_quantity = self._extract_requested_quantity(customer_text)
-        stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
-        handoff_reason = force_handoff_reason or stock_handoff_reason
 
         if handoff_reason:
             self.handoff_service.register_handoff(session, external_chat_id, handoff_reason)
-            if handoff_reason == "order_request":
-                reply_text = f"{reply_text} Для оформления заказа передаю вопрос менеджеру."
-            elif handoff_reason == "requested_quantity_exceeds_stock":
-                reply_text = f"{reply_text} Запрошенного количества может не хватить, лучше передам вопрос менеджеру для уточнения."
-            elif handoff_reason == "complex_technical_question":
-                reply_text = (
-                    f"{reply_text} По текущей выгрузке могу сравнить только данные из базы: код, артикул, цену, "
-                    "остаток, единицу измерения, вес и объём. Технического описания отличий в базе нет, "
-                    "поэтому передаю вопрос менеджеру."
-                )
+            reply_text = self._ensure_handoff_text(reply_text, handoff_reason)
 
         self._append_bot_message(
             session,
@@ -308,10 +324,29 @@ class AssistantService:
                 "product_lookup_status": product_lookup_result.get("status"),
                 "exact_matches_count": product_lookup_result.get("exact_matches_count"),
                 "similar_matches_count": product_lookup_result.get("similar_matches_count"),
+                "backend_actions": backend_actions,
                 "handoff_reason": handoff_reason,
             },
         )
         return AssistantReply(text=reply_text, handoff_reason=handoff_reason)
+
+    @staticmethod
+    def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
+        text_lower = reply_text.lower()
+        if "переда" in text_lower and "менеджер" in text_lower:
+            return reply_text
+
+        if handoff_reason == "order_request":
+            return f"{reply_text} Для оформления заказа передаю вопрос менеджеру."
+        if handoff_reason == "requested_quantity_exceeds_stock":
+            return f"{reply_text} Запрошенного количества может не хватить, передаю вопрос менеджеру для уточнения."
+        if handoff_reason == "complex_technical_question":
+            return (
+                f"{reply_text} По текущей выгрузке могу сравнить только данные из базы: код, артикул, цену, "
+                "остаток, единицу измерения, вес и объём. Технического описания отличий в базе нет. "
+                "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
+            )
+        return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 
     def _fallback_without_llm(
         self,
@@ -347,6 +382,18 @@ class AssistantService:
 
         for query in queries:
             item = search_products_structured(session, query=query, search_type="auto")
+            item_exact_keys = {
+                match.get("code") or match.get("article") or str(index)
+                for index, match in enumerate(item.get("exact_matches", []))
+            }
+            item_similar_keys = {
+                match.get("code") or match.get("article") or str(index)
+                for index, match in enumerate(item.get("similar_matches", []))
+            }
+            if item_exact_keys and item_exact_keys <= set(unique_exact):
+                continue
+            if not item_exact_keys and item_similar_keys and item_similar_keys <= set(unique_exact):
+                continue
             per_query_results.append(item)
             for match in item.get("exact_matches", []):
                 unique_exact[match.get("code") or match.get("article") or str(len(unique_exact))] = match
@@ -390,6 +437,7 @@ class AssistantService:
             "exact_matches_count": exact_count if exact_matches else best.get("exact_matches_count", 0),
             "similar_matches_count": 0 if exact_matches else best.get("similar_matches_count", 0),
             "summary": summary,
+            "results": per_query_results,
             "per_query_results": per_query_results,
         }
 
@@ -456,20 +504,38 @@ class AssistantService:
         exact = product_lookup_result.get("exact_matches", [])
         similar = product_lookup_result.get("similar_matches", [])
         query = product_lookup_result.get("query", "")
-        per_query_results = product_lookup_result.get("per_query_results", [])
+        per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results", [])
 
-        successful_queries = [
-            item for item in per_query_results if item.get("status") in {"exact_found", "multiple_exact"}
-        ]
-        if len(successful_queries) > 1:
+        if len(per_query_results) > 1:
             lines = ["Проверил:"]
-            for index, item in enumerate(successful_queries, start=1):
-                match = item["exact_matches"][0]
-                lines.append(
-                    f"{index}. {match.get('article') or item.get('query')} — код {match.get('code') or '-'}, "
-                    f"остаток {AssistantService._format_number(match.get('stock'))} {match.get('unit') or 'шт.'}, "
-                    f"розничная цена {AssistantService._format_number(match.get('retail_price')) or 'н/д'} руб."
-                )
+            for index, item in enumerate(per_query_results, start=1):
+                item_status = item.get("status")
+                item_query = item.get("query") or "запрос"
+                item_exact = item.get("exact_matches", [])
+                item_similar = item.get("similar_matches", [])
+                if item_status in {"exact_found", "multiple_exact"} and item_exact:
+                    if len(item_exact) == 1:
+                        match = item_exact[0]
+                        retail_price = AssistantService._format_number(match.get("retail_price"))
+                        price_text = f", розничная цена {retail_price} руб." if retail_price else ", цена в текущей выгрузке не указана"
+                        lines.append(
+                            f"{index}. {match.get('article') or item_query} — код {match.get('code') or '-'}, "
+                            f"остаток {AssistantService._format_number(match.get('stock'))} {match.get('unit') or 'шт.'}{price_text}."
+                        )
+                    else:
+                        variants = "; ".join(
+                            f"код {match.get('code') or '-'}, остаток {AssistantService._format_number(match.get('stock'))} {match.get('unit') or 'шт.'}"
+                            for match in item_exact[:5]
+                        )
+                        lines.append(f"{index}. По {item_query} найдено несколько точных позиций: {variants}. Уточните нужный код.")
+                elif item_status == "similar_found" and item_similar:
+                    variants = "; ".join(
+                        f"{match.get('article') or '-'} — код {match.get('code') or '-'}"
+                        for match in item_similar[:3]
+                    )
+                    lines.append(f"{index}. По {item_query} точного совпадения не нашёл, есть похожие варианты: {variants}.")
+                else:
+                    lines.append(f"{index}. По {item_query} в текущей базе ничего не нашёл. Проверьте артикул или код.")
             return " ".join(lines)
 
         if status in {"exact_found", "multiple_exact"} and exact:

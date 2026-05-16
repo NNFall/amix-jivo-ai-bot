@@ -246,6 +246,51 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT
 
 
+def test_assistant_service_passes_backend_actions_to_facts_prompt(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                free_stock=Decimal("220"),
+                unit="шт",
+                retail_price=Decimal("473"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def capture_messages(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return LLMTurnResult(text="Артикул найден. Передаю вопрос менеджеру.", tool_calls=[])
+
+    service.openai_service.run_messages = capture_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:backend-actions",
+            external_client_id="telegram-user:backend-actions",
+            customer_name="Demo User",
+            customer_text="Хочу заказать 10 штук 14.023пр.",
+            inbound_event_id="tg-backend-actions",
+            outbound_event_id="tg-backend-actions:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    content = captured["messages"][1]["content"]
+    assert reply.handoff_reason == "order_request"
+    assert "backend_actions" in content
+    assert "handoff_to_manager_called" in content
+    assert "order_request" in content
+    assert "results" in content
+
+
 def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

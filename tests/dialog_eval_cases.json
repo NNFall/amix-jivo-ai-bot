@@ -267,5 +267,78 @@
     "criteria": [
       "handoff"
     ]
+  },
+  {
+    "id": "T-026",
+    "customer_text": "Проверьте 14.023пр. и XYZ-999",
+    "expected_action": "multi_product_lookup",
+    "expected_meaning": "Grouped-result: один артикул должен найтись, второй не должен; ответ не должен смешивать результаты по разным query.",
+    "criteria": [
+      "product_lookup",
+      "grouped_results",
+      "mixed_found_not_found",
+      "no_fake_product"
+    ]
+  },
+  {
+    "id": "T-027",
+    "customer_text": "Есть 14.023л. и 14.023пр.?",
+    "expected_action": "multi_product_lookup",
+    "expected_meaning": "Grouped-result: два артикула в одном сообщении, по каждому должен быть отдельный результат.",
+    "criteria": [
+      "product_lookup",
+      "multiple_queries",
+      "grouped_results"
+    ]
+  },
+  {
+    "id": "T-028",
+    "customer_text": "Проверьте ABC-100 и 1364",
+    "expected_action": "multi_product_lookup",
+    "expected_meaning": "Grouped-result: один query даёт несколько точных товаров, второй query даёт один точный товар.",
+    "criteria": [
+      "product_lookup",
+      "multiple_queries",
+      "grouped_results",
+      "shows_all_exact"
+    ]
+  },
+  {
+    "id": "T-029",
+    "customer_text": "Хочу заказать 5 штук P-AM02/B-S",
+    "expected_action": "product_lookup_then_handoff",
+    "expected_meaning": "Backend ищет товар, видит что остаток меньше запрошенного количества и передаёт менеджеру для уточнения.",
+    "criteria": [
+      "product_lookup",
+      "exact_found",
+      "stock_less_than_requested",
+      "handoff",
+      "no_fake_price"
+    ]
+  },
+  {
+    "id": "T-030",
+    "customer_text": "Сравните 14.023л. и 14.023пр. и позовите менеджера",
+    "expected_action": "product_lookup_then_handoff",
+    "expected_meaning": "При техническом сравнении backend сначала ищет оба товара, затем выполняет handoff.",
+    "criteria": [
+      "product_lookup",
+      "multiple_queries",
+      "grouped_results",
+      "handoff",
+      "no_fake_specs"
+    ]
+  },
+  {
+    "id": "T-031",
+    "customer_text": "Сколько стоят 14.023пр. и P-AM02/B-S?",
+    "expected_action": "multi_product_lookup",
+    "expected_meaning": "Grouped-result: два query, по одному есть цена, по второму цена отсутствует; бот не должен придумывать цену.",
+    "criteria": [
+      "product_lookup",
+      "multiple_queries",
+      "grouped_results",
+      "no_fake_price"
+    ]
   }
 ]
