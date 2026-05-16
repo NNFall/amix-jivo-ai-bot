@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     kie_chat_model_path: str = "/gpt-5-2/v1/chat/completions"
     kie_reasoning_effort: str = "high"
     kie_enable_web_search: bool = False
+    assistant_debug_lookup_logs: bool = True
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None

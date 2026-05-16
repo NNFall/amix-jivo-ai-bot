@@ -1,5 +1,18 @@
 # OPERATIONS
 
+## 2026-05-16 - Iteration 15
+
+- Goal: add persistent history for dialog test runs and make LLM/planner/lookup behavior auditable.
+- Created `DIALOG_EVALS.md` as a versioned markdown log for dialog evaluations.
+- Added `scripts/run_dialog_eval.py`:
+  - runs predefined dialog scenarios (`smoke`, `products_only`);
+  - stores provider/model + prompt fingerprint;
+  - stores per-turn planner payload/mode, lookup call result preview, and final assistant reply;
+  - appends every run to `DIALOG_EVALS.md`.
+- Executed `python scripts/run_dialog_eval.py --scenario smoke --output DIALOG_EVALS.md`.
+- Executed `python -m pytest -q` -> `32 passed`.
+- Result: project now has repeatable dialog QA history in markdown, ready for iterative prompt tuning and response quality review.
+
 ## 2026-05-10 21:14:46 +05:00 - Итерация 1
 
 - Изучен `AGENTS.md` как главный контекст проекта.

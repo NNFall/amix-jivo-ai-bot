@@ -1,5 +1,21 @@
 # PLAN
 
+## Update 2026-05-16 (Dialog Eval Logging)
+
+- Status: completed
+- Done:
+  - Added persistent markdown history file `DIALOG_EVALS.md` for dialog test runs.
+  - Added scenario runner `scripts/run_dialog_eval.py` that logs:
+    - customer turns,
+    - LLM planner raw JSON/mode,
+    - lookup call query and result preview,
+    - final bot reply.
+  - First smoke-run recorded in `DIALOG_EVALS.md`.
+  - Regression check: `python -m pytest` -> `32 passed`.
+- Next:
+  - Run eval script on VPS with active KIE key to capture real LLM planner/function-call behavior in logs and markdown.
+  - Sync latest commit to server and restart `amix-telegram-demo.service`.
+
 ## Текущий статус
 
 LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, реальный XML AMIX `prices.xml` уже импортирован локально и на VPS, а Telegram demo service запущен на сервере и использует ту же SQLite-базу с `5440` товарами. Ближайший рабочий фокус теперь смещается с инфраструктуры на демонстрационный прогон и последующую Jivo-интеграцию с реальными payload.

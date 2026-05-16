@@ -1,5 +1,15 @@
 # amix-jivo
 
+## Dialog Eval History
+
+Для фиксации тестовых прогонов диалогов и анализа качества ответов:
+
+```bash
+python scripts/run_dialog_eval.py --scenario smoke --output DIALOG_EVALS.md
+```
+
+Скрипт записывает в `DIALOG_EVALS.md` план LLM, lookup-вызовы и финальные ответы по каждому ходу.
+
 MVP-каркас Python-сервиса для AI-бота первой линии AMIX с интеграцией в Jivo Bot API, SQLite, XML-импортом товаров из 1С и OpenAI как диалоговым слоем.
 
 ## Что уже есть

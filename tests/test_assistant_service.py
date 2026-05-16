@@ -154,3 +154,76 @@ def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_en
         )
 
     assert "MP28CK" in reply.text
+
+
+def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env, monkeypatch) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.generate_lookup_plan = lambda customer_text, transcript: {
+        "mode": "respond",
+        "direct_response": "Добрый день! Чем могу помочь?",
+    }
+    service.openai_service.generate_reply = lambda customer_text, transcript: "fallback direct"
+    service.openai_service.generate_text = lambda system_prompt, user_prompt: "unused"
+
+    def fail_lookup(*args, **kwargs):
+        raise AssertionError("lookup_products should not be called in respond mode")
+
+    monkeypatch.setattr("core.assistant_service.lookup_products", fail_lookup)
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:7",
+            external_client_id="telegram-user:7",
+            customer_name="Demo User",
+            customer_text="добрый день",
+            inbound_event_id="tg-7",
+            outbound_event_id="tg-7:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Добрый день! Чем могу помочь?"
+
+
+def test_assistant_service_forces_lookup_when_plan_handoff_for_price_with_article(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="7843-BR",
+                article="7843 silk brash",
+                normalized_article="7843SILKBRASH",
+                free_stock=Decimal("5"),
+                unit="шт.",
+                retail_price=Decimal("1000"),
+                corporate_price=Decimal("900"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.generate_lookup_plan = lambda customer_text, transcript: {
+        "mode": "handoff",
+        "lookup_query": "",
+        "handoff_reason": "complex_technical_question",
+    }
+    service.openai_service.generate_text = lambda system_prompt, user_prompt: "По базе нашел варианты и цену."
+    service.openai_service.generate_reply = lambda customer_text, transcript: "unused"
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:8",
+            external_client_id="telegram-user:8",
+            customer_name="Demo User",
+            customer_text="я хочу цену примерную узнать у 7843 silk brash",
+            inbound_event_id="tg-8",
+            outbound_event_id="tg-8:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert reply.text == "По базе нашел варианты и цену."
