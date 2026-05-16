@@ -729,3 +729,19 @@
   - `.venv/bin/python scripts/run_dialog_regression_eval.py --output /tmp/amix_dialog_eval.md` -> `OK=31 PARTIAL=0 FAIL=0`;
   - `amix-telegram-demo.service` перезапущен и проверен: `ActiveState=active`, `SubState=running`, `UnitFileState=enabled`;
   - рабочее дерево на VPS чистое.
+
+## 2026-05-17 - Итерация 19
+
+- По замечанию в IDE проверена кодировка `llm/prompts.py`.
+- Найдена реальная проблема:
+  - сам файл был валидным UTF-8;
+  - `PRODUCT_FACTS_RESPONSE_PROMPT` был повреждён в виде `????`;
+  - часть строк в `build_product_facts_messages` была записана literal escape-последовательностями `\u0418...`, что работало в Python, но делало файл нечитаемым.
+- Исправлено:
+  - `PRODUCT_FACTS_RESPONSE_PROMPT` восстановлен нормальным русским UTF-8 текстом;
+  - escaped-строки заменены на обычную кириллицу;
+  - проверено отсутствие `????` и literal `\u04xx` в Python/JSON runtime-файлах проекта.
+- Проверки:
+  - `python -m pytest tests/test_llm_client.py tests/test_assistant_service.py tests/test_dialog_regression.py -q` -> `17 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`;
+  - `python -m pytest -q` -> `46 passed`.

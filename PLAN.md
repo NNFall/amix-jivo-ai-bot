@@ -22,6 +22,22 @@
 - Next:
   - Run live Telegram demo checks on the customer-facing scenarios and tune wording if real LLM output differs from regression fallback.
 
+## Update 2026-05-17 (Prompt Encoding Fix)
+
+- Status: completed locally
+- Done:
+  - Checked `llm/prompts.py` encoding after IDE showed `\u0418...` escapes.
+  - Confirmed file is UTF-8, but product facts prompt text was actually corrupted into `????`.
+  - Restored `PRODUCT_FACTS_RESPONSE_PROMPT` as readable Russian UTF-8 text.
+  - Replaced literal `\u04xx` escape strings in `build_product_facts_messages` with normal Cyrillic.
+  - Verified runtime files do not contain `????` or literal `\u04xx` prompt fragments.
+- Checks:
+  - Focused pytest -> `17 passed`.
+  - Dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+  - Full pytest -> `46 passed`.
+- Next:
+  - Commit/push and sync VPS because this fixes runtime prompt text.
+
 ## Update 2026-05-16 (Dialog Eval Logging)
 
 - Status: completed
