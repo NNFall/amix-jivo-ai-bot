@@ -60,6 +60,9 @@
   - `search_products_structured("МП 28ск")` -> `multiple_exact`, `exact_matches_count=3`, codes `26167`, `26168`, `26169`;
   - `search_products_structured("7843 silk brash")` -> `exact_found`, `exact_matches_count=1`, code `26139`;
   - `similar_matches_count=0` в обоих проверенных кейсах.
+- Final VPS sync:
+  - после journal-коммита сервер дополнительно синхронизирован до `7057bf4`;
+  - `amix-telegram-demo.service` остался `active/running`.
 
 ## 2026-05-16 - Iteration 15
 
