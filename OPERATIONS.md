@@ -45,6 +45,21 @@
   - `python scripts/import_xml.py --path data/incoming_xml/prices.xml` -> `processed=6904 created=1464 updated=5440 errors=0`;
   - локальная проверка `search_products_structured("МП 28ск")` -> `multiple_exact`, exact codes `26167`, `26168`, `26169`;
   - локальная проверка `search_products_structured("7843 silk brash")` -> exact match, без подмены similar.
+- GitHub:
+  - commit: `8b8255a`
+  - message: `Fix duplicate article import and multiword article lookup`
+  - push: `origin/master`
+- VPS deployment:
+  - `/root/amix` обновлён через `git pull --ff-only` до `8b8255a`;
+  - выполнен повторный импорт `/root/amix/data/incoming_xml/prices.xml`;
+  - результат импорта: `processed=6904 created=1464 updated=5440 skipped=0 errors=0`;
+  - выполнены серверные тесты: `29 passed`;
+  - `amix-telegram-demo.service` перезапущен;
+  - статус сервиса: `ActiveState=active`, `SubState=running`, `UnitFileState=enabled`.
+- VPS verification:
+  - `search_products_structured("МП 28ск")` -> `multiple_exact`, `exact_matches_count=3`, codes `26167`, `26168`, `26169`;
+  - `search_products_structured("7843 silk brash")` -> `exact_found`, `exact_matches_count=1`, code `26139`;
+  - `similar_matches_count=0` в обоих проверенных кейсах.
 
 ## 2026-05-16 - Iteration 15
 

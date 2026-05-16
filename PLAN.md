@@ -38,7 +38,7 @@
 
 ## Update 2026-05-16 (Duplicate Articles + Multiword Article Fix)
 
-- Status: completed locally
+- Status: completed and deployed
 - Done:
   - Fixed XML import upsert logic: products with a new `code` no longer collapse into an existing row only because `normalized_article` matches.
   - Rewrote article normalization/extraction in valid UTF-8.
@@ -49,9 +49,13 @@
     - `МП 28ск` -> `multiple_exact`, 3 exact rows: `26167`, `26168`, `26169`.
     - `7843 silk brash` -> exact rows, no similar fallback.
   - Regression: `python -m pytest -q` -> `37 passed`.
+- Deployed:
+  - Commit `8b8255a` pushed to GitHub.
+  - VPS `/root/amix` pulled to `8b8255a`.
+  - Server XML reimported: `processed=6904 created=1464 updated=5440 errors=0`.
+  - Server checks: `МП 28ск` -> 3 exact rows; `7843 silk brash` -> exact row; Telegram demo service active/running.
 - Next:
-  - Commit/push.
-  - Pull on VPS, reimport XML, restart Telegram demo service.
+  - Re-test live Telegram dialog from the user account and inspect `journalctl` logs if the LLM wording still needs tuning.
 
 ## Текущий статус
 
