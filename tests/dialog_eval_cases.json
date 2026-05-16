@@ -137,10 +137,11 @@
   {
     "id": "T-013",
     "customer_text": "а p am02 b s есть?",
-    "expected_action": "product_lookup",
-    "expected_meaning": "Грязный ввод должен найти или предложить P-AM02/B-S.",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Грязный ввод должен находить P-AM02/B-S как точное compact-совпадение.",
     "criteria": [
       "product_lookup",
+      "exact_found",
       "no_fake_price"
     ]
   },
@@ -182,7 +183,9 @@
     "expected_meaning": "Не выдумывать отличия, передать менеджеру.",
     "criteria": [
       "handoff",
-      "no_fake_specs"
+      "no_fake_specs",
+      "product_lookup",
+      "multiple_queries"
     ]
   },
   {

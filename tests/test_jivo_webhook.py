@@ -114,7 +114,7 @@ def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> N
     assert handoffs[0].reason == "client_requested_manager"
     assert len(messages) == 2
     assert messages[1].sender_role == "bot"
-    assert "Передаю ваш вопрос менеджеру." in messages[1].text
+    assert "Передаю вопрос менеджеру." in messages[1].text
 
 
 def test_jivo_webhook_agent_joined_marks_chat_as_terminal(isolated_app_env) -> None:

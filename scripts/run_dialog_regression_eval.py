@@ -113,6 +113,12 @@ def _classify_action(case: dict, lookup: dict | None, reply_handoff_reason: str 
         if any(word in text for word in ("цена", "стоит", "наличие", "остаток")):
             return "clarify"
         return "company_or_direct_reply"
+    successful_queries = [
+        item for item in lookup.get("per_query_results", [])
+        if item.get("status") in {"exact_found", "multiple_exact"}
+    ]
+    if len(successful_queries) > 1:
+        return "multi_product_lookup"
     status = lookup.get("status")
     if status == "multiple_exact":
         return "multiple_exact_product_lookup"
@@ -142,6 +148,11 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
     if not action_ok:
         failures.append(f"expected action {expected_action}, got {actual_action}")
 
+    reply_text_lower = reply_text.lower()
+    for phrase in ("в демо-режиме", "в рабочем режиме я бы", "этот вопрос требует менеджера"):
+        if phrase in reply_text_lower:
+            failures.append(f"banned user-facing phrase: {phrase}")
+
     if "product_lookup" in criteria and lookup is None:
         failures.append("product lookup was not used")
     if "no_product_lookup" in criteria and lookup is not None:
@@ -150,7 +161,10 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         failures.append("handoff was not requested")
     if "no_handoff" in criteria and handoff_reason:
         failures.append("unexpected handoff")
-    if "exact_found" in criteria and (lookup or {}).get("status") != "exact_found":
+    has_exact = bool((lookup or {}).get("exact_matches"))
+    if "точного совпадения" in reply_text_lower and "не наш" in reply_text_lower and has_exact:
+        failures.append("reply says exact match was not found despite exact matches")
+    if "exact_found" in criteria and not has_exact:
         failures.append("exact_found expected")
     if "multiple_exact" in criteria and (lookup or {}).get("status") != "multiple_exact":
         failures.append("multiple_exact expected")
@@ -159,6 +173,8 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
     if "not_found" in criteria and (lookup or {}).get("status") != "not_found":
         failures.append("not_found expected")
     if "not_similar" in criteria and lookup and lookup.get("status") == "similar_found":
+        failures.append("exact query was treated as similar")
+    if "exact_found" in criteria and lookup and lookup.get("status") == "similar_found":
         failures.append("exact query was treated as similar")
     if "no_fake_price" in criteria and "0 руб" in reply_text:
         failures.append("possible fake zero price")
@@ -169,12 +185,23 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
     if "shows_all_exact" in criteria and lookup and lookup.get("exact_matches_count", 0) < 2:
         failures.append("not all exact variants shown in lookup")
     if "multiple_queries" in criteria and lookup:
-        if len(lookup.get("per_query_results", [])) < 2:
+        successful_queries = [
+            item for item in lookup.get("per_query_results", [])
+            if item.get("status") in {"exact_found", "multiple_exact"}
+        ]
+        summary = lookup.get("summary", {})
+        if len(successful_queries) < 2:
             failures.append("multiple queries were not checked")
+        if int(summary.get("total_exact_matches") or 0) < 2:
+            failures.append("multiple queries did not return two exact products")
     if "stock_less_than_requested" in criteria and lookup:
         exact = lookup.get("exact_matches", [])
         if exact and Decimal(exact[0].get("stock") or "0") >= Decimal("5"):
             failures.append("stock was not less than requested")
+    if "offers_help" in criteria and not any(word in reply_text_lower for word in ("подскажите", "помочь", "интересует")):
+        failures.append("reply does not offer help naturally")
+    if handoff_reason and "переда" not in reply_text_lower:
+        failures.append("handoff reply does not tell the customer that the question is being transferred")
 
     if not failures:
         return "OK", ""
@@ -287,8 +314,9 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool,
                     "actual_action": actual_action,
                     "expected_meaning": case["expected_meaning"],
                     "lookup_status": (lookup or {}).get("status"),
-                    "exact_count": (lookup or {}).get("exact_matches_count"),
-                    "similar_count": (lookup or {}).get("similar_matches_count"),
+                    "exact_count": ((lookup or {}).get("summary") or {}).get("total_exact_matches", (lookup or {}).get("exact_matches_count")),
+                    "similar_count": ((lookup or {}).get("summary") or {}).get("total_similar_matches", (lookup or {}).get("similar_matches_count")),
+                    "query_count": len((lookup or {}).get("per_query_results", [])),
                     "handoff_reason": reply.handoff_reason,
                     "answer": reply.text,
                     "status": status,
@@ -343,7 +371,8 @@ def _describe_function_calls(row: dict[str, Any]) -> list[str]:
     calls: list[str] = []
     if row["lookup_status"]:
         calls.append(
-            "search_products: искал товар по артикулу/коду из сообщения клиента; результат: {status}, точных позиций {exact}, похожих {similar}".format(
+            "search_products: проверил запросов {queries}; результат: {status}, всего точных позиций {exact}, похожих {similar}".format(
+                queries=row.get("query_count") or 1,
                 status=_describe_lookup_status(row["lookup_status"]),
                 exact=row["exact_count"],
                 similar=row["similar_count"],

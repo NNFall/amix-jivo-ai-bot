@@ -163,6 +163,24 @@ def test_search_products_structured_prioritizes_exact_and_excludes_duplicates() 
     assert exact_codes.isdisjoint(similar_codes)
 
 
+def test_search_products_structured_treats_compact_split_article_as_exact() -> None:
+    with build_session() as session:
+        session.add(
+            Product(
+                code="22608",
+                article="P-AM02/B-S",
+                normalized_article="PAM02BS",
+                raw_payload={},
+            )
+        )
+        session.commit()
+
+        result = search_products_structured(session, query="p am02 b s")
+
+    assert result["status"] == "exact_found"
+    assert result["exact_matches"][0]["code"] == "22608"
+
+
 def test_product_search_service_builds_readable_reply() -> None:
     product = Product(
         code="1",

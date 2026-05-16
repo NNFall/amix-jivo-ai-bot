@@ -21,17 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 SAFE_FALLBACK_TEXT = (
-    "Я могу проверить по базе артикул, код, свободный остаток, цену, единицу измерения, вес и объём. "
-    "Если пришлёте артикул или код, сразу посмотрю данные. "
-    "Если нужен подбор, аналог или техническая консультация, лучше передать вопрос менеджеру."
+    "Здравствуйте! Подскажите, что вас интересует — наличие по артикулу, цена, доставка или помощь с подбором?"
 )
 
-JIVO_HANDOFF_TEXT = "Передаю ваш вопрос менеджеру."
+JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 
-TELEGRAM_DEMO_HANDOFF_TEXT = (
-    "Этот вопрос требует менеджера. В рабочем режиме я бы передал диалог оператору. "
-    "В демо-режиме могу продолжить только по артикулам, кодам, наличию, остаткам и ценам."
-)
+TELEGRAM_DEMO_HANDOFF_TEXT = JIVO_HANDOFF_TEXT
 
 ARTICLE_REQUIRED_TEXT = (
     "Чтобы проверить наличие, остаток или цену, пришлите артикул или код товара. "
@@ -126,6 +121,24 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
                 payload_source="backend_order_prelookup",
                 force_handoff_reason="order_request",
+                handoff_mode=handoff_mode,
+            )
+
+        if handoff_decision.should_handoff and handoff_decision.reason == "complex_technical_question" and article_candidates:
+            lookup_result = self._search_products_by_queries(
+                session,
+                queries=article_candidates,
+                reason=self._guess_lookup_reason(customer_text),
+            )
+            return self._reply_from_product_result(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                transcript=transcript,
+                product_lookup_result=lookup_result,
+                outbound_event_id=outbound_event_id,
+                payload_source="backend_complex_prelookup",
+                force_handoff_reason="complex_technical_question",
                 handoff_mode=handoff_mode,
             )
 
@@ -278,6 +291,12 @@ class AssistantService:
                 reply_text = f"{reply_text} Для оформления заказа передаю вопрос менеджеру."
             elif handoff_reason == "requested_quantity_exceeds_stock":
                 reply_text = f"{reply_text} Запрошенного количества может не хватить, лучше передам вопрос менеджеру для уточнения."
+            elif handoff_reason == "complex_technical_question":
+                reply_text = (
+                    f"{reply_text} По текущей выгрузке могу сравнить только данные из базы: код, артикул, цену, "
+                    "остаток, единицу измерения, вес и объём. Технического описания отличий в базе нет, "
+                    "поэтому передаю вопрос менеджеру."
+                )
 
         self._append_bot_message(
             session,
@@ -315,6 +334,8 @@ class AssistantService:
     def _search_products_by_queries(self, session, *, queries: list[str], reason: str) -> dict:
         per_query_results: list[dict] = []
         best: dict | None = None
+        unique_exact: dict[str, dict] = {}
+        unique_similar: dict[str, dict] = {}
         priority = {
             "multiple_exact": 0,
             "exact_found": 1,
@@ -327,6 +348,12 @@ class AssistantService:
         for query in queries:
             item = search_products_structured(session, query=query, search_type="auto")
             per_query_results.append(item)
+            for match in item.get("exact_matches", []):
+                unique_exact[match.get("code") or match.get("article") or str(len(unique_exact))] = match
+            for match in item.get("similar_matches", []):
+                key = match.get("code") or match.get("article") or str(len(unique_similar))
+                if key not in unique_exact:
+                    unique_similar[key] = match
             if best is None or priority.get(item["status"], 99) < priority.get(best["status"], 99):
                 best = item
 
@@ -343,10 +370,26 @@ class AssistantService:
                 "backend_notes": ["No valid queries"],
             }
 
+        exact_matches = list(unique_exact.values())
+        similar_matches = [match for key, match in unique_similar.items() if key not in unique_exact]
+        exact_count = len(exact_matches)
+        similar_count = len(similar_matches)
+        summary = {
+            "total_queries": len(queries),
+            "total_exact_matches": exact_count,
+            "total_similar_matches": similar_count,
+            "has_errors": any(item.get("status") == "error" for item in per_query_results),
+        }
+
         return {
             "queries": queries,
             "reason": reason,
             **best,
+            "exact_matches": exact_matches or best.get("exact_matches", []),
+            "similar_matches": similar_matches if exact_matches else best.get("similar_matches", []),
+            "exact_matches_count": exact_count if exact_matches else best.get("exact_matches_count", 0),
+            "similar_matches_count": 0 if exact_matches else best.get("similar_matches_count", 0),
+            "summary": summary,
             "per_query_results": per_query_results,
         }
 
@@ -449,9 +492,11 @@ class AssistantService:
 
             lines = [f"Нашёл несколько позиций по запросу {query}:"]
             for index, item in enumerate(exact[:5], start=1):
+                retail_price = AssistantService._format_number(item.get("retail_price"))
+                price_text = f"цена {retail_price} руб." if retail_price else "цена в текущей выгрузке не указана."
                 lines.append(
                     f"{index}. Код {item.get('code') or '-'} — остаток {AssistantService._format_number(item.get('stock'))} "
-                    f"{item.get('unit') or 'шт.'}, цена {AssistantService._format_number(item.get('retail_price')) or 'н/д'} руб."
+                    f"{item.get('unit') or 'шт.'}, {price_text}"
                 )
             lines.append("Уточните, пожалуйста, какой код товара вам нужен.")
             return " ".join(lines)
@@ -459,10 +504,12 @@ class AssistantService:
         if status == "similar_found" and similar:
             lines = [f"Точного совпадения по {query} не нашёл, но есть похожие варианты:"]
             for index, item in enumerate(similar[:5], start=1):
+                retail_price = AssistantService._format_number(item.get("retail_price"))
+                price_text = f"цена {retail_price} руб." if retail_price else "цена в текущей выгрузке не указана."
                 lines.append(
                     f"{index}. {item.get('article') or '-'} — код {item.get('code') or '-'}, "
                     f"остаток {AssistantService._format_number(item.get('stock'))} {item.get('unit') or 'шт.'}, "
-                    f"цена {AssistantService._format_number(item.get('retail_price')) or 'н/д'} руб."
+                    f"{price_text}"
                 )
             lines.append("Уточните, пожалуйста, какой вариант нужен.")
             return " ".join(lines)

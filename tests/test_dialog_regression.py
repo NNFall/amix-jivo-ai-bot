@@ -107,7 +107,8 @@ def test_product_lookup_regression_set(isolated_app_env) -> None:
     assert exact_not_similar["exact_matches"][0]["code"] == "770"
     assert all(item["code"] != "770" for item in exact_not_similar["similar_matches"])
 
-    assert dirty_article["status"] in {"exact_found", "similar_found"}
+    assert dirty_article["status"] == "exact_found"
+    assert dirty_article["exact_matches"][0]["code"] == "22608"
     assert missing["status"] == "not_found"
 
 
@@ -164,3 +165,27 @@ def test_dialog_regression_handoff_and_company_questions(isolated_app_env) -> No
         reasons = {handoff.reason for handoff in session.query(Handoff).all()}
 
     assert {"complex_technical_question", "order_request"} <= reasons
+
+
+def test_complex_compare_searches_both_articles_before_handoff(isolated_app_env) -> None:
+    seed_eval_products()
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="eval-compare-two",
+            external_client_id="eval-user",
+            customer_name="Eval",
+            customer_text="Чем 14.023л. отличается от 14.023пр.?",
+            inbound_event_id="eval-compare-two-1",
+            outbound_event_id="eval-compare-two-1:bot",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "complex_technical_question"
+    assert "14.023л." in reply.text
+    assert "14.023пр." in reply.text
+    assert "Технического описания отличий" in reply.text

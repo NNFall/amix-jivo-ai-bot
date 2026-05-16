@@ -42,6 +42,12 @@ def test_extract_article_candidates_prefers_full_multiword_article() -> None:
     assert "7843" in candidates
 
 
+def test_extract_article_candidates_compacts_split_latin_article() -> None:
+    text = "а p am02 b s есть?"
+    candidates = extract_article_candidates(text)
+    assert candidates[0] == "PAM02BS"
+
+
 def test_build_normalized_article_variants_supports_keyboard_mixed_scripts() -> None:
     assert build_normalized_article_variants("ОЗ/700") == ["ОЗ700", "OZ700"]
 
