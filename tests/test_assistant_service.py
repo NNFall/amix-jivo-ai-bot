@@ -244,3 +244,54 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
 
     assert reply.handoff_reason == "complex_technical_question"
     assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT
+
+
+def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fail_llm_call(**kwargs):
+        raise AssertionError("LLM should not handle complex handoff-only questions")
+
+    service.openai_service.run_messages = fail_llm_call
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:10",
+            external_client_id="telegram-user:10",
+            customer_name="Demo User",
+            customer_text="подберите аналог для петли",
+            inbound_event_id="tg-10",
+            outbound_event_id="tg-10:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "complex_technical_question"
+    assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT
+
+
+def test_assistant_service_allows_company_contact_question_without_handoff(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Магазин находится в Санкт-Петербурге, ул. Якорная, 15, лит. Б.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:11",
+            external_client_id="telegram-user:11",
+            customer_name="Demo User",
+            customer_text="где вы находитесь и какой телефон?",
+            inbound_event_id="tg-11",
+            outbound_event_id="tg-11:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert "Якорная" in reply.text

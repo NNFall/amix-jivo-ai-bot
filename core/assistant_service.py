@@ -128,6 +128,17 @@ class AssistantService:
                 source="backend_rule",
             )
 
+        handoff_decision = self.handoff_service.evaluate(customer_text)
+        if handoff_decision.should_handoff and handoff_decision.reason:
+            return self._handoff_reply(
+                session,
+                external_chat_id=external_chat_id,
+                handoff_mode=handoff_mode,
+                outbound_event_id=outbound_event_id,
+                reason=handoff_decision.reason,
+                source="backend_handoff_rule",
+            )
+
         prelookup_result = self._run_backend_prelookup(session, customer_text)
         if prelookup_result is not None:
             self._log_lookup_result(stage="prelookup", payload=prelookup_result)

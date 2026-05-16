@@ -57,6 +57,18 @@
 - Next:
   - Re-test live Telegram dialog from the user account and inspect `journalctl` logs if the LLM wording still needs tuning.
 
+## Update 2026-05-16 (Final TZ Alignment Check)
+
+- Status: completed locally
+- Done:
+  - Rechecked the final target logic: first-line manager, company Q&A, product lookup only via SQLite/search, complex questions via handoff.
+  - Found one gap: complex questions in LLM-enabled mode relied mostly on model tool choice instead of backend rule.
+  - Fixed backend handoff guard for подбор/аналог/совместимость/отличия/оформление заказа.
+  - Narrowed handoff keywords so ordinary company questions like phone/address/order pickup are not forced to manager.
+  - Regression: `python -m pytest -q` -> `39 passed`.
+- Next:
+  - Commit/push and sync VPS.
+
 ## Текущий статус
 
 LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, реальный XML AMIX `prices.xml` уже импортирован локально и на VPS, а Telegram demo service запущен на сервере и использует ту же SQLite-базу с `5440` товарами. Ближайший рабочий фокус теперь смещается с инфраструктуры на демонстрационный прогон и последующую Jivo-интеграцию с реальными payload.
