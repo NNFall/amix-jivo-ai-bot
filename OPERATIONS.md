@@ -597,3 +597,17 @@
   - `python -m pytest -q` -> `41 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=25 PARTIAL=0 FAIL=0`.
 - Результаты сценарного прогона добавлены в `DIALOG_EVALS.md`.
+- Изменения отправлены в GitHub:
+  - commit: `4a17eaa`
+  - message: `Add dialog regression suite for AMIX bot behavior`
+  - push: `origin/master`
+- VPS синхронизирован с GitHub:
+  - `cd /root/amix && git pull --ff-only`;
+  - head на сервере: `4a17eaa`.
+- На VPS выполнены проверки:
+  - `.venv/bin/python -m pytest tests/test_dialog_regression.py tests/test_assistant_service.py -q` -> `13 passed`;
+  - `.venv/bin/python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=25 PARTIAL=0 FAIL=0`.
+- `amix-telegram-demo.service` перезапущен и проверен:
+  - `ActiveState=active`;
+  - `SubState=running`;
+  - `UnitFileState=enabled`.
