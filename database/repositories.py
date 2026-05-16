@@ -171,7 +171,7 @@ def upsert_product(
     entity = None
     if code:
         entity = session.scalar(select(Product).where(Product.code == code))
-    if entity is None and normalized_article:
+    if entity is None and not code and normalized_article:
         entity = session.scalar(
             select(Product).where(Product.normalized_article == normalized_article)
         )

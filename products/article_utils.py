@@ -2,6 +2,23 @@ import re
 
 
 ARTICLE_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9\-_/\.]*")
+ARTICLE_JOIN_STOPWORDS = {
+    "И",
+    "ИЛИ",
+    "У",
+    "ПО",
+    "НА",
+    "В",
+    "С",
+    "ДЛЯ",
+    "ЕСТЬ",
+    "ЦЕНА",
+    "ЦЕНУ",
+    "НАЛИЧИЕ",
+    "СКОЛЬКО",
+    "HOW",
+    "MANY",
+}
 
 
 CYR_TO_LAT = str.maketrans(
@@ -14,6 +31,7 @@ CYR_TO_LAT = str.maketrans(
         "М": "M",
         "Н": "H",
         "О": "O",
+        "П": "P",
         "Р": "P",
         "С": "C",
         "Т": "T",
@@ -32,7 +50,7 @@ LAT_TO_CYR = str.maketrans(
         "K": "К",
         "M": "М",
         "O": "О",
-        "P": "Р",
+        "P": "П",
         "T": "Т",
         "X": "Х",
         "Y": "У",
@@ -77,6 +95,28 @@ def extract_article_candidates(text: str) -> list[str]:
 
         seen.add(normalized)
         candidates.append(normalized)
+
+    # Full article names can contain spaces: "7843 silk brash".
+    # Keep this narrow: one numeric token followed by article words, without connectors.
+    for start, raw_candidate in enumerate(tokens):
+        if not any(character.isdigit() for character in raw_candidate):
+            continue
+
+        phrase_tokens = [raw_candidate]
+        for next_token in tokens[start + 1 : start + 4]:
+            normalized_next = normalize_article(next_token)
+            if not normalized_next or normalized_next in ARTICLE_JOIN_STOPWORDS:
+                break
+            if not re.fullmatch(r"[A-Z]+", normalized_next):
+                break
+            if any(character.isdigit() for character in normalized_next):
+                break
+            if len(normalized_next) < 2:
+                break
+            phrase_tokens.append(next_token)
+
+        if len(phrase_tokens) > 1:
+            _push("".join(phrase_tokens))
 
     for index, raw_candidate in enumerate(tokens):
         _push(raw_candidate)

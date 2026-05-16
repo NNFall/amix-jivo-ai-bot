@@ -36,6 +36,23 @@
 - Next:
   - Deploy this branch to VPS and run dialog eval with active KIE API key to verify real tool-calling behavior in runtime logs.
 
+## Update 2026-05-16 (Duplicate Articles + Multiword Article Fix)
+
+- Status: completed locally
+- Done:
+  - Fixed XML import upsert logic: products with a new `code` no longer collapse into an existing row only because `normalized_article` matches.
+  - Rewrote article normalization/extraction in valid UTF-8.
+  - Added multiword article extraction for values like `7843 silk brash`.
+  - Preserved split-prefix matching for values like `МП 28ск`.
+  - Reimported local `prices.xml`; duplicate article rows are restored locally.
+  - Verified locally:
+    - `МП 28ск` -> `multiple_exact`, 3 exact rows: `26167`, `26168`, `26169`.
+    - `7843 silk brash` -> exact rows, no similar fallback.
+  - Regression: `python -m pytest -q` -> `37 passed`.
+- Next:
+  - Commit/push.
+  - Pull on VPS, reimport XML, restart Telegram demo service.
+
 ## Текущий статус
 
 LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, реальный XML AMIX `prices.xml` уже импортирован локально и на VPS, а Telegram demo service запущен на сервере и использует ту же SQLite-базу с `5440` товарами. Ближайший рабочий фокус теперь смещается с инфраструктуры на демонстрационный прогон и последующую Jivo-интеграцию с реальными payload.

@@ -149,3 +149,43 @@ def test_xml_importer_supports_real_russian_price_tags(isolated_app_env, tmp_pat
     assert str(product.corporate_price) == "150.25"
     assert str(product.retail_price) == "199.99"
     assert str(product.free_stock) == "1.000"
+
+
+def test_xml_importer_keeps_duplicate_articles_with_different_codes(isolated_app_env, tmp_path: Path) -> None:
+    xml_path = tmp_path / "duplicates.xml"
+    xml_path.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <product>
+    <code>26167</code>
+    <article>MP 28CK</article>
+    <retailprice>118</retailprice>
+    <freestock>124</freestock>
+  </product>
+  <product>
+    <code>26168</code>
+    <article>MP 28CK</article>
+    <retailprice>132</retailprice>
+    <freestock>292</freestock>
+  </product>
+  <product>
+    <code>26169</code>
+    <article>MP 28CK</article>
+    <retailprice>198</retailprice>
+    <freestock>237</freestock>
+  </product>
+</root>
+""",
+        encoding="utf-8",
+    )
+
+    result = ProductXmlImporter().import_file(xml_path)
+
+    assert result.status == "completed"
+    assert result.created == 3
+
+    with session_scope() as session:
+        products = session.query(Product).order_by(Product.code.asc()).all()
+
+    assert [product.code for product in products] == ["26167", "26168", "26169"]
+    assert {str(product.retail_price) for product in products} == {"118.00", "132.00", "198.00"}

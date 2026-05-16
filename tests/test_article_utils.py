@@ -35,5 +35,16 @@ def test_extract_article_candidates_combines_short_prefix_with_numeric_token() -
     assert "МП28СК" in candidates
 
 
+def test_extract_article_candidates_prefers_full_multiword_article() -> None:
+    text = "вот таких сколько есть 7843 silk brash"
+    candidates = extract_article_candidates(text)
+    assert candidates[0] == "7843SILKBRASH"
+    assert "7843" in candidates
+
+
 def test_build_normalized_article_variants_supports_keyboard_mixed_scripts() -> None:
     assert build_normalized_article_variants("ОЗ/700") == ["ОЗ700", "OZ700"]
+
+
+def test_build_normalized_article_variants_maps_mp_prefix() -> None:
+    assert "MP28CK" in build_normalized_article_variants("МП 28ск")

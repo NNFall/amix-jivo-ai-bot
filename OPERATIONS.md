@@ -26,6 +26,26 @@
   - `python -m pytest -q` -> `34 passed`.
   - `python scripts/run_dialog_eval.py --scenario products_only --output DIALOG_EVALS.md` -> успешно.
 
+## 2026-05-16 - Iteration 17
+
+- По скриншоту Telegram и XML-фрагменту выявлены две реальные ошибки:
+  - `7843 silk brash` извлекался как короткий кандидат `7843` и уходил в похожие.
+  - `МП 28ск` показывал один товар вместо трёх, потому что импорт схлопывал одинаковые артикулы с разными кодами.
+- Исправлено:
+  - `database/repositories.py`: `upsert_product(...)` теперь при наличии `code` ищет существующую запись только по `code`; fallback по `normalized_article` применяется только когда кода нет.
+  - `products/article_utils.py`: модуль переписан в корректном UTF-8, восстановлена нормализация кириллица/латиница.
+  - Добавлено узкое извлечение multiword-артикулов вида `7843 silk brash`.
+  - Сохранено извлечение split-prefix артикула `МП 28ск`.
+- Добавлены тесты:
+  - full multiword article extraction;
+  - mapping `МП 28ск` -> `MP28CK`;
+  - XML import with duplicate articles and different codes.
+- Выполнено:
+  - `python -m pytest -q` -> `37 passed`;
+  - `python scripts/import_xml.py --path data/incoming_xml/prices.xml` -> `processed=6904 created=1464 updated=5440 errors=0`;
+  - локальная проверка `search_products_structured("МП 28ск")` -> `multiple_exact`, exact codes `26167`, `26168`, `26169`;
+  - локальная проверка `search_products_structured("7843 silk brash")` -> exact match, без подмены similar.
+
 ## 2026-05-16 - Iteration 15
 
 - Goal: add persistent history for dialog test runs and make LLM/planner/lookup behavior auditable.
