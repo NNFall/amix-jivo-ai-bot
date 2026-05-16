@@ -412,3 +412,26 @@
 - Следующий шаг:
   - commit/push изменений;
   - синхронизация VPS и перезапуск `amix-telegram-demo.service` для применения фикса в живом демо-чате.
+
+## 2026-05-16 - Итерация 13
+
+- Изменения по matching-логике отправлены в GitHub:
+  - commit: `ce33417`
+  - message: `Fix article matching for mixed-script customer input`
+  - push: `origin/master`
+- VPS синхронизирован:
+  - `cd /root/amix && git pull --ff-only`
+  - head на сервере: `ce33417`
+- На VPS запущены целевые тесты:
+  - `.venv/bin/python -m pytest tests/test_article_utils.py tests/test_product_search.py tests/test_assistant_service.py -q`
+  - результат: `17 passed`
+- `amix-telegram-demo.service` перезапущен и проверен:
+  - `ActiveState=active`
+  - `SubState=running`
+  - `UnitFileState=enabled`
+- Выполнен серверный probe AssistantService по проблемным сообщениям:
+  - `какая цена у ОЗ/700` -> теперь точный артикул найден с ценой и остатком;
+  - `МП 28ск` -> теперь точный артикул найден с ценой и остатком.
+- Примечание по проверке:
+  - первая probe-команда дала старое поведение из-за кодировки запроса на стороне Windows-консоли;
+  - повторная probe с unicode-escape строками подтвердила корректную работу фикса на VPS.
