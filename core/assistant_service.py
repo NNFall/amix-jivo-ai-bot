@@ -520,8 +520,11 @@ class AssistantService:
         }
 
         for query in queries:
-            item = search_products_structured(session, query=query, search_type="auto")
-            item["display_query"] = self._resolve_display_query(query, customer_text)
+            display_query = self._resolve_display_query(query, customer_text)
+            search_query = display_query or query
+            item = search_products_structured(session, query=search_query, search_type="auto")
+            item["raw_backend_query"] = query
+            item["display_query"] = display_query
             item_exact_keys = {
                 match.get("code") or match.get("article") or str(index)
                 for index, match in enumerate(item.get("exact_matches", []))

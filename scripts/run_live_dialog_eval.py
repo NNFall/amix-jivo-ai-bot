@@ -15,7 +15,6 @@ if str(ROOT_DIR) not in sys.path:
 from core.assistant_service import AssistantService
 from database.db import create_db_and_tables, session_scope
 from database.models import Message
-from database.repositories import search_products_structured
 from products.article_utils import extract_article_candidates
 from settings import get_settings
 
@@ -129,7 +128,7 @@ def main() -> None:
             inbound_event_id = f"{chat_id}:{scenario.case_id}:in"
             outbound_event_id = f"{chat_id}:{scenario.case_id}:out"
             candidates = extract_article_candidates(scenario.customer_text)
-            prelookup = _prelookup(session, candidates)
+            prelookup = _prelookup(session, assistant, candidates, scenario.customer_text)
 
             reply = assistant.handle_client_message(
                 session,
@@ -170,13 +169,20 @@ def main() -> None:
     print(f"Scenarios: {len(rows)}")
 
 
-def _prelookup(session, candidates: list[str]) -> list[dict[str, Any]]:
+def _prelookup(session, assistant: AssistantService, candidates: list[str], customer_text: str) -> list[dict[str, Any]]:
+    result = assistant._search_products_by_queries(  # noqa: SLF001
+        session,
+        queries=candidates,
+        reason=assistant._guess_lookup_reason(customer_text),  # noqa: SLF001
+        customer_text=customer_text,
+    ) if candidates else None
     results = []
-    for candidate in candidates:
-        result = search_products_structured(session, query=candidate, search_type="auto")
+    for result in (result or {}).get("per_query_results", []):
         results.append(
             {
-                "query": candidate,
+                "query": result.get("query"),
+                "display_query": result.get("display_query"),
+                "raw_backend_query": result.get("raw_backend_query"),
                 "status": result.get("status"),
                 "exact_matches_count": result.get("exact_matches_count"),
                 "similar_matches_count": result.get("similar_matches_count"),

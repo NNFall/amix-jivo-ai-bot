@@ -909,3 +909,24 @@
   - `python -m pytest -q` -> `51 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - Локальный live-прогон через модель не выполнен: локально не настроен `KIE_API_KEY`/`OPENAI_API_KEY`; live-проверка будет выполнена на VPS после push.
+- GitHub:
+  - commit: `b731159`
+  - message: `Tighten assistant order and pricing rules`
+  - push: `origin/master`
+- VPS первично синхронизирован с commit `b731159`:
+  - `git pull --ff-only` выполнен в `/root/amix`;
+  - в серверный `.env` добавлен `SHOW_CORPORATE_PRICE=true`, если его не было;
+  - серверный `python -m pytest -q` -> `51 passed`;
+  - серверный live eval -> `31` сценарий;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+- Live-прогон на реальной базе выявил edge-case:
+  - запрос `14.023` был интерпретирован как exact code `14023`, потому что backend искал по normalized candidate;
+  - это противоречит правилу показывать и искать по исходному клиентскому фрагменту, если он восстановлен.
+- Исправлено локально:
+  - `_search_products_by_queries` теперь выполняет поиск по `display_query`/исходному фрагменту клиента, если он есть;
+  - normalized candidate сохраняется в `raw_backend_query`;
+  - live prelookup-отчёт переведён на тот же backend search, чтобы отчёт совпадал с реальной логикой ответа;
+  - добавлен тест, защищающий от ложного code-match для пунктуированного артикула.
+- Повторные локальные проверки:
+  - `python -m pytest -q` -> `52 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.

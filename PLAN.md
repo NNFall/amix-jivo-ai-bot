@@ -12,12 +12,14 @@
   - Fallback responses explicitly mention code lookup: `По коду 1364 нашёл артикул ...`.
   - Product prompt updated with rules for raw/display query, corporate price policy and shortage handoff wording.
   - Live eval scenarios extended from 27 to 31 for shortage order, raw-query display, corporate price and missing price wording.
+  - First VPS live run exposed a real-data edge case: `14.023` was incorrectly treated as exact code `14023` because backend searched by normalized candidate.
+  - Fixed lookup execution to search by restored customer fragment/display query when available, while preserving normalized value as `raw_backend_query`.
 - Checks:
-  - Local full pytest -> `51 passed`.
+  - Local full pytest -> `52 passed`.
   - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
   - Local live eval with real LLM was not run because local `.env` has no `KIE_API_KEY`/`OPENAI_API_KEY`.
 - Next:
-  - Commit/push, sync VPS, run live eval on VPS where real LLM environment is configured, then restart `amix-telegram-demo.service`.
+  - Commit/push the raw-query fix, sync VPS again, rerun live eval on VPS, then restart `amix-telegram-demo.service`.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 

@@ -461,6 +461,47 @@ def test_assistant_service_uses_raw_query_for_similar_reply(isolated_app_env) ->
     assert "по 14023" not in reply.text
 
 
+def test_assistant_service_does_not_match_code_from_punctuated_article_query(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="14023",
+                    article="05.088.256 MC/AMIX",
+                    normalized_article="05088256MCAMIX",
+                    free_stock=Decimal("149"),
+                    unit="шт",
+                    retail_price=Decimal("181"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article="14023ПР",
+                    free_stock=Decimal("220"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        lookup = service._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=["14023"],
+            reason="product_info",
+            customer_text="14.023",
+        )
+
+    assert lookup["status"] == "similar_found"
+    assert all(item.get("code") != "14023" for item in lookup["exact_matches"])
+    assert lookup["per_query_results"][0]["query"] == "14.023"
+    assert lookup["per_query_results"][0]["raw_backend_query"] == "14023"
+
+
 def test_assistant_service_prioritizes_stock_shortage_over_order_handoff(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
