@@ -19,6 +19,28 @@
   - Duplicate article flow asks for code/price instead of dumping all rows.
   - Remaining improvement candidates: make handoff answers for technical подбор warmer and tune multi-product answers to avoid overly dense two-line responses.
 
+## Update 2026-05-17 (Live Tone Micro-Tuning)
+
+- Status: completed and deployed
+- Done:
+  - Added shared `HUMAN_MANAGER_STYLE_RULES` to prompts.
+  - Strengthened product-facts prompt with concrete examples for exact product, duplicate article, mixed lookup, technical comparison, подбор and order.
+  - Added rule not to greet repeatedly in product replies.
+  - Reworked direct complex handoff: подбор now explains which parameters are needed before transferring to a manager.
+  - Sanitized model wording so handoff says `подключится к диалогу`, not `свяжется с вами`.
+  - Added live scenarios L-023..L-027, including history-based checks.
+  - Added support for scenario history in live eval.
+  - Added history-aware lookup for follow-up questions like `цена 132` after duplicate article clarification.
+- Checks:
+  - Local full pytest -> `47 passed`.
+  - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+  - VPS focused pytest -> `16 passed`.
+  - VPS live eval -> `27` scenarios, `27` without style flags, `0` manual style-review flags.
+- Current assessment:
+  - Product replies no longer repeatedly start with `Добрый день`.
+  - Handoff wording is better for Jivo chat.
+  - Duplicate article follow-up by price works in live eval.
+
 ## Update 2026-05-17 (Human Manager Tone)
 
 - Status: completed locally
