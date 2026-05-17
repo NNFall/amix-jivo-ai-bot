@@ -1,5 +1,24 @@
 # PLAN
 
+## Update 2026-05-17 (Live LLM Dialog Evaluation)
+
+- Status: completed and deployed
+- Done:
+  - Added `scripts/run_live_dialog_eval.py` for real configured LLM/KIE dialog checks.
+  - Live eval runs through `AssistantService`, real prompts, SQLite product lookup, backend actions and real model responses.
+  - Added 22 live scenarios covering company Q&A, exact products, duplicate articles, dirty input, mixed lookup, order, shortage and handoff.
+  - Fixed live eval methodology: each scenario now uses a separate chat id to avoid history contamination.
+  - Found and fixed alias leakage after exact lookup: when exact matches exist, similar alias results are not sent to the model.
+  - Saved final real-model report in `LIVE_DIALOG_EVALS.md`.
+- Checks:
+  - Local full pytest -> `47 passed`.
+  - VPS focused pytest -> `16 passed`.
+  - VPS live eval -> `22` scenarios, `22` without style flags, `0` manual style-review flags.
+- Current assessment:
+  - Real KIE responses are now materially closer to first-line manager wording.
+  - Duplicate article flow asks for code/price instead of dumping all rows.
+  - Remaining improvement candidates: make handoff answers for technical подбор warmer and tune multi-product answers to avoid overly dense two-line responses.
+
 ## Update 2026-05-17 (Human Manager Tone)
 
 - Status: completed locally
