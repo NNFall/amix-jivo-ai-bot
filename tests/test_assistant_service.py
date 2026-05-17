@@ -41,7 +41,8 @@ def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
             handoff_mode="demo",
         )
 
-    assert "Артикул AB-123 найден." in reply.text
+    assert "Да, нашёл AB-123." in reply.text
+    assert "Сейчас в наличии 4 шт." in reply.text
     assert reply.handoff_reason is None
 
     with session_scope() as session:
@@ -156,13 +157,14 @@ def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_en
         )
 
     assert "MP28CK" in reply.text
+    assert "**" not in reply.text
 
 
 def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
     service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text="Добрый день! Чем могу помочь?",
+        text="**Добрый день!**\n- Чем могу помочь?",
         tool_calls=[],
     )
 
@@ -179,7 +181,7 @@ def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env)
             handoff_mode="demo",
         )
 
-    assert reply.text == "Добрый день! Чем могу помочь?"
+    assert reply.text == "Добрый день!\nЧем могу помочь?"
 
 
 def test_assistant_service_uses_backend_prelookup_for_article_query(isolated_app_env) -> None:

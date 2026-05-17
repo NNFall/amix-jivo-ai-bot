@@ -148,6 +148,8 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
     for phrase in ("в демо-режиме", "в рабочем режиме я бы", "этот вопрос требует менеджера"):
         if phrase in reply_text_lower:
             failures.append(f"banned user-facing phrase: {phrase}")
+    if any(marker in reply_text for marker in ("**", "__", "`")):
+        failures.append("markdown markers leaked into user-facing reply")
 
     if "product_lookup" in criteria and lookup is None:
         failures.append("product lookup was not used")

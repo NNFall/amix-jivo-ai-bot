@@ -89,7 +89,8 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
     assert messages[0].sender_role == "client"
     assert "AB-123" in messages[0].text
     assert messages[1].sender_role == "bot"
-    assert "Артикул AB-123 найден." in messages[1].text
+    assert "Да, нашёл AB-123." in messages[1].text
+    assert "Сейчас в наличии 5 шт." in messages[1].text
 
 
 def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> None:

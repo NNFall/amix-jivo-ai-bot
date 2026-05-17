@@ -1,5 +1,22 @@
 # PLAN
 
+## Update 2026-05-17 (Human Manager Tone)
+
+- Status: completed locally
+- Done:
+  - Reworked main and product prompts so the assistant answers like a first-line AMIX manager, not like a technical bot/card parser.
+  - Added strict no-markdown rules: no `**`, no backticks, no markdown tables, no dry field-card formatting.
+  - Changed duplicate-article behavior: when one article maps to several products, the bot asks the client to уточнить код товара с сайта или цену instead of dumping all rows.
+  - Updated programmatic fallback answers to match the same conversational style when LLM is unavailable.
+  - Added outgoing reply sanitizer to strip common markdown markers and list prefixes before sending/storing customer-facing text.
+  - Added regression guard against markdown marker leakage.
+  - Updated tests that expected old dry wording.
+- Checks:
+  - `python -m pytest -q` -> `46 passed`.
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Commit/push and sync VPS, then test real Telegram wording with live LLM.
+
 ## Update 2026-05-17 (Grouped Product Facts + Backend Actions)
 
 - Status: completed and deployed

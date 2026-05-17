@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 SAFE_FALLBACK_TEXT = (
-    "Здравствуйте! Подскажите, что вас интересует — наличие по артикулу, цена, доставка или помощь с подбором?"
+    "Добрый день! Подскажите, что нужно посмотреть?"
 )
 
 JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
@@ -29,8 +29,7 @@ JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он под
 TELEGRAM_DEMO_HANDOFF_TEXT = JIVO_HANDOFF_TEXT
 
 ARTICLE_REQUIRED_TEXT = (
-    "Чтобы проверить наличие, остаток или цену, пришлите артикул или код товара. "
-    "По текущей базе я могу проверить артикул, код, остаток, цену, единицу измерения, вес и объём."
+    "Пришлите, пожалуйста, артикул или код товара. Тогда посмотрю цену и наличие."
 )
 
 
@@ -215,6 +214,7 @@ class AssistantService:
         reply_text = first_turn.text
         if not reply_text:
             reply_text = ARTICLE_REQUIRED_TEXT if self._is_price_stock_request(customer_text) else SAFE_FALLBACK_TEXT
+        reply_text = self._sanitize_customer_reply(reply_text)
 
         self._append_bot_message(
             session,
@@ -309,10 +309,11 @@ class AssistantService:
             turn = self.openai_service.run_messages(messages=fact_messages)
 
         reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(product_lookup_result)
+        reply_text = self._sanitize_customer_reply(reply_text)
 
         if handoff_reason:
             self.handoff_service.register_handoff(session, external_chat_id, handoff_reason)
-            reply_text = self._ensure_handoff_text(reply_text, handoff_reason)
+            reply_text = self._sanitize_customer_reply(self._ensure_handoff_text(reply_text, handoff_reason))
 
         self._append_bot_message(
             session,
@@ -347,6 +348,19 @@ class AssistantService:
                 "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
             )
         return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
+
+    @staticmethod
+    def _sanitize_customer_reply(reply_text: str) -> str:
+        text = reply_text.replace("**", "").replace("__", "").replace("`", "")
+        cleaned_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("- ", "* ")):
+                stripped = stripped[2:].strip()
+            cleaned_lines.append(stripped)
+        text = "\n".join(line for line in cleaned_lines if line)
+        text = re.sub(r"[ \t]+", " ", text)
+        return text.strip()
 
     def _fallback_without_llm(
         self,
@@ -507,7 +521,7 @@ class AssistantService:
         per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results", [])
 
         if len(per_query_results) > 1:
-            lines = ["Проверил:"]
+            lines = ["Проверил."]
             for index, item in enumerate(per_query_results, start=1):
                 item_status = item.get("status")
                 item_query = item.get("query") or "запрос"
@@ -517,68 +531,57 @@ class AssistantService:
                     if len(item_exact) == 1:
                         match = item_exact[0]
                         retail_price = AssistantService._format_number(match.get("retail_price"))
-                        price_text = f", розничная цена {retail_price} руб." if retail_price else ", цена в текущей выгрузке не указана"
+                        price_text = f", розничная цена {retail_price} руб" if retail_price else ", цена в текущей выгрузке не указана"
+                        display_article = match.get("article") or item_query
                         lines.append(
-                            f"{index}. {match.get('article') or item_query} — код {match.get('code') or '-'}, "
-                            f"остаток {AssistantService._format_number(match.get('stock'))} {match.get('unit') or 'шт.'}{price_text}."
+                            f"По {display_article} остаток "
+                            f"{AssistantService._format_quantity(match.get('stock'), match.get('unit'))}{price_text}."
                         )
                     else:
-                        variants = "; ".join(
-                            f"код {match.get('code') or '-'}, остаток {AssistantService._format_number(match.get('stock'))} {match.get('unit') or 'шт.'}"
-                            for match in item_exact[:5]
+                        display_query = AssistantService._display_query_for_matches(item_query, item_exact)
+                        lines.append(
+                            f"По {display_query} нашёл несколько позиций. Они отличаются кодом и ценой, "
+                            "поэтому уточните, пожалуйста, код товара с сайта или цену, которую видите."
                         )
-                        lines.append(f"{index}. По {item_query} найдено несколько точных позиций: {variants}. Уточните нужный код.")
                 elif item_status == "similar_found" and item_similar:
                     variants = "; ".join(
                         f"{match.get('article') or '-'} — код {match.get('code') or '-'}"
                         for match in item_similar[:3]
                     )
-                    lines.append(f"{index}. По {item_query} точного совпадения не нашёл, есть похожие варианты: {variants}.")
+                    lines.append(f"По {item_query} точного совпадения не нашёл. Похожие варианты: {variants}.")
                 else:
-                    lines.append(f"{index}. По {item_query} в текущей базе ничего не нашёл. Проверьте артикул или код.")
+                    lines.append(f"По {item_query} в текущей базе ничего не нашёл. Проверьте, пожалуйста, артикул или код.")
             return " ".join(lines)
 
         if status in {"exact_found", "multiple_exact"} and exact:
             if len(exact) == 1:
                 item = exact[0]
-                parts = [
-                    f"Артикул {item.get('article') or query} найден.",
-                    f"Код: {item.get('code') or 'н/д'}.",
-                    f"Свободный остаток: {AssistantService._format_number(item.get('stock'))} {item.get('unit') or 'шт.'}.",
-                ]
+                article = item.get("article") or query
+                stock_text = AssistantService._format_quantity(item.get("stock"), item.get("unit"))
                 retail_price = AssistantService._format_number(item.get("retail_price"))
                 corporate_price = AssistantService._format_number(item.get("corporate_price"))
+                parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
+                parts.append(f"Сейчас в наличии {stock_text}.")
                 if retail_price:
-                    parts.append(f"Розничная цена: {retail_price} руб.")
+                    parts.append(f"Розничная цена {retail_price} руб.")
                 if corporate_price:
-                    parts.append(f"Корпоративная цена: {corporate_price} руб.")
+                    parts.append(f"Корпоративная цена {corporate_price} руб.")
                 if not retail_price and not corporate_price:
                     parts.append("Цена в текущей выгрузке не указана.")
                 return " ".join(parts)
 
-            lines = [f"Нашёл несколько позиций по запросу {query}:"]
-            for index, item in enumerate(exact[:5], start=1):
-                retail_price = AssistantService._format_number(item.get("retail_price"))
-                price_text = f"цена {retail_price} руб." if retail_price else "цена в текущей выгрузке не указана."
-                lines.append(
-                    f"{index}. Код {item.get('code') or '-'} — остаток {AssistantService._format_number(item.get('stock'))} "
-                    f"{item.get('unit') or 'шт.'}, {price_text}"
-                )
-            lines.append("Уточните, пожалуйста, какой код товара вам нужен.")
-            return " ".join(lines)
+            display_query = AssistantService._display_query_for_matches(query, exact)
+            return (
+                f"По {display_query} нашёл несколько позиций. Они отличаются кодом и ценой, поэтому чтобы не ошибиться, "
+                "уточните, пожалуйста, код товара с сайта или цену, которую видите. После этого скажу точный остаток."
+            )
 
         if status == "similar_found" and similar:
-            lines = [f"Точного совпадения по {query} не нашёл, но есть похожие варианты:"]
-            for index, item in enumerate(similar[:5], start=1):
-                retail_price = AssistantService._format_number(item.get("retail_price"))
-                price_text = f"цена {retail_price} руб." if retail_price else "цена в текущей выгрузке не указана."
-                lines.append(
-                    f"{index}. {item.get('article') or '-'} — код {item.get('code') or '-'}, "
-                    f"остаток {AssistantService._format_number(item.get('stock'))} {item.get('unit') or 'шт.'}, "
-                    f"{price_text}"
-                )
-            lines.append("Уточните, пожалуйста, какой вариант нужен.")
-            return " ".join(lines)
+            variants = "; ".join(f"{item.get('article') or '-'} — код {item.get('code') or '-'}" for item in similar[:5])
+            return (
+                f"Точного совпадения по {query} не нашёл. Есть похожие варианты: {variants}. "
+                "Если это не то, пришлите, пожалуйста, код товара с сайта."
+            )
 
         return f"По запросу {query} в текущей базе ничего не нашёл. Проверьте, пожалуйста, артикул или код."
 
@@ -590,6 +593,26 @@ class AssistantService:
         if "." not in text:
             return text
         return text.rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_quantity(value: Any, unit: Any) -> str:
+        number = AssistantService._format_number(value) or "0"
+        unit_text = str(unit or "шт").strip().rstrip(".") or "шт"
+        return f"{number} {unit_text}"
+
+    @staticmethod
+    def _finish_sentence(text: str) -> str:
+        stripped = text.rstrip()
+        if stripped.endswith((".", "!", "?")):
+            return stripped
+        return f"{stripped}."
+
+    @staticmethod
+    def _display_query_for_matches(query: str, matches: list[dict]) -> str:
+        articles = {str(item.get("article") or "").strip() for item in matches if item.get("article")}
+        if len(articles) == 1:
+            return next(iter(articles))
+        return query
 
     @staticmethod
     def _extract_requested_quantity(customer_text: str) -> int | None:
