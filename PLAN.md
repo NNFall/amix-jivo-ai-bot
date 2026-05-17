@@ -2,7 +2,7 @@
 
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
-- Status: completed locally, VPS live check pending
+- Status: completed and deployed
 - Done:
   - Added `SHOW_CORPORATE_PRICE` setting and `.env.example` entry.
   - Backend now passes pricing policy, requested quantity, response mode and code-query context into `backend_actions`.
@@ -18,8 +18,10 @@
   - Local full pytest -> `52 passed`.
   - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
   - Local live eval with real LLM was not run because local `.env` has no `KIE_API_KEY`/`OPENAI_API_KEY`.
+  - VPS full pytest -> `52 passed`.
+  - VPS live eval -> `31` scenarios, `31` without style flags, `0` manual style-review flags.
 - Next:
-  - Commit/push the raw-query fix, sync VPS again, rerun live eval on VPS, then restart `amix-telegram-demo.service`.
+  - Continue Telegram demo checks with real user messages and keep tuning only on observed failures.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 

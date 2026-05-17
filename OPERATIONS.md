@@ -930,3 +930,18 @@
 - Повторные локальные проверки:
   - `python -m pytest -q` -> `52 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `1c6410f`
+  - message: `Use raw customer query for product lookup`
+  - push: `origin/master`
+- VPS повторно синхронизирован с commit `1c6410f`:
+  - перед pull восстановлен tracked `LIVE_DIALOG_EVALS.md` из HEAD, чтобы убрать локальное изменение от старого live-прогона;
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `52 passed`;
+  - серверный live eval через KIE -> `31` сценарий;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+- Свежий `LIVE_DIALOG_EVALS.md` скачан с VPS и проверен:
+  - итог: `31` сценарий, `31` без style flags, `0` на ручную style-проверку;
+  - `14.023` теперь идёт как `similar_found`, `query/display_query=14.023`, `raw_backend_query=14023`;
+  - shortage-сценарии не обещают оформление заказа и передают менеджеру для уточнения заказа/замены;
+  - в ответах модели нет слова `выгрузка`, markdown и фраз `свяжется с вами`.
