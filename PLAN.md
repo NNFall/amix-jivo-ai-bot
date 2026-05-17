@@ -21,6 +21,7 @@
   - VPS full pytest -> `53 passed`.
   - VPS live eval -> `31` scenarios, `31` without style flags, `0` manual style-review flags.
 - Next:
+  - For future live checks, append full dated runs to `LIVE_DIALOG_EVALS.md` instead of replacing the file, so external review can compare full model outputs by run.
   - Continue Telegram demo checks with real user messages and keep tuning only on observed failures.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
