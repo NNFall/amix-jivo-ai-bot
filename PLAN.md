@@ -26,7 +26,7 @@
 
 ## Update 2026-05-17 (Live Semantic Assertions)
 
-- Status: completed locally, VPS live check pending
+- Status: completed and deployed
 - Done:
   - Strengthened `SYSTEM_PROMPT` for FAQ questions: contacts, address, schedule and delivery must answer concrete user intent, not generic greeting.
   - Added product price display fields from backend: `retail_price_display`, `corporate_price_display`.
@@ -37,8 +37,10 @@
 - Checks:
   - Local full pytest -> `57 passed`.
   - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+  - VPS full pytest -> `57 passed`.
+  - VPS live eval appended run -> `31` scenarios, `31` without style flags, `31` without content flags.
 - Next:
-  - Commit/push, sync VPS, append a new full live run to `LIVE_DIALOG_EVALS.md` and verify content flags.
+  - Next test expansion should move from single-turn scenarios to multi-turn dialogs with 2-3 user messages and context-dependent answers.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 

@@ -1019,3 +1019,24 @@
 - Проверки:
   - `python -m pytest -q` -> `57 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `f0f3f23`
+  - message: `Add semantic live eval checks`
+  - push: `origin/master`
+- VPS синхронизирован с commit `f0f3f23`:
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `57 passed`;
+  - серверный live eval через KIE с `--append` -> `31` сценарий;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+- Свежий `LIVE_DIALOG_EVALS.md` скачан с VPS:
+  - новый блок: `2026-05-17T17:01:31.132715+00:00`;
+  - сценариев: `31`;
+  - ответов без style flags: `31`;
+  - ответов без content flags: `31`;
+  - ответов на ручную проверку: `0`.
+- Проверены исправленные кейсы в новом live-блоке:
+  - L-003 контакты: ответ содержит `+7 (812) 372-66-07` и `market@amix.spb.ru`;
+  - L-009: `По коду 26168...`, без склейки;
+  - L-020: корпоративная цена сохранена как `335,24 руб.`;
+  - L-030: корпоративная цена сохранена как `165,98 руб.`;
+  - L-004: стоимость доставки отдаётся на уточнение менеджеру.
