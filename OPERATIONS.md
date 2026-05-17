@@ -1040,3 +1040,12 @@
   - L-020: корпоративная цена сохранена как `335,24 руб.`;
   - L-030: корпоративная цена сохранена как `165,98 руб.`;
   - L-004: стоимость доставки отдаётся на уточнение менеджеру.
+- Финальный отчётный commit:
+  - commit: `44bfc43`
+  - message: `Record semantic live eval rerun`
+  - push: `origin/master`
+- VPS синхронизирован с commit `44bfc43`:
+  - локально изменённый серверный `LIVE_DIALOG_EVALS.md` приведён к tracked-состоянию перед pull;
+  - `git pull --ff-only` выполнен успешно;
+  - `git status --short` на VPS пустой;
+  - `amix-telegram-demo.service` проверен: `active`.
