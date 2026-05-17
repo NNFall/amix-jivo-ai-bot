@@ -435,11 +435,14 @@ class AssistantService:
         similar_matches = [match for key, match in unique_similar.items() if key not in unique_exact]
         exact_count = len(exact_matches)
         similar_count = len(similar_matches)
+        visible_query_results = per_query_results
+        if exact_matches:
+            visible_query_results = [item for item in per_query_results if item.get("status") != "similar_found"]
         summary = {
-            "total_queries": len(queries),
+            "total_queries": len(visible_query_results),
             "total_exact_matches": exact_count,
-            "total_similar_matches": similar_count,
-            "has_errors": any(item.get("status") == "error" for item in per_query_results),
+            "total_similar_matches": 0 if exact_matches else similar_count,
+            "has_errors": any(item.get("status") == "error" for item in visible_query_results),
         }
 
         return {
@@ -451,8 +454,8 @@ class AssistantService:
             "exact_matches_count": exact_count if exact_matches else best.get("exact_matches_count", 0),
             "similar_matches_count": 0 if exact_matches else best.get("similar_matches_count", 0),
             "summary": summary,
-            "results": per_query_results,
-            "per_query_results": per_query_results,
+            "results": visible_query_results,
+            "per_query_results": visible_query_results,
         }
 
     def _handoff_reply(

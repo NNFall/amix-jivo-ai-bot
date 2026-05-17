@@ -160,6 +160,43 @@ def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_en
     assert "**" not in reply.text
 
 
+def test_assistant_service_hides_similar_aliases_when_exact_found(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="22608",
+                    article="P-AM02/B-S",
+                    normalized_article="PAM02BS",
+                    free_stock=Decimal("1"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="22609",
+                    article="P-AM02/GR-S",
+                    normalized_article="PAM02GRS",
+                    free_stock=Decimal("2"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        lookup = service._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=["PAM02BS", "AM02"],
+            reason="stock",
+        )
+
+    assert lookup["exact_matches_count"] == 1
+    assert lookup["similar_matches_count"] == 0
+    assert all(item["status"] != "similar_found" for item in lookup["per_query_results"])
+
+
 def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
