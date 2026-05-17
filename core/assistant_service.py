@@ -93,6 +93,9 @@ class AssistantService:
         handoff_mode: str,
     ) -> AssistantReply:
         article_candidates = extract_article_candidates(customer_text)
+        history_article_candidates = self._extract_history_article_candidates(transcript)
+        if self._looks_like_price_refinement(customer_text, article_candidates) and history_article_candidates:
+            article_candidates = history_article_candidates
         if self._is_explicit_manager_request(customer_text) and article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
@@ -140,6 +143,14 @@ class AssistantService:
                 force_handoff_reason="order_request",
                 handoff_mode=handoff_mode,
             )
+
+        if (
+            handoff_decision.should_handoff
+            and handoff_decision.reason == "complex_technical_question"
+            and not article_candidates
+            and history_article_candidates
+        ):
+            article_candidates = history_article_candidates
 
         if handoff_decision.should_handoff and handoff_decision.reason == "complex_technical_question" and article_candidates:
             lookup_result = self._search_products_by_queries(
@@ -338,9 +349,9 @@ class AssistantService:
             return reply_text
 
         if handoff_reason == "order_request":
-            return f"{reply_text} Для оформления заказа передаю вопрос менеджеру."
+            return f"{reply_text} Передаю заказ менеджеру. Он подключится к диалогу и поможет оформить."
         if handoff_reason == "requested_quantity_exceeds_stock":
-            return f"{reply_text} Запрошенного количества может не хватить, передаю вопрос менеджеру для уточнения."
+            return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и уточнит возможность заказа или замены."
         if handoff_reason == "complex_technical_question":
             return (
                 f"{reply_text} По текущей выгрузке могу сравнить только данные из базы: код, артикул, цену, "
@@ -352,6 +363,9 @@ class AssistantService:
     @staticmethod
     def _sanitize_customer_reply(reply_text: str) -> str:
         text = reply_text.replace("**", "").replace("__", "").replace("`", "")
+        text = re.sub(r"\b[Оо]н свяжется с вами\b", "он подключится к диалогу", text)
+        text = re.sub(r"\b[Мм]енеджер свяжется с вами\b", "менеджер подключится к диалогу", text)
+        text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
         cleaned_lines = []
         for line in text.splitlines():
             stripped = line.strip()
@@ -469,15 +483,15 @@ class AssistantService:
         source: str,
     ) -> AssistantReply:
         self.handoff_service.register_handoff(session, external_chat_id, reason)
-        handoff_text = self._resolve_handoff_text(handoff_mode)
+        handoff_text = self._resolve_handoff_text(handoff_mode, reason)
         self._append_bot_message(
             session,
             external_chat_id=external_chat_id,
-            text=handoff_text,
+            text=self._sanitize_customer_reply(handoff_text),
             outbound_event_id=outbound_event_id,
             payload={"source": source, "handoff_reason": reason},
         )
-        return AssistantReply(text=handoff_text, handoff_reason=reason)
+        return AssistantReply(text=self._sanitize_customer_reply(handoff_text), handoff_reason=reason)
 
     @staticmethod
     def _is_explicit_manager_request(customer_text: str) -> bool:
@@ -501,6 +515,27 @@ class AssistantService:
         if "сравн" in text:
             return "compare"
         return "product_info"
+
+    @staticmethod
+    def _extract_history_article_candidates(transcript: str) -> list[str]:
+        candidates = extract_article_candidates(transcript or "")
+        result: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            result.append(candidate)
+        return result[:5]
+
+    @staticmethod
+    def _looks_like_price_refinement(customer_text: str, article_candidates: list[str]) -> bool:
+        text = customer_text.lower()
+        if "код" in text:
+            return False
+        if not ("цен" in text or "руб" in text):
+            return False
+        return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
 
     def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
         if self.debug_lookup_logs:
@@ -643,7 +678,12 @@ class AssistantService:
         return None
 
     @staticmethod
-    def _resolve_handoff_text(handoff_mode: str) -> str:
+    def _resolve_handoff_text(handoff_mode: str, reason: str | None = None) -> str:
+        if reason == "complex_technical_question":
+            return (
+                "Для точного подбора нужны параметры: размеры, нагрузка и тип установки. "
+                "Передаю вопрос менеджеру. Он подключится к диалогу и поможет подобрать вариант."
+            )
         if handoff_mode == "demo":
             return TELEGRAM_DEMO_HANDOFF_TEXT
         return JIVO_HANDOFF_TEXT

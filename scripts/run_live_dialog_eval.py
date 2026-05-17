@@ -26,6 +26,7 @@ class LiveScenario:
     title: str
     customer_text: str
     expected: str
+    history: tuple[str, ...] = ()
 
 
 DEFAULT_SCENARIOS = [
@@ -51,6 +52,34 @@ DEFAULT_SCENARIOS = [
     LiveScenario("L-020", "Смешанный поиск", "Проверьте 14.023пр. и XYZ-999", "Один товар найти, второй не выдумывать."),
     LiveScenario("L-021", "Цена и отсутствие цены", "Сколько стоят 14.023пр. и P-AM02/B-S?", "Не выдумывать цену, если её нет в базе."),
     LiveScenario("L-022", "Недовольный клиент", "Вы вообще можете нормально ответить? Дайте человека", "Не спорить, передать менеджеру."),
+    LiveScenario("L-023", "Дубль без лишней таблицы", "есть мп 28ск", "Несколько позиций, не выдавать таблицу, попросить код/цену/ссылку."),
+    LiveScenario(
+        "L-024",
+        "Уточнение дубля по цене",
+        "цена 132",
+        "После уточнения цены выбрать подходящую позицию МП 28ск и сказать остаток.",
+        history=("есть мп 28ск",),
+    ),
+    LiveScenario(
+        "L-025",
+        "Артикул со ссылкой",
+        "вот ссылка на товар, артикул МП 28ск",
+        "Если ссылку не парсим, попросить код или цену с карточки, не выдумывать.",
+    ),
+    LiveScenario(
+        "L-026",
+        "Сравнение из истории",
+        "а чем они отличаются?",
+        "Использовать историю, не выдумывать отличия, передать менеджеру.",
+        history=("Проверьте 14.023л. и 14.023пр.",),
+    ),
+    LiveScenario(
+        "L-027",
+        "Менеджер после уточнения",
+        "ок, давайте менеджера",
+        "Сразу handoff без повторных уточнений.",
+        history=("есть мп 28ск",),
+    ),
 ]
 
 
@@ -81,6 +110,18 @@ def main() -> None:
     with session_scope() as session:
         for index, scenario in enumerate(scenarios, start=1):
             chat_id = f"live-eval:{started_at.timestamp()}:{scenario.case_id}"
+            for history_index, history_text in enumerate(scenario.history, start=1):
+                assistant.handle_client_message(
+                    session,
+                    external_chat_id=chat_id,
+                    external_client_id="live-eval-user",
+                    customer_name="Live Eval",
+                    customer_text=history_text,
+                    inbound_event_id=f"{chat_id}:history:{history_index}:in",
+                    outbound_event_id=f"{chat_id}:history:{history_index}:out",
+                    payload={"source": "live_dialog_eval_history", "case_id": scenario.case_id},
+                    handoff_mode="demo",
+                )
             inbound_event_id = f"{chat_id}:{scenario.case_id}:in"
             outbound_event_id = f"{chat_id}:{scenario.case_id}:out"
             candidates = extract_article_candidates(scenario.customer_text)
@@ -216,6 +257,8 @@ def _write_report(
             scenario: LiveScenario = row["case"]
             file.write(f"## {scenario.case_id} — {scenario.title}\n\n")
             file.write(f"Клиент: {scenario.customer_text}\n\n")
+            if scenario.history:
+                file.write(f"История перед вопросом: `{json.dumps(list(scenario.history), ensure_ascii=False)}`\n\n")
             file.write(f"Что хотели проверить: {scenario.expected}\n\n")
             file.write(f"Кандидаты поиска: `{json.dumps(row['candidates'], ensure_ascii=False)}`\n\n")
             file.write("Prelookup:\n")

@@ -282,7 +282,8 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
         )
 
     assert reply.handoff_reason == "complex_technical_question"
-    assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT
+    assert "Для точного подбора нужны параметры" in reply.text
+    assert "подключится к диалогу" in reply.text
 
 
 def test_assistant_service_passes_backend_actions_to_facts_prompt(isolated_app_env) -> None:
@@ -353,7 +354,8 @@ def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_
         )
 
     assert reply.handoff_reason == "complex_technical_question"
-    assert reply.text == TELEGRAM_DEMO_HANDOFF_TEXT
+    assert "Для точного подбора нужны параметры" in reply.text
+    assert "подключится к диалогу" in reply.text
 
 
 def test_assistant_service_allows_company_contact_question_without_handoff(isolated_app_env) -> None:
