@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     kie_reasoning_effort: str = "high"
     kie_enable_web_search: bool = False
     assistant_debug_lookup_logs: bool = True
+    assistant_debug_llm_payloads: bool = True
+    assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"
     show_corporate_price: bool = True
 
     telegram_bot_token: str | None = None

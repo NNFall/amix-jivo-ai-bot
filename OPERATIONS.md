@@ -1130,3 +1130,30 @@
   - серверный `python -m pytest -q` -> `66 passed`;
   - `amix-telegram-demo.service` перезапущен и проверен: `active`;
   - Telegram `getMyCommands` вернул только команды `/start`, `/help`, `/newchat`.
+
+## Итерация 29 - debug-логи LLM-контекста и уточнение `198 которая стоит`
+
+- По живому Telegram-скриншоту выявлено:
+  - модель помнит общий контекст диалога, но уточнение `198 которая стоит` после `МП 28ск` ушло как новый поиск по числу `198`;
+  - нужно видеть полный payload, который передаётся в LLM: роли messages, transcript, lookup result, backend actions и ответ модели.
+- `settings.py`:
+  - добавлен `ASSISTANT_DEBUG_LLM_PAYLOADS`;
+  - добавлен `ASSISTANT_DEBUG_LLM_PAYLOADS_PATH`, по умолчанию `data/logs/llm_debug.jsonl`.
+- `core/assistant_service.py`:
+  - добавлен JSONL debug logger `_log_llm_debug_event`;
+  - логируются `llm_direct_request`, `llm_direct_response`, `product_facts_request`, `product_facts_response`, `llm_tool_call_result`;
+  - в `product_facts_request` сохраняется полный список `messages` с ролями, `transcript`, `product_lookup_result`, `backend_actions`;
+  - расширено распознавание follow-up уточнений: `стоит`, `стоимость`, `которая`, `который`, `за`.
+- `llm/prompts.py`:
+  - в примеры уточнений добавлена фраза `198 которая стоит`.
+- `.env.example` и `README.md`:
+  - добавлены настройки и описание `data/logs/llm_debug.jsonl`.
+- Тесты:
+  - добавлены проверки follow-up для `198 которая стоит`;
+  - добавлена проверка записи LLM debug JSONL.
+- Проверки:
+  - `python -m pytest -q` -> `68 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Локальная ручная проверка без LLM:
+  - `есть мп 28ск` -> найдено несколько позиций;
+  - `198 которая стоит` -> выбрана позиция `МП 28ск` с розничной ценой `198 руб.` и остатком `237 шт.`.

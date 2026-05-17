@@ -586,6 +586,7 @@ def test_assistant_service_can_hide_corporate_price(isolated_app_env, monkeypatc
 def test_assistant_service_marks_short_number_as_followup_refinement() -> None:
     assert AssistantService._looks_like_price_refinement("132", ["132"])  # noqa: SLF001
     assert AssistantService._looks_like_price_refinement("цена 132", ["132"])  # noqa: SLF001
+    assert AssistantService._looks_like_price_refinement("198 которая стоит", ["198"])  # noqa: SLF001
 
 
 def test_assistant_service_builds_followup_refinement_context() -> None:
@@ -605,6 +606,24 @@ def test_assistant_service_builds_followup_refinement_context() -> None:
     assert context["values"] == ["132"]
     assert context["matched_exact_count"] == 1
     assert context["matched_exact_matches"][0]["code"] == "26168"
+
+
+def test_assistant_service_builds_followup_refinement_context_for_stoit_phrase() -> None:
+    context = AssistantService._build_followup_refinement_context(  # noqa: SLF001
+        "198 которая стоит",
+        {
+            "exact_matches": [
+                {"code": "26167", "article": "МП 28ск", "retail_price": "118.00"},
+                {"code": "26168", "article": "МП 28ск", "retail_price": "132.00"},
+                {"code": "26169", "article": "МП 28ск", "retail_price": "198.00"},
+            ]
+        },
+    )
+
+    assert context["is_likely_followup_refinement"] is True
+    assert context["refinement_type"] == "price"
+    assert context["matched_exact_count"] == 1
+    assert context["matched_exact_matches"][0]["code"] == "26169"
 
 
 def test_assistant_service_applies_followup_refinement_to_single_match() -> None:
@@ -655,3 +674,26 @@ def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
     assert match["retail_price_display"] is None
     assert match["corporate_price"] is None
     assert match["corporate_price_display"] is None
+
+
+def test_assistant_service_writes_llm_debug_payload(isolated_app_env, monkeypatch, tmp_path) -> None:
+    log_path = tmp_path / "llm_debug.jsonl"
+    monkeypatch.setenv("ASSISTANT_DEBUG_LLM_PAYLOADS", "true")
+    monkeypatch.setenv("ASSISTANT_DEBUG_LLM_PAYLOADS_PATH", str(log_path))
+    get_settings.cache_clear()
+    service = AssistantService()
+
+    service._log_llm_debug_event(  # noqa: SLF001
+        "test_request",
+        {
+            "messages": [
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "Клиент: привет"},
+            ]
+        },
+    )
+
+    content = log_path.read_text(encoding="utf-8")
+    assert '"stage": "test_request"' in content
+    assert '"role": "system"' in content
+    assert '"role": "user"' in content

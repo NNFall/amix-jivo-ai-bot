@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import json
 import logging
+from pathlib import Path
 import re
 from typing import Any
 
@@ -47,6 +49,8 @@ class AssistantService:
         self.handoff_service = HandoffService()
         self.openai_service = OpenAIService(settings)
         self.debug_lookup_logs = settings.assistant_debug_lookup_logs
+        self.debug_llm_payloads = settings.assistant_debug_llm_payloads
+        self.debug_llm_payloads_path = Path(settings.assistant_debug_llm_payloads_path)
         self.show_corporate_price = settings.show_corporate_price
 
     def handle_client_message(
@@ -213,7 +217,27 @@ class AssistantService:
             )
 
         messages = build_llm_messages(transcript=transcript, customer_text=customer_text, product_lookup_result=None)
+        self._log_llm_debug_event(
+            "llm_direct_request",
+            {
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "transcript": transcript,
+                "messages": messages,
+                "tools": self._summarize_tools(OPENAI_TOOLS),
+                "tool_choice": "auto",
+            },
+        )
         first_turn = self.openai_service.run_messages(messages=messages, tools=OPENAI_TOOLS, tool_choice="auto")
+        self._log_llm_debug_event(
+            "llm_direct_response",
+            {
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "text": first_turn.text,
+                "tool_calls": self._serialize_tool_calls(first_turn.tool_calls),
+            },
+        )
         self._log_tool_turn(customer_text=customer_text, turn=first_turn)
 
         tool_reply = self._handle_tool_calls(
@@ -282,6 +306,19 @@ class AssistantService:
                 customer_text=customer_text,
             )
             self._log_lookup_result(stage="tool_call", payload=lookup_result)
+            self._log_llm_debug_event(
+                "llm_tool_call_result",
+                {
+                    "external_chat_id": external_chat_id,
+                    "customer_text": customer_text,
+                    "tool_call": {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "call_id": call.call_id,
+                    },
+                    "lookup_result": lookup_result,
+                },
+            )
             return self._reply_from_product_result(
                 session,
                 external_chat_id=external_chat_id,
@@ -341,7 +378,31 @@ class AssistantService:
                 product_lookup_result=product_lookup_result,
                 backend_actions=backend_actions,
             )
+            self._log_llm_debug_event(
+                "product_facts_request",
+                {
+                    "external_chat_id": external_chat_id,
+                    "customer_text": customer_text,
+                    "transcript": transcript,
+                    "product_lookup_result": product_lookup_result,
+                    "backend_actions": backend_actions,
+                    "messages": fact_messages,
+                    "note": (
+                        "messages is the exact role-based payload sent to the LLM. "
+                        "The dialog history is currently packed into a user message as transcript text."
+                    ),
+                },
+            )
             turn = self.openai_service.run_messages(messages=fact_messages)
+            self._log_llm_debug_event(
+                "product_facts_response",
+                {
+                    "external_chat_id": external_chat_id,
+                    "customer_text": customer_text,
+                    "text": turn.text,
+                    "tool_calls": self._serialize_tool_calls(turn.tool_calls),
+                },
+            )
 
         reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(
             product_lookup_result,
@@ -494,13 +555,13 @@ class AssistantService:
         has_refinement_word = any(
             keyword in text
             for keyword in ("цен", "руб", "код", "та что", "тот что", "по ")
-        )
+        ) or any(keyword in text for keyword in ("стоит", "стоимость", "которая", "который", "за "))
         if not values or not has_refinement_word:
             return {}
 
         if "код" in text:
             refinement_type = "code"
-        elif "цен" in text or "руб" in text:
+        elif "цен" in text or "руб" in text or "стоит" in text or "стоимость" in text:
             refinement_type = "price"
         else:
             refinement_type = "number"
@@ -812,13 +873,74 @@ class AssistantService:
             return False
         stripped = re.sub(r"\s+", " ", text).strip()
         is_short_number = bool(re.fullmatch(r"\d+(?:[,.]\d{1,2})?", stripped))
-        if not ("цен" in text or "руб" in text or "та что" in text or "по " in text or is_short_number):
+        if not (
+            "цен" in text
+            or "руб" in text
+            or "стоит" in text
+            or "стоимость" in text
+            or "та что" in text
+            or "которая" in text
+            or "который" in text
+            or "по " in text
+            or "за " in text
+            or is_short_number
+        ):
             return False
         return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
 
     def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
         if self.debug_lookup_logs:
             logger.info("assistant_lookup_%s payload=%s", stage, json.dumps(payload, ensure_ascii=False))
+
+    def _log_llm_debug_event(self, stage: str, payload: dict[str, Any]) -> None:
+        if not self.debug_llm_payloads:
+            return
+
+        event = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "stage": stage,
+            "provider": self.openai_service.provider,
+            "model": (
+                self.openai_service.kie_chat_model_path
+                if self.openai_service.provider == "kie"
+                else self.openai_service.model
+            ),
+            "payload": payload,
+        }
+
+        try:
+            self.debug_llm_payloads_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.debug_llm_payloads_path.open("a", encoding="utf-8") as file:
+                file.write(json.dumps(event, ensure_ascii=False, default=str))
+                file.write("\n")
+        except Exception:  # pragma: no cover - debug logging must not break replies
+            logger.exception("Failed to write LLM debug payload")
+
+    @staticmethod
+    def _serialize_tool_calls(tool_calls: list) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": call.name,
+                "arguments": call.arguments,
+                "call_id": call.call_id,
+            }
+            for call in tool_calls
+        ]
+
+    @staticmethod
+    def _summarize_tools(tools: list[dict]) -> list[dict[str, Any]]:
+        result = []
+        for tool in tools:
+            function = tool.get("function") or {}
+            result.append(
+                {
+                    "type": tool.get("type"),
+                    "name": function.get("name"),
+                    "description": function.get("description"),
+                    "parameters": function.get("parameters"),
+                }
+            )
+        return result
 
     def _log_tool_turn(self, *, customer_text: str, turn) -> None:
         if self.debug_lookup_logs:

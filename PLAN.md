@@ -464,3 +464,20 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Проверить `/newchat` в живом Telegram-чате, затем продолжить ручные multi-turn проверки уже без накопленного старого контекста.
+
+## Обновление 2026-05-18 - LLM debug logs и уточнение цены
+
+- Добавлены LLM debug-логи в `data/logs/llm_debug.jsonl`.
+- Логируются:
+  - стадия вызова (`llm_direct_request`, `product_facts_request`, `product_facts_response`, `llm_tool_call_result`);
+  - `messages` с ролями, которые реально уходят в модель;
+  - `transcript`, `product_lookup_result`, `backend_actions`;
+  - ответ модели и tool calls.
+- Исправлено распознавание уточнений вида `198 которая стоит` / `которая стоит 198` как выбора предыдущей позиции по цене.
+- Проверки:
+  - `python -m pytest -q` -> `68 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+После деплоя проверить живой Telegram-диалог с `/newchat`, затем задать `есть мп 28ск` и `198 которая стоит`; если ответ снова будет неверным, смотреть свежие строки `data/logs/llm_debug.jsonl`.
