@@ -342,7 +342,9 @@ def _serialize_product(product: Product) -> dict:
         "code": product.code,
         "article": product.article,
         "retail_price": str(product.retail_price) if product.retail_price is not None else None,
+        "retail_price_display": _format_price_display(product.retail_price),
         "corporate_price": str(product.corporate_price) if product.corporate_price is not None else None,
+        "corporate_price_display": _format_price_display(product.corporate_price),
         "unit": product.unit,
         "weight": str(product.weight) if product.weight is not None else None,
         "volume": str(product.volume) if product.volume is not None else None,
@@ -350,6 +352,23 @@ def _serialize_product(product: Product) -> dict:
         "category": "",
         "tags": [],
     }
+
+
+def _format_price_display(value) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    if "." in text:
+        whole, fraction = text.split(".", 1)
+        fraction = fraction.rstrip("0")
+        if fraction:
+            return f"{whole},{fraction} руб."
+        return f"{whole} руб."
+    return f"{text} руб."
 
 
 def create_product_import(session, filename: str, source_path: str) -> ProductImport:

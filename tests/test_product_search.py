@@ -181,6 +181,27 @@ def test_search_products_structured_treats_compact_split_article_as_exact() -> N
     assert result["exact_matches"][0]["code"] == "22608"
 
 
+def test_search_products_structured_includes_price_display_fields() -> None:
+    with build_session() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                retail_price=Decimal("473.00"),
+                corporate_price=Decimal("335.24"),
+                raw_payload={},
+            )
+        )
+        session.commit()
+
+        result = search_products_structured(session, query="14.023пр.")
+
+    match = result["exact_matches"][0]
+    assert match["retail_price_display"] == "473 руб."
+    assert match["corporate_price_display"] == "335,24 руб."
+
+
 def test_product_search_service_builds_readable_reply() -> None:
     product = Product(
         code="1",

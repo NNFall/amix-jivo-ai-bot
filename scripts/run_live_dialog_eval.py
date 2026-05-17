@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -151,6 +152,7 @@ def main() -> None:
                     "prelookup": prelookup,
                     "message_payload": message_payload,
                     "style_flags": _style_flags(reply.text),
+                    "content_flags": _content_flags(scenario, reply.text, message_payload),
                     "manager_score": _manager_score(reply.text),
                 }
             )
@@ -233,6 +235,48 @@ def _style_flags(answer: str) -> list[str]:
     return flags
 
 
+def _content_flags(scenario: LiveScenario, answer: str, payload: dict[str, Any]) -> list[str]:
+    flags = []
+    lower = answer.lower()
+
+    if re.search(r"\bкоду\d+\b", lower) or re.search(r"\bкод\d+\b", lower):
+        flags.append("code_spacing")
+
+    if scenario.case_id == "L-003":
+        has_phone_or_email = any(
+            value in answer
+            for value in ("+7 (812) 372-66-07", "372-66-07", "market@amix.spb.ru")
+        )
+        if not has_phone_or_email:
+            flags.append("contacts_missing")
+        if "подскажите, что нужно посмотреть" in lower and not has_phone_or_email:
+            flags.append("generic_greeting_instead_of_contacts")
+
+    if scenario.case_id == "L-004":
+        if "достав" not in lower or not any(word in lower for word in ("росси", "транспорт", "курьер")):
+            flags.append("delivery_answer_missing")
+        if "стоим" in lower and "могу уточнить" in lower and "менеджер" not in lower:
+            flags.append("delivery_price_claim")
+
+    if scenario.case_id in {"L-020", "L-030"}:
+        if re.search(r"корпоративн\w*\s+(?:цена\s+)?335\s*руб", lower) and "335,24" not in lower and "335.24" not in lower:
+            flags.append("corporate_price_rounded")
+        if re.search(r"корпоративн\w*\s+(?:цена\s+)?165\s*руб", lower) and "165,98" not in lower and "165.98" not in lower:
+            flags.append("corporate_price_rounded")
+
+    if scenario.case_id == "L-031" and "выгрузк" in lower:
+        flags.append("export_word_in_missing_price")
+
+    if scenario.case_id in {"L-017", "L-018", "L-028"}:
+        if "поможет оформить" in lower or "поможет с оформлением" in lower or "можно оформить" in lower:
+            flags.append("shortage_sounds_orderable")
+        if payload.get("backend_actions", {}).get("response_mode") == "stock_shortage_handoff":
+            if not any(word in lower for word in ("уточнит возможность", "подбер", "предложит")):
+                flags.append("shortage_handoff_not_explicit")
+
+    return flags
+
+
 def _manager_score(answer: str) -> str:
     flags = _style_flags(answer)
     if flags:
@@ -265,7 +309,8 @@ def _write_report(
         file.write("## Итог\n\n")
         file.write(f"- Сценариев: `{len(rows)}`.\n")
         file.write(f"- Ответов без style flags: `{sum(not row['style_flags'] for row in rows)}`.\n")
-        file.write(f"- Ответов на ручную проверку: `{sum(bool(row['style_flags']) for row in rows)}`.\n\n")
+        file.write(f"- Ответов без content flags: `{sum(not row['content_flags'] for row in rows)}`.\n")
+        file.write(f"- Ответов на ручную проверку: `{sum(bool(row['style_flags'] or row['content_flags']) for row in rows)}`.\n\n")
 
         for row in rows:
             scenario: LiveScenario = row["case"]
@@ -286,6 +331,7 @@ def _write_report(
                 f"`handoff={row['handoff_reason']}`\n\n"
             )
             file.write(f"Style flags: `{', '.join(row['style_flags']) or 'нет'}`\n\n")
+            file.write(f"Content flags: `{', '.join(row['content_flags']) or 'нет'}`\n\n")
             file.write(f"Оценка стиля: `{row['manager_score']}`\n\n")
             file.write(f"Ответ модели:\n{row['answer']}\n\n")
 

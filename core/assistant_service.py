@@ -373,6 +373,7 @@ class AssistantService:
             for key in ("exact_matches", "similar_matches"):
                 for match in container.get(key, []):
                     match["corporate_price"] = None
+                    match["corporate_price_display"] = None
         return payload
 
     @staticmethod
@@ -476,6 +477,7 @@ class AssistantService:
         text = re.sub(r"\b[Оо]н свяжется с вами\b", "он подключится к диалогу", text)
         text = re.sub(r"\b[Мм]енеджер свяжется с вами\b", "менеджер подключится к диалогу", text)
         text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
+        text = re.sub(r"\b([Кк]од(?:у|ом)?)(\d+)\b", r"\1 \2", text)
         cleaned_lines = []
         for line in text.splitlines():
             stripped = line.strip()
@@ -698,8 +700,8 @@ class AssistantService:
                 if item_status in {"exact_found", "multiple_exact"} and item_exact:
                     if len(item_exact) == 1:
                         match = item_exact[0]
-                        retail_price = AssistantService._format_number(match.get("retail_price"))
-                        price_text = f", розничная цена {retail_price} руб" if retail_price else ", цена в текущих данных не указана"
+                        retail_price = AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
+                        price_text = f", розничная цена {retail_price}" if retail_price else ", цена в текущих данных не указана"
                         display_article = match.get("article") or item_query
                         prefix = f"По {display_article} остаток "
                         if AssistantService._lookup_item_queried_by_code(customer_text, item, match):
@@ -729,9 +731,9 @@ class AssistantService:
                 item = exact[0]
                 article = item.get("article") or query
                 stock_text = AssistantService._format_quantity(item.get("stock"), item.get("unit"))
-                retail_price = AssistantService._format_number(item.get("retail_price"))
+                retail_price = AssistantService._format_price_text(item.get("retail_price_display"), item.get("retail_price"))
                 corporate_price = (
-                    AssistantService._format_number(item.get("corporate_price"))
+                    AssistantService._format_price_text(item.get("corporate_price_display"), item.get("corporate_price"))
                     if show_corporate_price
                     else None
                 )
@@ -742,9 +744,9 @@ class AssistantService:
                     parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
                 parts.append(f"Сейчас в наличии {stock_text}.")
                 if retail_price:
-                    parts.append(f"Розничная цена {retail_price} руб.")
+                    parts.append(f"Розничная цена {retail_price}.")
                 if corporate_price:
-                    parts.append(f"Корпоративная цена {corporate_price} руб.")
+                    parts.append(f"Корпоративная цена {corporate_price}.")
                 if not retail_price and not corporate_price:
                     parts.append("Цена в текущих данных не указана.")
                 return " ".join(parts)
@@ -772,6 +774,15 @@ class AssistantService:
         if "." not in text:
             return text
         return text.rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _format_price_text(display_value: Any, raw_value: Any) -> str | None:
+        if display_value:
+            return str(display_value).strip().rstrip(".")
+        number = AssistantService._format_number(raw_value)
+        if not number:
+            return None
+        return f"{number} руб"
 
     @staticmethod
     def _format_quantity(value: Any, unit: Any) -> str:

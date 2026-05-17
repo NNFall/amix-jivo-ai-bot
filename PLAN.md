@@ -24,6 +24,22 @@
   - For future live checks, append full dated runs to `LIVE_DIALOG_EVALS.md` instead of replacing the file, so external review can compare full model outputs by run.
   - Continue Telegram demo checks with real user messages and keep tuning only on observed failures.
 
+## Update 2026-05-17 (Live Semantic Assertions)
+
+- Status: completed locally, VPS live check pending
+- Done:
+  - Strengthened `SYSTEM_PROMPT` for FAQ questions: contacts, address, schedule and delivery must answer concrete user intent, not generic greeting.
+  - Added product price display fields from backend: `retail_price_display`, `corporate_price_display`.
+  - Product prompt now tells the model to use display price fields and not round prices.
+  - Sanitizer now fixes glued code wording such as `коду26168`.
+  - Live eval now separates `style_flags` from `content_flags`.
+  - Added content assertions for contacts, delivery, code spacing, rounded corporate prices, missing-price wording and shortage wording.
+- Checks:
+  - Local full pytest -> `57 passed`.
+  - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Commit/push, sync VPS, append a new full live run to `LIVE_DIALOG_EVALS.md` and verify content flags.
+
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 
 - Status: completed and deployed
