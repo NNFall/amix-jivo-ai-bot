@@ -17,6 +17,17 @@
 - Next:
   - Commit/push and sync VPS, then test real Telegram wording with live LLM.
 
+## Update 2026-05-17 (Style Comparison Report)
+
+- Status: completed locally
+- Done:
+  - Ran the same 31 dialog scenarios against pre-style-change commit `a5e7ad8` and current code.
+  - Kept `DIALOG_EVALS.md` intact and created separate report `DIALOG_STYLE_COMPARISON.md`.
+  - Confirmed both versions stay functionally green: `OK=31 PARTIAL=0 FAIL=0`.
+  - Confirmed style changed materially: dry field labels dropped from `37` to `0`; duplicate-article flow now asks for code/price instead of dumping all product rows.
+- Next:
+  - Commit/push this comparison report and optionally continue with live LLM wording tests.
+
 ## Update 2026-05-17 (Grouped Product Facts + Backend Actions)
 
 - Status: completed and deployed
