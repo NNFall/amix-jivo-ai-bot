@@ -581,3 +581,25 @@ def test_assistant_service_can_hide_corporate_price(isolated_app_env, monkeypatc
 
     assert "Розничная цена 238 руб." in reply.text
     assert "Корпоративная" not in reply.text
+
+
+def test_assistant_service_marks_short_number_as_followup_refinement() -> None:
+    assert AssistantService._looks_like_price_refinement("132", ["132"])  # noqa: SLF001
+    assert AssistantService._looks_like_price_refinement("цена 132", ["132"])  # noqa: SLF001
+
+
+def test_assistant_service_builds_followup_refinement_context() -> None:
+    context = AssistantService._build_followup_refinement_context(  # noqa: SLF001
+        "цена 132",
+        {
+            "exact_matches": [
+                {"code": "26167", "article": "МП 28ск", "retail_price": "118.00"},
+                {"code": "26168", "article": "МП 28ск", "retail_price": "132.00"},
+                {"code": "26169", "article": "МП 28ск", "retail_price": "198.00"},
+            ]
+        },
+    )
+
+    assert context["is_likely_followup_refinement"] is True
+    assert context["refinement_type"] == "price"
+    assert context["values"] == ["132"]

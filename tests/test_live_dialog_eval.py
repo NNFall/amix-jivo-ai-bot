@@ -28,3 +28,40 @@ def test_live_eval_flags_code_spacing_and_rounded_corporate_price() -> None:
         "По 14.023пр. корпоративная 335 руб.",
         {},
     )
+
+
+def test_live_eval_flags_price_on_stock_only_request() -> None:
+    scenario = LiveScenario("L-010", "Точное наличие", "1108035 есть в наличии?", "Только наличие.")
+
+    flags = _content_flags(
+        scenario,
+        "Проверил, сейчас в наличии 2 комплекта. Розничная цена 50 820 руб.",
+        {},
+    )
+
+    assert "price_given_on_stock_only_request" in flags
+
+
+def test_live_eval_flags_unresolved_price_refinement() -> None:
+    scenario = LiveScenario("L-024", "Уточнение дубля по цене", "цена 132", "Выбрать позицию по цене.")
+
+    flags = _content_flags(
+        scenario,
+        "По МП 28ск нашёл несколько позиций. Уточните код товара или цену.",
+        {},
+    )
+
+    assert "price_refinement_not_resolved" in flags
+    assert "repeat_clarification_after_price_refinement" in flags
+
+
+def test_live_eval_accepts_resolved_price_refinement() -> None:
+    scenario = LiveScenario("L-024", "Уточнение дубля по цене", "цена 132", "Выбрать позицию по цене.")
+
+    flags = _content_flags(
+        scenario,
+        "Понял, по цене 132 руб. это код 26168. Сейчас в наличии 292 шт.",
+        {},
+    )
+
+    assert flags == []

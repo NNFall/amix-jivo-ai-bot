@@ -39,7 +39,7 @@ DEFAULT_SCENARIOS = [
     LiveScenario("L-007", "Точный товар по коду", "проверьте код 26139", "Найти товар по коду и ответить по базе."),
     LiveScenario("L-008", "Дубли артикула", "а МП 28ск в наличии сколько", "При нескольких позициях сначала попросить уточнить код или цену."),
     LiveScenario("L-009", "Уточнение дубля", "код 26168", "Найти конкретный код и ответить по нему."),
-    LiveScenario("L-010", "Точное наличие", "1108035 есть в наличии?", "Найти товар и ответить по остатку/цене."),
+    LiveScenario("L-010", "Точное наличие", "1108035 есть в наличии?", "Найти товар и ответить по остатку без цены, потому что клиент спросил только наличие."),
     LiveScenario("L-011", "Неточный ввод", "а p am02 b s есть?", "Не выдумывать; найти или попросить уточнение."),
     LiveScenario("L-012", "Не найдено", "Есть XYZ-999?", "Не выдумывать товар, попросить проверить артикул/код."),
     LiveScenario("L-013", "Цена без артикула", "Сколько стоит направляющая?", "Попросить артикул или код."),
@@ -258,11 +258,21 @@ def _content_flags(scenario: LiveScenario, answer: str, payload: dict[str, Any])
         if "стоим" in lower and "могу уточнить" in lower and "менеджер" not in lower:
             flags.append("delivery_price_claim")
 
+    if scenario.case_id == "L-010":
+        if any(word in lower for word in ("рознич", "корпоратив", "цена", "руб")):
+            flags.append("price_given_on_stock_only_request")
+
     if scenario.case_id in {"L-020", "L-030"}:
         if re.search(r"корпоративн\w*\s+(?:цена\s+)?335\s*руб", lower) and "335,24" not in lower and "335.24" not in lower:
             flags.append("corporate_price_rounded")
         if re.search(r"корпоративн\w*\s+(?:цена\s+)?165\s*руб", lower) and "165,98" not in lower and "165.98" not in lower:
             flags.append("corporate_price_rounded")
+
+    if scenario.case_id == "L-024":
+        if not all(value in lower for value in ("26168", "292")):
+            flags.append("price_refinement_not_resolved")
+        if "уточните" in lower and ("код" in lower or "цен" in lower):
+            flags.append("repeat_clarification_after_price_refinement")
 
     if scenario.case_id == "L-031" and "выгрузк" in lower:
         flags.append("export_word_in_missing_price")

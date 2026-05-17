@@ -325,6 +325,7 @@ class AssistantService:
             "show_corporate_price": self.show_corporate_price,
             "corporate_price_request": bool(corporate_price_handoff_reason),
             "queried_by_code": self._lookup_queried_by_code(customer_text, product_lookup_result),
+            "followup_refinement": self._build_followup_refinement_context(customer_text, product_lookup_result),
         }
 
         turn = None
@@ -419,6 +420,40 @@ class AssistantService:
             if code and code in normalized_queries:
                 return True
         return False
+
+    @staticmethod
+    def _build_followup_refinement_context(customer_text: str, product_lookup_result: dict) -> dict:
+        exact = product_lookup_result.get("exact_matches") or []
+        if len(exact) < 2:
+            return {}
+
+        text = customer_text.lower()
+        values = re.findall(r"(?<!\d)(\d+(?:[,.]\d{1,2})?)(?!\d)", text)
+        has_refinement_word = any(
+            keyword in text
+            for keyword in ("цен", "руб", "код", "та что", "тот что", "по ")
+        )
+        if not values or not has_refinement_word:
+            return {}
+
+        if "код" in text:
+            refinement_type = "code"
+        elif "цен" in text or "руб" in text:
+            refinement_type = "price"
+        else:
+            refinement_type = "number"
+
+        return {
+            "is_likely_followup_refinement": True,
+            "refinement_type": refinement_type,
+            "values": values[:3],
+            "instruction": (
+                "Текущее сообщение похоже на уточнение предыдущего выбора. "
+                "Сначала сопоставь values с кодом, розничной ценой или корпоративной ценой "
+                "в exact_matches. Если ровно одна позиция подходит, ответь по ней и не проси "
+                "код или цену повторно."
+            ),
+        }
 
     @staticmethod
     def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
@@ -658,7 +693,9 @@ class AssistantService:
         text = customer_text.lower()
         if "код" in text:
             return False
-        if not ("цен" in text or "руб" in text):
+        stripped = re.sub(r"\s+", " ", text).strip()
+        is_short_number = bool(re.fullmatch(r"\d+(?:[,.]\d{1,2})?", stripped))
+        if not ("цен" in text or "руб" in text or "та что" in text or "по " in text or is_short_number):
             return False
         return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
 
