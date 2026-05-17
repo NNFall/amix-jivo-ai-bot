@@ -5,7 +5,7 @@ import httpx
 
 from core.assistant_service import AssistantService
 from database.db import create_db_and_tables, session_scope
-from database.repositories import mark_chat_status, message_exists_by_external_event_id
+from database.repositories import message_exists_by_external_event_id, reset_chat_context
 from settings import get_settings
 
 
@@ -20,12 +20,18 @@ WELCOME_TEXT = (
 
 HELP_TEXT = (
     "Отправьте артикул или вопрос по наличию. "
-    "Команды: /start, /help, /reset."
+    "Команды: /start, /help, /newchat."
 )
 
-RESET_TEXT = "История текущего демо-чата помечена как новая. Можете задать следующий вопрос."
+RESET_TEXT = "Контекст очищен. Можете начать новый тестовый диалог с нуля."
 
 TEXT_ONLY_TEXT = "Сейчас я работаю только с текстовыми сообщениями."
+
+BOT_COMMANDS = [
+    {"command": "start", "description": "Запустить демо-бота"},
+    {"command": "help", "description": "Показать подсказку"},
+    {"command": "newchat", "description": "Начать новый тестовый диалог"},
+]
 
 
 class TelegramDemoBot:
@@ -42,6 +48,7 @@ class TelegramDemoBot:
 
     def run_forever(self) -> None:
         create_db_and_tables()
+        self._set_bot_commands_safe()
         offset: int | None = None
         logger.info("Telegram demo bot polling started")
 
@@ -100,15 +107,16 @@ class TelegramDemoBot:
             return
 
         normalized_text = message_text.strip()
-        if normalized_text == "/start":
+        command_name = self._command_name(normalized_text)
+        if command_name == "start":
             self._send_text(chat_id, WELCOME_TEXT)
             return
-        if normalized_text == "/help":
+        if command_name == "help":
             self._send_text(chat_id, HELP_TEXT)
             return
-        if normalized_text == "/reset":
+        if command_name == "newchat":
             with session_scope() as session:
-                mark_chat_status(session, external_chat_id, "active")
+                reset_chat_context(session, external_chat_id)
             self._send_text(chat_id, RESET_TEXT)
             return
 
@@ -137,6 +145,32 @@ class TelegramDemoBot:
         with httpx.Client(timeout=20) as client:
             response = client.post(f"{self.api_base}/sendMessage", json=payload)
             response.raise_for_status()
+
+    def _set_bot_commands_safe(self) -> None:
+        try:
+            self._set_bot_commands()
+        except Exception:  # pragma: no cover - Telegram menu setup should not stop polling
+            logger.exception("Failed to set Telegram demo bot commands")
+
+    def _set_bot_commands(self) -> None:
+        with httpx.Client(timeout=20) as client:
+            response = client.post(f"{self.api_base}/setMyCommands", json={"commands": BOT_COMMANDS})
+            response.raise_for_status()
+            payload = response.json()
+
+        if not payload.get("ok"):
+            raise RuntimeError(f"Telegram setMyCommands failed: {payload}")
+
+    @staticmethod
+    def _command_name(text: str) -> str | None:
+        stripped = text.strip()
+        if not stripped:
+            return None
+
+        if stripped.startswith("/"):
+            command_token = stripped.split(maxsplit=1)[0]
+            return command_token[1:].split("@", maxsplit=1)[0].lower()
+        return None
 
     @staticmethod
     def _build_customer_name(from_user: dict, chat: dict) -> str | None:

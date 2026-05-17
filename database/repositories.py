@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 
 from database.models import Chat, Customer, Handoff, JivoEvent, Message, ProcessingError, Product, ProductImport
 from products.article_utils import build_normalized_article_variants, normalize_article
@@ -83,6 +83,19 @@ def mark_chat_status(session, external_chat_id: str, status: str) -> None:
 
     entity.status = status
     session.add(entity)
+
+
+def reset_chat_context(session, external_chat_id: str) -> int:
+    chat = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
+    if chat is None:
+        return 0
+
+    deleted_messages = session.execute(delete(Message).where(Message.chat_id == chat.id)).rowcount or 0
+    session.execute(delete(Handoff).where(Handoff.external_chat_id == external_chat_id))
+    chat.status = "active"
+    session.add(chat)
+    session.flush()
+    return int(deleted_messages)
 
 
 def append_message(
