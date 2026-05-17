@@ -308,6 +308,10 @@ class AssistantService:
         handoff_mode: str = "jivo",
     ) -> AssistantReply:
         product_lookup_result = self._apply_response_policy(product_lookup_result)
+        followup_refinement = self._build_followup_refinement_context(customer_text, product_lookup_result)
+        product_lookup_result = self._apply_followup_refinement(product_lookup_result, followup_refinement)
+        stock_only_request = self._is_stock_only_request(customer_text)
+        product_lookup_result = self._apply_stock_only_policy(product_lookup_result, stock_only_request)
         requested_quantity = self._extract_requested_quantity(customer_text)
         stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
         corporate_price_handoff_reason = (
@@ -325,7 +329,8 @@ class AssistantService:
             "show_corporate_price": self.show_corporate_price,
             "corporate_price_request": bool(corporate_price_handoff_reason),
             "queried_by_code": self._lookup_queried_by_code(customer_text, product_lookup_result),
-            "followup_refinement": self._build_followup_refinement_context(customer_text, product_lookup_result),
+            "stock_only_request": stock_only_request,
+            "followup_refinement": followup_refinement,
         }
 
         turn = None
@@ -383,6 +388,63 @@ class AssistantService:
         containers.extend(product_lookup_result.get("results") or [])
         containers.extend(product_lookup_result.get("per_query_results") or [])
         return [item for item in containers if isinstance(item, dict)]
+
+    @staticmethod
+    def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
+        exact = product_lookup_result.get("exact_matches") or []
+        if not stock_only_request or len(exact) != 1:
+            return product_lookup_result
+
+        payload = deepcopy(product_lookup_result)
+        for container in AssistantService._iter_lookup_result_containers(payload):
+            for key in ("exact_matches", "similar_matches"):
+                for match in container.get(key, []):
+                    match["retail_price"] = None
+                    match["retail_price_display"] = None
+                    match["corporate_price"] = None
+                    match["corporate_price_display"] = None
+        return payload
+
+    @staticmethod
+    def _apply_followup_refinement(product_lookup_result: dict, refinement_context: dict) -> dict:
+        if not refinement_context.get("is_likely_followup_refinement"):
+            return product_lookup_result
+
+        matches = refinement_context.get("matched_exact_matches") or []
+        if len(matches) != 1:
+            return product_lookup_result
+
+        selected = matches[0]
+        payload = deepcopy(product_lookup_result)
+        payload["status"] = "exact_found"
+        payload["exact_matches"] = [selected]
+        payload["similar_matches"] = []
+        payload["exact_matches_count"] = 1
+        payload["similar_matches_count"] = 0
+        payload["resolved_followup_refinement"] = {
+            "matched_by": refinement_context.get("matched_by"),
+            "value": refinement_context.get("matched_value"),
+            "code": selected.get("code"),
+            "article": selected.get("article"),
+        }
+
+        for container in AssistantService._iter_lookup_result_containers(payload):
+            container_exact = container.get("exact_matches") or []
+            if not any(AssistantService._same_product(match, selected) for match in container_exact):
+                continue
+            container["status"] = "exact_found"
+            container["exact_matches"] = [selected]
+            container["similar_matches"] = []
+            container["exact_matches_count"] = 1
+            container["similar_matches_count"] = 0
+
+        payload["summary"] = {
+            "total_queries": 1,
+            "total_exact_matches": 1,
+            "total_similar_matches": 0,
+            "has_errors": False,
+        }
+        return payload
 
     @staticmethod
     def _resolve_response_mode(handoff_reason: str | None) -> str | None:
@@ -443,10 +505,16 @@ class AssistantService:
         else:
             refinement_type = "number"
 
+        matched = AssistantService._match_refinement_to_exact_matches(values, refinement_type, exact)
+
         return {
             "is_likely_followup_refinement": True,
             "refinement_type": refinement_type,
             "values": values[:3],
+            "matched_exact_count": len(matched),
+            "matched_exact_matches": matched[:2],
+            "matched_by": refinement_type if len(matched) == 1 else None,
+            "matched_value": values[0] if len(matched) == 1 and values else None,
             "instruction": (
                 "Текущее сообщение похоже на уточнение предыдущего выбора. "
                 "Сначала сопоставь values с кодом, розничной ценой или корпоративной ценой "
@@ -454,6 +522,47 @@ class AssistantService:
                 "код или цену повторно."
             ),
         }
+
+    @staticmethod
+    def _match_refinement_to_exact_matches(values: list[str], refinement_type: str, exact: list[dict]) -> list[dict]:
+        if not values:
+            return []
+
+        normalized_values = {AssistantService._normalize_refinement_value(value) for value in values}
+        result: list[dict] = []
+        for match in exact:
+            candidates = [match.get("code")]
+            if refinement_type in {"price", "number"}:
+                candidates.extend(
+                    [
+                        match.get("retail_price"),
+                        match.get("retail_price_display"),
+                        match.get("corporate_price"),
+                        match.get("corporate_price_display"),
+                    ]
+                )
+            if any(AssistantService._normalize_refinement_value(candidate) in normalized_values for candidate in candidates if candidate):
+                result.append(match)
+        return result
+
+    @staticmethod
+    def _normalize_refinement_value(value: Any) -> str:
+        text = str(value).lower().replace(",", ".")
+        number_match = re.search(r"\d+(?:\.\d+)?", text)
+        if not number_match:
+            return normalize_article(text)
+        number = number_match.group(0)
+        try:
+            numeric = float(number)
+        except ValueError:
+            return number
+        if numeric.is_integer():
+            return str(int(numeric))
+        return f"{numeric:.2f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _same_product(left: dict, right: dict) -> bool:
+        return str(left.get("code") or "") == str(right.get("code") or "") and str(left.get("article") or "") == str(right.get("article") or "")
 
     @staticmethod
     def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
@@ -664,6 +773,14 @@ class AssistantService:
         text = customer_text.lower()
         keywords = ("цен", "стоит", "стоим", "налич", "остат", "сколько", "артикул", "код")
         return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _is_stock_only_request(customer_text: str) -> bool:
+        text = customer_text.lower()
+        has_stock_intent = any(keyword in text for keyword in ("налич", "остат", "есть"))
+        has_price_intent = any(keyword in text for keyword in ("цен", "стоит", "стоим", "руб", "корп", "опт"))
+        has_order_intent = any(keyword in text for keyword in ("заказ", "купить", "оформ"))
+        return has_stock_intent and not has_price_intent and not has_order_intent
 
     @staticmethod
     def _guess_lookup_reason(customer_text: str) -> str:

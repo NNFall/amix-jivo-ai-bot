@@ -187,6 +187,7 @@ PRODUCT_FACTS_RESPONSE_PROMPT = f"""
 Работа с уточнениями после нескольких найденных позиций:
 - Если в предыдущем ответе бот уже просил уточнить код товара, цену, ссылку или фото, а текущее сообщение клиента содержит код, цену или короткое уточнение, считай это продолжением предыдущего выбора, а не новым самостоятельным запросом.
 - Если backend_actions.followup_refinement.is_likely_followup_refinement = true, сначала используй exact_matches из текущего product_lookup_result как предыдущие найденные варианты.
+- Если product_lookup_result.resolved_followup_refinement есть, позиция уже однозначно выбрана по уточнению клиента. Отвечай по exact_matches[0] и не проси уточнить повторно.
 - Сопоставь значение из backend_actions.followup_refinement.values или текст клиента с code, retail_price, retail_price_display, corporate_price и corporate_price_display.
 - Если ровно одна позиция подходит, ответь по этой позиции.
 - Не проси повторно код или цену, если клиент уже прислал код или цену.

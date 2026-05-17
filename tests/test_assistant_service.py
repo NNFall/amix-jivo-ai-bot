@@ -603,3 +603,55 @@ def test_assistant_service_builds_followup_refinement_context() -> None:
     assert context["is_likely_followup_refinement"] is True
     assert context["refinement_type"] == "price"
     assert context["values"] == ["132"]
+    assert context["matched_exact_count"] == 1
+    assert context["matched_exact_matches"][0]["code"] == "26168"
+
+
+def test_assistant_service_applies_followup_refinement_to_single_match() -> None:
+    lookup = {
+        "status": "multiple_exact",
+        "exact_matches_count": 3,
+        "similar_matches_count": 0,
+        "exact_matches": [
+            {"code": "26167", "article": "МП 28ск", "retail_price": "118.00"},
+            {"code": "26168", "article": "МП 28ск", "retail_price": "132.00"},
+            {"code": "26169", "article": "МП 28ск", "retail_price": "198.00"},
+        ],
+        "similar_matches": [],
+    }
+    context = AssistantService._build_followup_refinement_context("цена 132", lookup)  # noqa: SLF001
+
+    resolved = AssistantService._apply_followup_refinement(lookup, context)  # noqa: SLF001
+
+    assert resolved["status"] == "exact_found"
+    assert resolved["exact_matches_count"] == 1
+    assert resolved["exact_matches"][0]["code"] == "26168"
+    assert resolved["resolved_followup_refinement"]["value"] == "132"
+
+
+def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
+    lookup = {
+        "status": "exact_found",
+        "exact_matches_count": 1,
+        "similar_matches_count": 0,
+        "exact_matches": [
+            {
+                "code": "26141",
+                "article": "1108035",
+                "stock": "2.000",
+                "retail_price": "50820.00",
+                "retail_price_display": "50 820 руб.",
+                "corporate_price": "24283.00",
+                "corporate_price_display": "24 283 руб.",
+            }
+        ],
+        "similar_matches": [],
+    }
+
+    filtered = AssistantService._apply_stock_only_policy(lookup, True)  # noqa: SLF001
+
+    match = filtered["exact_matches"][0]
+    assert match["retail_price"] is None
+    assert match["retail_price_display"] is None
+    assert match["corporate_price"] is None
+    assert match["corporate_price_display"] is None
