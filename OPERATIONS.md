@@ -1121,3 +1121,12 @@
   - проверяется фактическая очистка сообщений и handoff.
 - Проверка:
   - `python -m pytest -q` -> `66 passed`.
+- GitHub:
+  - commit: `6347af5`
+  - message: `Add Telegram newchat reset command`
+  - push: `origin/master`
+- VPS:
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `66 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`;
+  - Telegram `getMyCommands` вернул только команды `/start`, `/help`, `/newchat`.
