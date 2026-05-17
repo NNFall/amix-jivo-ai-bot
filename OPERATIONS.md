@@ -1049,3 +1049,52 @@
   - `git pull --ff-only` выполнен успешно;
   - `git status --short` на VPS пустой;
   - `amix-telegram-demo.service` проверен: `active`.
+
+## Итерация 27 - уточнение дублей по цене и stock-only ответы
+
+- Получена внешняя проверка live-отчёта:
+  - L-024 `цена 132` после `есть мп 28ск` не должен быть новым поиском по `132`;
+  - модель должна использовать предыдущий `multiple_exact` и выбрать позицию по цене/коду;
+  - если клиент спрашивает только наличие, не нужно сразу показывать цену.
+- Сначала внесены prompt-only правки:
+  - добавлены правила уточнения предыдущего выбора;
+  - добавлены правила ответа по намерению клиента.
+- Локальные проверки после prompt-only правок:
+  - `python -m pytest -q` -> `62 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Локальный live-прогон не запустился из-за отсутствия LLM-ключа в локальном `.env`; live выполнялся на VPS.
+- Commit prompt-only правок:
+  - commit: `acea220`
+  - message: `Improve product refinement dialog rules`
+  - push: `origin/master`
+- VPS prompt-only live-прогон:
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `62 passed`;
+  - серверный live eval через KIE -> `31` сценарий;
+  - результат: `31` без style flags, `29` без content flags, `2` на ручную проверку;
+  - проблемные кейсы: L-010 показал цену на вопрос только о наличии, L-024 снова попросил уточнить цену/код.
+- После этого добавлена backend-упаковка контекста:
+  - `followup_refinement` теперь содержит значения уточнения и найденные совпадения;
+  - если по уточнению цены/кода найдено ровно одно exact-совпадение, LLM получает `resolved_followup_refinement` и одну exact-позицию;
+  - если клиент спрашивает только наличие по одному товару, price-поля убираются из LLM-контекста.
+- Добавлены unit-тесты:
+  - распознавание `132` и `цена 132` как follow-up уточнения;
+  - сужение `multiple_exact` до одной позиции по цене;
+  - скрытие цен для single stock-only запроса.
+- Проверки после backend-упаковки:
+  - локально `python -m pytest -q` -> `64 passed`;
+  - локально `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Commit backend-упаковки:
+  - commit: `b4af8a8`
+  - message: `Stabilize product follow-up context`
+  - push: `origin/master`
+- VPS финальный live-прогон:
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `64 passed`;
+  - серверный live eval через KIE с `--append` -> `31` сценарий;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`;
+  - новый блок `LIVE_DIALOG_EVALS.md`: `2026-05-17T18:59:49.625767+00:00`;
+  - результат: `31` без style flags, `31` без content flags, `0` на ручную проверку.
+- Проверены ключевые исправления в финальном live-блоке:
+  - L-010: `1108035 есть в наличии?` -> ответ только про остаток `2 комплекта`, без цены, с вопросом `По цене подсказать тоже?`;
+  - L-024: `цена 132` -> выбрана позиция `код 26168`, остаток `292 шт.`, повторной просьбы уточнить нет.
