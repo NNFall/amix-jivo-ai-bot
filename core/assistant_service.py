@@ -435,6 +435,12 @@ class AssistantService:
                 cleaned,
                 flags=re.IGNORECASE,
             )
+            cleaned = re.sub(
+                r"поможет с оформлением",
+                "уточнит возможность заказа или замены",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
             cleaned_lower = cleaned.lower()
             if "уточнит возможность" in cleaned_lower or "подбер" in cleaned_lower:
                 return cleaned

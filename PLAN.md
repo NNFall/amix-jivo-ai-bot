@@ -15,13 +15,13 @@
   - First VPS live run exposed a real-data edge case: `14.023` was incorrectly treated as exact code `14023` because backend searched by normalized candidate.
   - Fixed lookup execution to search by restored customer fragment/display query when available, while preserving normalized value as `raw_backend_query`.
 - Checks:
-  - Local full pytest -> `52 passed`.
+  - Local full pytest -> `53 passed`.
   - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
   - Local live eval with real LLM was not run because local `.env` has no `KIE_API_KEY`/`OPENAI_API_KEY`.
   - VPS full pytest -> `52 passed`.
   - VPS live eval -> `31` scenarios, `31` without style flags, `0` manual style-review flags.
 - Next:
-  - Continue Telegram demo checks with real user messages and keep tuning only on observed failures.
+  - Rerun VPS live eval once more after the shortage wording micro-fix, then continue Telegram demo checks with real user messages.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 

@@ -207,7 +207,11 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         exact = lookup.get("exact_matches", [])
         if exact and Decimal(exact[0].get("stock") or "0") >= Decimal("5"):
             failures.append("stock was not less than requested")
-        if "поможет оформить" in reply_text_lower or "можно оформить" in reply_text_lower:
+        if (
+            "поможет оформить" in reply_text_lower
+            or "поможет с оформлением" in reply_text_lower
+            or "можно оформить" in reply_text_lower
+        ):
             failures.append("shortage handoff sounds like order can be оформлен")
     if "offers_help" in criteria and not any(word in reply_text_lower for word in ("подскажите", "помочь", "интересует")):
         failures.append("reply does not offer help naturally")

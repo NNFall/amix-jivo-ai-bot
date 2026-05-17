@@ -534,6 +534,17 @@ def test_assistant_service_prioritizes_stock_shortage_over_order_handoff(isolate
     assert "Сейчас в наличии 1 шт." in reply.text
     assert "уточнит возможность заказа или замены" in reply.text
     assert "поможет оформить" not in reply.text
+    assert "поможет с оформлением" not in reply.text
+
+
+def test_stock_shortage_handoff_rewrites_order_wording() -> None:
+    text = AssistantService._ensure_handoff_text(  # noqa: SLF001
+        "Передаю вопрос менеджеру — он уточнит возможность заказа нужного количества и поможет с оформлением.",
+        "requested_quantity_exceeds_stock",
+    )
+
+    assert "поможет с оформлением" not in text
+    assert "уточнит возможность заказа" in text
 
 
 def test_assistant_service_can_hide_corporate_price(isolated_app_env, monkeypatch) -> None:
