@@ -80,6 +80,10 @@ DEFAULT_SCENARIOS = [
         "Сразу handoff без повторных уточнений.",
         history=("есть мп 28ск",),
     ),
+    LiveScenario("L-028", "Заказ при нехватке", "Хочу заказать 5 штук P-AM02/B-S", "Не писать, что заказ можно оформить; передать менеджеру для уточнения или замены."),
+    LiveScenario("L-029", "Похожий raw-запрос", "14.023", "Показать клиенту исходный запрос 14.023, а не normalized 14023."),
+    LiveScenario("L-030", "Корпоративная цена", "Какая корпоративная цена у 14.025пр.?", "Учитывать настройку показа корпоративной цены и не выдумывать условия."),
+    LiveScenario("L-031", "Цена отсутствует без слова выгрузка", "Сколько стоит P-AM02/B-S?", "Если цены нет, сказать живо без внутреннего слова 'выгрузка'."),
 ]
 
 
@@ -212,6 +216,10 @@ def _style_flags(answer: str) -> list[str]:
         flags.append("dry_field_labels")
     if any(phrase in lower for phrase in ("в демо-режиме", "в рабочем режиме", "я бы передал")):
         flags.append("demo_or_internal_phrase")
+    if "выгрузк" in lower:
+        flags.append("internal_export_word")
+    if "свяжется с вами" in lower:
+        flags.append("bad_handoff_channel")
     if any(word in lower for word in ("backend", "product_lookup_result", "exact_matches", "handoff_to_manager")):
         flags.append("internal_terms")
     if len(answer) > 700:

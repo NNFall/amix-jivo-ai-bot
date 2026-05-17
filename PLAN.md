@@ -1,5 +1,24 @@
 # PLAN
 
+## Update 2026-05-17 (Order Shortage + Pricing Policy)
+
+- Status: completed locally, VPS live check pending
+- Done:
+  - Added `SHOW_CORPORATE_PRICE` setting and `.env.example` entry.
+  - Backend now passes pricing policy, requested quantity, response mode and code-query context into `backend_actions`.
+  - Stock shortage now has priority over generic order handoff: if requested quantity is greater than free stock, bot must not say the order can be оформлен.
+  - Customer replies now sanitize internal word `выгрузка` into `текущие данные`.
+  - Product lookup results now include `display_query`, so similar/not-found replies use the customer's raw query like `14.023`, not normalized `14023`.
+  - Fallback responses explicitly mention code lookup: `По коду 1364 нашёл артикул ...`.
+  - Product prompt updated with rules for raw/display query, corporate price policy and shortage handoff wording.
+  - Live eval scenarios extended from 27 to 31 for shortage order, raw-query display, corporate price and missing price wording.
+- Checks:
+  - Local full pytest -> `51 passed`.
+  - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+  - Local live eval with real LLM was not run because local `.env` has no `KIE_API_KEY`/`OPENAI_API_KEY`.
+- Next:
+  - Commit/push, sync VPS, run live eval on VPS where real LLM environment is configured, then restart `amix-telegram-demo.service`.
+
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 
 - Status: completed and deployed

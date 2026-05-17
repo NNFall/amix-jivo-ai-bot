@@ -9,6 +9,7 @@ from core.assistant_service import (
 from database.db import session_scope
 from database.models import Handoff, Message, Product
 from llm.openai_client import LLMTurnResult, ToolCall
+from settings import get_settings
 
 
 def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
@@ -125,7 +126,7 @@ def test_assistant_service_reports_missing_article_when_not_found(isolated_app_e
             handoff_mode="demo",
         )
 
-    assert "ZZ999" in reply.text
+    assert "ZZ-999" in reply.text
 
 
 def test_assistant_service_finds_product_from_split_prefix_query(isolated_app_env) -> None:
@@ -381,3 +382,150 @@ def test_assistant_service_allows_company_contact_question_without_handoff(isola
 
     assert reply.handoff_reason is None
     assert "Якорная" in reply.text
+
+
+def test_assistant_service_mentions_code_for_code_lookup(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article="14025ПР",
+                free_stock=Decimal("7"),
+                unit="шт",
+                retail_price=Decimal("238"),
+                corporate_price=Decimal("165.98"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:code-lookup",
+            external_client_id="telegram-user:code-lookup",
+            customer_name="Demo User",
+            customer_text="Проверьте код 1364",
+            inbound_event_id="tg-code-lookup",
+            outbound_event_id="tg-code-lookup:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "По коду 1364 нашёл артикул 14.025пр." in reply.text
+
+
+def test_assistant_service_uses_raw_query_for_similar_reply(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="769",
+                    article="14.023л.",
+                    normalized_article="14023Л",
+                    free_stock=Decimal("253"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article="14023ПР",
+                    free_stock=Decimal("220"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:raw-query",
+            external_client_id="telegram-user:raw-query",
+            customer_name="Demo User",
+            customer_text="14.023",
+            inbound_event_id="tg-raw-query",
+            outbound_event_id="tg-raw-query:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Точного совпадения по 14.023" in reply.text
+    assert "по 14023" not in reply.text
+
+
+def test_assistant_service_prioritizes_stock_shortage_over_order_handoff(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="22608",
+                article="P-AM02/B-S",
+                normalized_article="PAM02BS",
+                free_stock=Decimal("1"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-shortage",
+            external_client_id="telegram-user:stock-shortage",
+            customer_name="Demo User",
+            customer_text="Хочу заказать 5 штук P-AM02/B-S",
+            inbound_event_id="tg-stock-shortage",
+            outbound_event_id="tg-stock-shortage:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "requested_quantity_exceeds_stock"
+    assert "Сейчас в наличии 1 шт." in reply.text
+    assert "уточнит возможность заказа или замены" in reply.text
+    assert "поможет оформить" not in reply.text
+
+
+def test_assistant_service_can_hide_corporate_price(isolated_app_env, monkeypatch) -> None:
+    monkeypatch.setenv("SHOW_CORPORATE_PRICE", "false")
+    get_settings.cache_clear()
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article="14025ПР",
+                free_stock=Decimal("7"),
+                unit="шт",
+                retail_price=Decimal("238"),
+                corporate_price=Decimal("165.98"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:hide-corporate",
+            external_client_id="telegram-user:hide-corporate",
+            customer_name="Demo User",
+            customer_text="Сколько стоит 14.025пр.?",
+            inbound_event_id="tg-hide-corporate",
+            outbound_event_id="tg-hide-corporate:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Розничная цена 238 руб." in reply.text
+    assert "Корпоративная" not in reply.text

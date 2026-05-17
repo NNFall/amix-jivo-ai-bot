@@ -109,7 +109,8 @@
     "criteria": [
       "product_lookup",
       "similar_found",
-      "not_exact_wording"
+      "not_exact_wording",
+      "raw_query_display"
     ]
   },
   {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
@@ -10,7 +11,7 @@ from database.repositories import append_message, get_or_create_chat, get_or_cre
 from llm.openai_client import OpenAIService
 from llm.prompts import build_llm_messages, build_product_facts_messages
 from llm.tool_schemas import OPENAI_TOOLS
-from products.article_utils import extract_article_candidates
+from products.article_utils import extract_article_candidates, normalize_article
 from settings import get_settings
 
 from .dialog_service import DialogService
@@ -46,6 +47,7 @@ class AssistantService:
         self.handoff_service = HandoffService()
         self.openai_service = OpenAIService(settings)
         self.debug_lookup_logs = settings.assistant_debug_lookup_logs
+        self.show_corporate_price = settings.show_corporate_price
 
     def handle_client_message(
         self,
@@ -101,6 +103,7 @@ class AssistantService:
                 session,
                 queries=article_candidates,
                 reason=self._guess_lookup_reason(customer_text),
+                customer_text=customer_text,
             )
             return self._reply_from_product_result(
                 session,
@@ -131,6 +134,7 @@ class AssistantService:
                 session,
                 queries=article_candidates,
                 reason=self._guess_lookup_reason(customer_text),
+                customer_text=customer_text,
             )
             return self._reply_from_product_result(
                 session,
@@ -157,6 +161,7 @@ class AssistantService:
                 session,
                 queries=article_candidates,
                 reason=self._guess_lookup_reason(customer_text),
+                customer_text=customer_text,
             )
             return self._reply_from_product_result(
                 session,
@@ -185,6 +190,7 @@ class AssistantService:
                 session,
                 queries=article_candidates,
                 reason=self._guess_lookup_reason(customer_text),
+                customer_text=customer_text,
             )
             self._log_lookup_result(stage="prelookup", payload=lookup_result)
             return self._reply_from_product_result(
@@ -273,6 +279,7 @@ class AssistantService:
                 session,
                 queries=queries,
                 reason=str(call.arguments.get("reason") or "unknown"),
+                customer_text=customer_text,
             )
             self._log_lookup_result(stage="tool_call", payload=lookup_result)
             return self._reply_from_product_result(
@@ -300,13 +307,24 @@ class AssistantService:
         force_handoff_reason: str | None = None,
         handoff_mode: str = "jivo",
     ) -> AssistantReply:
+        product_lookup_result = self._apply_response_policy(product_lookup_result)
         requested_quantity = self._extract_requested_quantity(customer_text)
         stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
-        handoff_reason = force_handoff_reason or stock_handoff_reason
+        corporate_price_handoff_reason = (
+            "corporate_price_request"
+            if self._is_corporate_price_request(customer_text) and not self.show_corporate_price
+            else None
+        )
+        handoff_reason = stock_handoff_reason or force_handoff_reason or corporate_price_handoff_reason
         backend_actions = {
             "search_products_called": True,
             "handoff_to_manager_called": bool(handoff_reason),
             "handoff_reason": handoff_reason,
+            "response_mode": self._resolve_response_mode(handoff_reason),
+            "requested_quantity": requested_quantity,
+            "show_corporate_price": self.show_corporate_price,
+            "corporate_price_request": bool(corporate_price_handoff_reason),
+            "queried_by_code": self._lookup_queried_by_code(customer_text, product_lookup_result),
         }
 
         turn = None
@@ -319,7 +337,11 @@ class AssistantService:
             )
             turn = self.openai_service.run_messages(messages=fact_messages)
 
-        reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(product_lookup_result)
+        reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(
+            product_lookup_result,
+            customer_text=customer_text,
+            backend_actions=backend_actions,
+        )
         reply_text = self._sanitize_customer_reply(reply_text)
 
         if handoff_reason:
@@ -342,19 +364,95 @@ class AssistantService:
         )
         return AssistantReply(text=reply_text, handoff_reason=handoff_reason)
 
+    def _apply_response_policy(self, product_lookup_result: dict) -> dict:
+        payload = deepcopy(product_lookup_result)
+        if self.show_corporate_price:
+            return payload
+
+        for container in self._iter_lookup_result_containers(payload):
+            for key in ("exact_matches", "similar_matches"):
+                for match in container.get(key, []):
+                    match["corporate_price"] = None
+        return payload
+
+    @staticmethod
+    def _iter_lookup_result_containers(product_lookup_result: dict) -> list[dict]:
+        containers = [product_lookup_result]
+        containers.extend(product_lookup_result.get("results") or [])
+        containers.extend(product_lookup_result.get("per_query_results") or [])
+        return [item for item in containers if isinstance(item, dict)]
+
+    @staticmethod
+    def _resolve_response_mode(handoff_reason: str | None) -> str | None:
+        if handoff_reason == "requested_quantity_exceeds_stock":
+            return "stock_shortage_handoff"
+        if handoff_reason == "order_request":
+            return "order_handoff"
+        if handoff_reason == "corporate_price_request":
+            return "corporate_price_handoff"
+        if handoff_reason:
+            return "handoff"
+        return None
+
+    @staticmethod
+    def _is_corporate_price_request(customer_text: str) -> bool:
+        text = customer_text.lower()
+        keywords = ("корпоратив", "опт", "оптов", "юрлиц", "юр. лиц", "скидк")
+        return any(keyword in text for keyword in keywords) or bool(re.search(r"\bкорп\b", text))
+
+    @staticmethod
+    def _lookup_queried_by_code(customer_text: str, product_lookup_result: dict) -> bool:
+        text = customer_text.lower()
+        if "код" in text:
+            return True
+
+        query_values = [
+            product_lookup_result.get("query"),
+            product_lookup_result.get("display_query"),
+        ]
+        query_values.extend(product_lookup_result.get("queries") or [])
+        normalized_queries = {normalize_article(str(value)) for value in query_values if value}
+        exact = product_lookup_result.get("exact_matches") or []
+        for match in exact:
+            code = normalize_article(str(match.get("code") or ""))
+            if code and code in normalized_queries:
+                return True
+        return False
+
     @staticmethod
     def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
         text_lower = reply_text.lower()
+        if handoff_reason == "requested_quantity_exceeds_stock":
+            cleaned = re.sub(
+                r"Передаю заказ менеджеру\.[^.]*поможет оформить\.?",
+                "Передаю вопрос менеджеру. Он подключится к диалогу и уточнит возможность заказа или замены.",
+                reply_text,
+                flags=re.IGNORECASE,
+            )
+            cleaned = re.sub(
+                r"поможет оформить",
+                "уточнит возможность заказа или замены",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            cleaned_lower = cleaned.lower()
+            if "уточнит возможность" in cleaned_lower or "подбер" in cleaned_lower:
+                return cleaned
+            return (
+                f"{cleaned} Передаю вопрос менеджеру. "
+                "Он подключится к диалогу и уточнит возможность заказа или замены."
+            )
+
         if "переда" in text_lower and "менеджер" in text_lower:
             return reply_text
 
         if handoff_reason == "order_request":
             return f"{reply_text} Передаю заказ менеджеру. Он подключится к диалогу и поможет оформить."
-        if handoff_reason == "requested_quantity_exceeds_stock":
-            return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и уточнит возможность заказа или замены."
+        if handoff_reason == "corporate_price_request":
+            return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и уточнит условия по цене."
         if handoff_reason == "complex_technical_question":
             return (
-                f"{reply_text} По текущей выгрузке могу сравнить только данные из базы: код, артикул, цену, "
+                f"{reply_text} По текущим данным могу сравнить только данные из базы: код, артикул, цену, "
                 "остаток, единицу измерения, вес и объём. Технического описания отличий в базе нет. "
                 "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
             )
@@ -363,6 +461,12 @@ class AssistantService:
     @staticmethod
     def _sanitize_customer_reply(reply_text: str) -> str:
         text = reply_text.replace("**", "").replace("__", "").replace("`", "")
+        text = re.sub(r"\b[Вв] текущей выгрузке\b", "в текущих данных", text)
+        text = re.sub(r"\b[Пп]о текущей выгрузке\b", "по текущим данным", text)
+        text = re.sub(r"\b[Тт]екущей выгрузки\b", "текущих данных", text)
+        text = re.sub(r"\b[Тт]екущая выгрузка\b", "текущие данные", text)
+        text = re.sub(r"\b[Вв]ыгрузке\b", "текущих данных", text)
+        text = re.sub(r"\b[Вв]ыгрузка\b", "текущие данные", text)
         text = re.sub(r"\b[Оо]н свяжется с вами\b", "он подключится к диалогу", text)
         text = re.sub(r"\b[Мм]енеджер свяжется с вами\b", "менеджер подключится к диалогу", text)
         text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
@@ -394,7 +498,14 @@ class AssistantService:
         )
         return AssistantReply(text=reply_text)
 
-    def _search_products_by_queries(self, session, *, queries: list[str], reason: str) -> dict:
+    def _search_products_by_queries(
+        self,
+        session,
+        *,
+        queries: list[str],
+        reason: str,
+        customer_text: str | None = None,
+    ) -> dict:
         per_query_results: list[dict] = []
         best: dict | None = None
         unique_exact: dict[str, dict] = {}
@@ -410,6 +521,7 @@ class AssistantService:
 
         for query in queries:
             item = search_products_structured(session, query=query, search_type="auto")
+            item["display_query"] = self._resolve_display_query(query, customer_text)
             item_exact_keys = {
                 match.get("code") or match.get("article") or str(index)
                 for index, match in enumerate(item.get("exact_matches", []))
@@ -443,6 +555,7 @@ class AssistantService:
                 "exact_matches": [],
                 "similar_matches": [],
                 "backend_notes": ["No valid queries"],
+                "display_query": "",
             }
 
         exact_matches = list(unique_exact.values())
@@ -461,6 +574,7 @@ class AssistantService:
 
         return {
             "queries": queries,
+            "display_queries": [item.get("display_query") or item.get("query") for item in visible_query_results],
             "reason": reason,
             **best,
             "exact_matches": exact_matches or best.get("exact_matches", []),
@@ -551,28 +665,38 @@ class AssistantService:
             )
 
     @staticmethod
-    def _build_programmatic_lookup_fallback(product_lookup_result: dict) -> str:
+    def _build_programmatic_lookup_fallback(
+        product_lookup_result: dict,
+        *,
+        customer_text: str = "",
+        backend_actions: dict | None = None,
+    ) -> str:
+        backend_actions = backend_actions or {}
         status = product_lookup_result.get("status")
         exact = product_lookup_result.get("exact_matches", [])
         similar = product_lookup_result.get("similar_matches", [])
-        query = product_lookup_result.get("query", "")
+        query = product_lookup_result.get("display_query") or product_lookup_result.get("query", "")
         per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results", [])
+        show_corporate_price = backend_actions.get("show_corporate_price", True)
 
         if len(per_query_results) > 1:
             lines = ["Проверил."]
             for index, item in enumerate(per_query_results, start=1):
                 item_status = item.get("status")
-                item_query = item.get("query") or "запрос"
+                item_query = item.get("display_query") or item.get("query") or "запрос"
                 item_exact = item.get("exact_matches", [])
                 item_similar = item.get("similar_matches", [])
                 if item_status in {"exact_found", "multiple_exact"} and item_exact:
                     if len(item_exact) == 1:
                         match = item_exact[0]
                         retail_price = AssistantService._format_number(match.get("retail_price"))
-                        price_text = f", розничная цена {retail_price} руб" if retail_price else ", цена в текущей выгрузке не указана"
+                        price_text = f", розничная цена {retail_price} руб" if retail_price else ", цена в текущих данных не указана"
                         display_article = match.get("article") or item_query
+                        prefix = f"По {display_article} остаток "
+                        if AssistantService._lookup_item_queried_by_code(customer_text, item, match):
+                            prefix = f"По коду {match.get('code')} нашёл артикул {display_article}, остаток "
                         lines.append(
-                            f"По {display_article} остаток "
+                            prefix +
                             f"{AssistantService._format_quantity(match.get('stock'), match.get('unit'))}{price_text}."
                         )
                     else:
@@ -597,15 +721,23 @@ class AssistantService:
                 article = item.get("article") or query
                 stock_text = AssistantService._format_quantity(item.get("stock"), item.get("unit"))
                 retail_price = AssistantService._format_number(item.get("retail_price"))
-                corporate_price = AssistantService._format_number(item.get("corporate_price"))
-                parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
+                corporate_price = (
+                    AssistantService._format_number(item.get("corporate_price"))
+                    if show_corporate_price
+                    else None
+                )
+                if AssistantService._lookup_item_queried_by_code(customer_text, product_lookup_result, item):
+                    code = item.get("code") or query
+                    parts = [AssistantService._finish_sentence(f"По коду {code} нашёл артикул {article}")]
+                else:
+                    parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
                 parts.append(f"Сейчас в наличии {stock_text}.")
                 if retail_price:
                     parts.append(f"Розничная цена {retail_price} руб.")
                 if corporate_price:
                     parts.append(f"Корпоративная цена {corporate_price} руб.")
                 if not retail_price and not corporate_price:
-                    parts.append("Цена в текущей выгрузке не указана.")
+                    parts.append("Цена в текущих данных не указана.")
                 return " ".join(parts)
 
             display_query = AssistantService._display_query_for_matches(query, exact)
@@ -651,6 +783,40 @@ class AssistantService:
         if len(articles) == 1:
             return next(iter(articles))
         return query
+
+    @staticmethod
+    def _resolve_display_query(query: str, customer_text: str | None) -> str:
+        if not customer_text:
+            return query
+
+        query_normalized = normalize_article(query)
+        if not query_normalized:
+            return query
+
+        tokens = re.findall(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9\-_/\.]*", customer_text)
+        max_window = min(5, len(tokens))
+        for size in range(max_window, 0, -1):
+            for start in range(0, len(tokens) - size + 1):
+                phrase = " ".join(tokens[start : start + size]).strip()
+                if normalize_article(phrase) == query_normalized:
+                    return phrase
+        return query
+
+    @staticmethod
+    def _lookup_item_queried_by_code(customer_text: str, lookup_item: dict, match: dict) -> bool:
+        if "код" in customer_text.lower():
+            return True
+
+        code = normalize_article(str(match.get("code") or ""))
+        if not code:
+            return False
+
+        values = [
+            lookup_item.get("query"),
+            lookup_item.get("display_query"),
+        ]
+        values.extend(lookup_item.get("queries") or [])
+        return code in {normalize_article(str(value)) for value in values if value}
 
     @staticmethod
     def _extract_requested_quantity(customer_text: str) -> int | None:

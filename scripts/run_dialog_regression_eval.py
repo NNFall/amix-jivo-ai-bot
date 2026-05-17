@@ -145,7 +145,7 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         failures.append(f"expected action {expected_action}, got {actual_action}")
 
     reply_text_lower = reply_text.lower()
-    for phrase in ("в демо-режиме", "в рабочем режиме я бы", "этот вопрос требует менеджера"):
+    for phrase in ("в демо-режиме", "в рабочем режиме я бы", "этот вопрос требует менеджера", "выгрузк"):
         if phrase in reply_text_lower:
             failures.append(f"banned user-facing phrase: {phrase}")
     if any(marker in reply_text for marker in ("**", "__", "`")):
@@ -180,6 +180,10 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         codes = {item.get("code") for item in lookup.get("exact_matches", [])}
         if not codes:
             failures.append("no exact code match")
+        if "по коду" not in reply_text_lower:
+            failures.append("reply does not explicitly mention code lookup")
+    if "raw_query_display" in criteria and "14023" in reply_text_lower:
+        failures.append("reply shows normalized query instead of raw customer query")
     if "shows_all_exact" in criteria and lookup and lookup.get("exact_matches_count", 0) < 2:
         failures.append("not all exact variants shown in lookup")
     if "multiple_queries" in criteria and lookup:
@@ -203,6 +207,8 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         exact = lookup.get("exact_matches", [])
         if exact and Decimal(exact[0].get("stock") or "0") >= Decimal("5"):
             failures.append("stock was not less than requested")
+        if "поможет оформить" in reply_text_lower or "можно оформить" in reply_text_lower:
+            failures.append("shortage handoff sounds like order can be оформлен")
     if "offers_help" in criteria and not any(word in reply_text_lower for word in ("подскажите", "помочь", "интересует")):
         failures.append("reply does not offer help naturally")
     if handoff_reason and "переда" not in reply_text_lower:
@@ -295,6 +301,7 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool,
                     session,
                     queries=candidates,
                     reason=assistant._guess_lookup_reason(customer_text),  # noqa: SLF001
+                    customer_text=customer_text,
                 )
 
             reply = assistant.handle_client_message(

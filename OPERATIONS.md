@@ -874,3 +874,38 @@
   - VPS live eval -> `27` сценариев, `27` без style flags, `0` на ручную style-проверку.
 - Обновлён `LIVE_DIALOG_EVALS.md`.
 - На VPS выполнен deploy commit `ac1320e`, `amix-telegram-demo.service` перезапущен и проверен: `active/running`.
+
+## 2026-05-17 - Итерация 24
+
+- Приняты замечания по последнему отчёту:
+  - убрать клиентское слово `выгрузка`;
+  - не писать `поможет оформить`, если запрошенного количества больше свободного остатка;
+  - явно отвечать `по коду ...`, если клиент спрашивает код;
+  - показывать клиенту исходный запрос `14.023`, а не normalized `14023`;
+  - заложить флаг показа корпоративной цены.
+- `settings.py` и `.env.example`:
+  - добавлен `SHOW_CORPORATE_PRICE=true`.
+- `core/assistant_service.py`:
+  - добавлен `display_query` для результатов поиска;
+  - добавлена политика скрытия `corporate_price`, если `SHOW_CORPORATE_PRICE=false`;
+  - `requested_quantity_exceeds_stock` теперь имеет приоритет над обычным `order_request`;
+  - в `backend_actions` добавлены `response_mode`, `requested_quantity`, `show_corporate_price`, `corporate_price_request`, `queried_by_code`;
+  - fallback по коду теперь отвечает `По коду 1364 нашёл артикул ...`;
+  - sanitizer заменяет `выгрузка`/`выгрузке` на `текущие данные`;
+  - handoff при нехватке остатка формулируется как уточнение возможности заказа/замены, а не оформление.
+- `llm/prompts.py`:
+  - добавлены правила про `display_query`, запрет слова `выгрузка`, флаг корпоративной цены и shortage-handoff.
+- `scripts/run_dialog_regression_eval.py`:
+  - усилены критерии: запрещено `выгрузк`, кодовый запрос должен явно упоминать `по коду`, shortage не должен звучать как оформление заказа.
+- `scripts/run_live_dialog_eval.py`:
+  - live-сценарии расширены до 31;
+  - добавлены style flags для `выгрузк` и `свяжется с вами`.
+- Добавлены unit-тесты:
+  - явный ответ по коду;
+  - raw query display для похожего артикула;
+  - приоритет shortage над order handoff;
+  - скрытие корпоративной цены по `SHOW_CORPORATE_PRICE=false`.
+- Проверки:
+  - `python -m pytest -q` -> `51 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Локальный live-прогон через модель не выполнен: локально не настроен `KIE_API_KEY`/`OPENAI_API_KEY`; live-проверка будет выполнена на VPS после push.
