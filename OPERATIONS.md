@@ -780,3 +780,13 @@
 - Проверки:
   - `python -m pytest -q` -> `46 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `4434d9b`
+  - message: `Make assistant replies more conversational`
+  - push: `origin/master`
+- VPS синхронизирован с GitHub:
+  - `/root/amix` обновлён до `4434d9b`;
+  - focused pytest -> `20 passed`;
+  - dialog regression -> `OK=31 PARTIAL=0 FAIL=0`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running`;
+  - рабочее дерево на VPS чистое.
