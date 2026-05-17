@@ -954,3 +954,16 @@
 - Повторные локальные проверки:
   - `python -m pytest -q` -> `53 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `5f94135`
+  - message: `Tighten stock shortage handoff wording`
+  - push: `origin/master`
+- VPS синхронизирован с commit `5f94135`:
+  - `git pull --ff-only` выполнен успешно;
+  - серверный `python -m pytest -q` -> `53 passed`;
+  - серверный live eval через KIE -> `31` сценарий;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+- Свежий `LIVE_DIALOG_EVALS.md` скачан с VPS:
+  - итог: `31` сценарий, `31` без style flags, `0` на ручную style-проверку;
+  - shortage-сценарии больше не содержат `поможет оформить` или `поможет с оформлением`;
+  - `14.023` остаётся `similar_found` с исходным `display_query=14.023`.

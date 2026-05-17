@@ -18,10 +18,10 @@
   - Local full pytest -> `53 passed`.
   - Local dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
   - Local live eval with real LLM was not run because local `.env` has no `KIE_API_KEY`/`OPENAI_API_KEY`.
-  - VPS full pytest -> `52 passed`.
+  - VPS full pytest -> `53 passed`.
   - VPS live eval -> `31` scenarios, `31` without style flags, `0` manual style-review flags.
 - Next:
-  - Rerun VPS live eval once more after the shortage wording micro-fix, then continue Telegram demo checks with real user messages.
+  - Continue Telegram demo checks with real user messages and keep tuning only on observed failures.
 
 ## Update 2026-05-17 (Live LLM Dialog Evaluation)
 
