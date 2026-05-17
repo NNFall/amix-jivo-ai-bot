@@ -78,10 +78,9 @@ def main() -> None:
     scenarios = DEFAULT_SCENARIOS[: args.limit] if args.limit else DEFAULT_SCENARIOS
     started_at = datetime.now(UTC)
     rows = []
-    chat_id = f"live-eval:{started_at.timestamp()}"
-
     with session_scope() as session:
         for index, scenario in enumerate(scenarios, start=1):
+            chat_id = f"live-eval:{started_at.timestamp()}:{scenario.case_id}"
             inbound_event_id = f"{chat_id}:{scenario.case_id}:in"
             outbound_event_id = f"{chat_id}:{scenario.case_id}:out"
             candidates = extract_article_candidates(scenario.customer_text)
@@ -118,7 +117,7 @@ def main() -> None:
         append=args.append,
         started_at=started_at,
         provider=assistant.openai_service.provider,
-        model=assistant.openai_service.model,
+        model=_model_label(assistant.openai_service),
         llm_enabled=assistant.openai_service.enabled,
         rows=rows,
     )
@@ -148,6 +147,12 @@ def _prelookup(session, candidates: list[str]) -> list[dict[str, Any]]:
             }
         )
     return results
+
+
+def _model_label(openai_service: Any) -> str:
+    if getattr(openai_service, "provider", "") == "kie":
+        return getattr(openai_service, "kie_chat_model_path", "")
+    return getattr(openai_service, "model", "")
 
 
 def _get_bot_payload(session, outbound_event_id: str) -> dict:
