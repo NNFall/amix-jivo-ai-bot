@@ -1301,6 +1301,7 @@
   - Kie response parser теперь распознаёт `status=failure/failed/error`, `error_code/code/status_code >= 500`, `server exception` и пустой body как retryable provider error;
   - `llm_response_received` логирует `error_type` и `retryable`;
   - follow-up вопросы вроде `а есть мп дешевле?` используют историю товара и идут в backend prelookup, а не в generic LLM fallback.
+  - deterministic fallback для `дешевле` по нескольким позициям теперь показывает варианты с кодами, ценами и остатком.
 - Проверки:
   - focused tests -> `42 passed`;
   - `python -m pytest -q` -> `83 passed`;

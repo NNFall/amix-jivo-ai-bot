@@ -1523,6 +1523,23 @@ class AssistantService:
                 return " ".join(parts)
 
             display_query = AssistantService._display_query_for_matches(query, exact)
+            if "дешев" in customer_text.lower():
+                priced_matches = [
+                    match for match in exact if AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
+                ]
+                priced_matches.sort(
+                    key=lambda match: float(str(match.get("retail_price") or "0").replace(",", ".") or 0)
+                )
+                if priced_matches:
+                    variants = "; ".join(
+                        (
+                            f"код {match.get('code') or '-'} — "
+                            f"{AssistantService._format_price_text(match.get('retail_price_display'), match.get('retail_price'))}, "
+                            f"остаток {AssistantService._format_quantity(match.get('stock'), match.get('unit'))}"
+                        )
+                        for match in priced_matches[:3]
+                    )
+                    return f"По {display_query} есть такие варианты по цене: {variants}. Если нужен один из них, пришлите код товара."
             return (
                 f"По {display_query} нашёл несколько позиций. Они отличаются кодом и ценой, поэтому чтобы не ошибиться, "
                 "уточните, пожалуйста, код товара с сайта или цену, которую видите. После этого скажу точный остаток."

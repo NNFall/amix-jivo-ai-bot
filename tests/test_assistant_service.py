@@ -161,7 +161,9 @@ def test_assistant_service_uses_history_for_cheaper_followup(isolated_app_env) -
 
     assert reply.text != SAFE_FALLBACK_TEXT
     assert "МП 28ск" in reply.text
-    assert "кодом и ценой" in reply.text
+    assert "118 руб" in reply.text
+    assert "132 руб" in reply.text
+    assert "код 26167" in reply.text
     assert reply.handoff_reason is None
 
 

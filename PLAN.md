@@ -652,6 +652,7 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - `get_transcript()` теперь отдаёт только реальные реплики клиента и финальные ответы бота.
 - Kie failure body `status=failure`, `error_code=500`, `Server exception...` и пустой ответ теперь считаются retryable provider error, а не успешным пустым ответом.
 - Follow-up `а есть мп дешевле?` теперь использует историю товара и backend prelookup.
+- Fallback по `дешевле` теперь показывает варианты с кодами, ценами и остатком, если Kie недоступен.
 - Проверки:
   - `python -m pytest -q` -> `83 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
