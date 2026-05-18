@@ -195,6 +195,17 @@ class AssistantService:
                 source="backend_handoff_rule",
             )
 
+        company_answer = self._build_company_faq_answer(customer_text)
+        if company_answer:
+            self._append_bot_message(
+                session,
+                external_chat_id=external_chat_id,
+                text=company_answer,
+                outbound_event_id=outbound_event_id,
+                payload={"source": "backend_company_faq"},
+            )
+            return AssistantReply(text=company_answer)
+
         if article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
@@ -461,6 +472,7 @@ class AssistantService:
             customer_text=customer_text,
             backend_actions=backend_actions,
         )
+        reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
         if handoff_reason:
@@ -724,6 +736,14 @@ class AssistantService:
         return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 
     @staticmethod
+    def _ensure_refinement_code_text(reply_text: str, product_lookup_result: dict) -> str:
+        refinement = product_lookup_result.get("resolved_followup_refinement") or {}
+        code = str(refinement.get("code") or "").strip()
+        if not code or code in reply_text:
+            return reply_text
+        return f"{reply_text} Код товара {code}."
+
+    @staticmethod
     def _sanitize_customer_reply(reply_text: str) -> str:
         text = reply_text.replace("**", "").replace("__", "").replace("`", "")
         text = re.sub(r"\b[Вв] текущей выгрузке\b", "в текущих данных", text)
@@ -736,6 +756,11 @@ class AssistantService:
         text = re.sub(r"\b[Мм]енеджер свяжется с вами\b", "менеджер подключится к диалогу", text)
         text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
         text = re.sub(r"\b([Кк]од(?:у|ом)?)(\d+)\b", r"\1 \2", text)
+        text = re.sub(r"\b[Рр]озничная цена:\s*", "Розничная цена ", text)
+        text = re.sub(r"\b[Кк]орпоративная цена:\s*", "корпоративная цена ", text)
+        text = re.sub(r"\b[Вв] наличии:\s*", "В наличии ", text)
+        text = re.sub(r"\b[Аа]ртикул:\s*", "Артикул ", text)
+        text = re.sub(r"\b[Кк]од:\s*", "Код ", text)
         cleaned_lines = []
         for line in text.splitlines():
             stripped = line.strip()
@@ -763,6 +788,24 @@ class AssistantService:
             payload={"source": "fallback_without_llm"},
         )
         return AssistantReply(text=reply_text)
+
+    @staticmethod
+    def _build_company_faq_answer(customer_text: str) -> str | None:
+        text = customer_text.lower()
+        if any(keyword in text for keyword in ("достав", "транспорт", "пвз", "самовывоз")):
+            return (
+                "Да, доставляем по России: возможны транспортные компании, пункты выдачи и курьерская доставка. "
+                "Точную стоимость и условия под ваш заказ лучше уточнит менеджер."
+            )
+        if any(keyword in text for keyword in ("как связ", "контакт", "телефон", "номер", "почт", "email")):
+            return "Можно позвонить по телефону +7 (812) 372-66-07 или написать на market@amix.spb.ru."
+        if "адрес" in text or "где вы" in text or "находит" in text:
+            return "Магазин находится по адресу: Санкт-Петербург, ул. Якорная, д. 15, лит. Б."
+        if any(keyword in text for keyword in ("режим", "график", "часы работы")):
+            return "Режим работы: Пн-Пт 9:30-18:00, Сб 10:00-17:00."
+        if "возврат" in text and "суббот" in text:
+            return "По субботам возврат товара не осуществляется. Лучше обратиться по возврату в рабочие дни."
+        return None
 
     def _search_products_by_queries(
         self,

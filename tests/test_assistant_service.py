@@ -498,10 +498,11 @@ def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_
 def test_assistant_service_allows_company_contact_question_without_handoff(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
-    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text="Магазин находится в Санкт-Петербурге, ул. Якорная, 15, лит. Б.",
-        tool_calls=[],
-    )
+
+    def fail_llm_call(**kwargs):
+        raise AssertionError("Company FAQ should be answered by backend rule")
+
+    service.openai_service.run_messages = fail_llm_call
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -517,7 +518,34 @@ def test_assistant_service_allows_company_contact_question_without_handoff(isola
         )
 
     assert reply.handoff_reason is None
-    assert "Якорная" in reply.text
+    assert "+7 (812) 372-66-07" in reply.text
+    assert "market@amix.spb.ru" in reply.text
+
+
+def test_assistant_service_answers_delivery_question_without_llm(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fail_llm_call(**kwargs):
+        raise AssertionError("Delivery FAQ should be answered by backend rule")
+
+    service.openai_service.run_messages = fail_llm_call
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:delivery-faq",
+            external_client_id="telegram-user:delivery-faq",
+            customer_name="Demo User",
+            customer_text="Доставляете по России?",
+            inbound_event_id="tg-delivery-faq",
+            outbound_event_id="tg-delivery-faq:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "доставляем по России" in reply.text
+    assert "точную стоимость" in reply.text.lower()
 
 
 def test_assistant_service_mentions_code_for_code_lookup(isolated_app_env) -> None:
@@ -782,6 +810,24 @@ def test_assistant_service_applies_followup_refinement_to_single_match() -> None
     assert resolved["exact_matches_count"] == 1
     assert resolved["exact_matches"][0]["code"] == "26168"
     assert resolved["resolved_followup_refinement"]["value"] == "132"
+
+
+def test_assistant_service_adds_code_after_price_refinement() -> None:
+    text = AssistantService._ensure_refinement_code_text(  # noqa: SLF001
+        "Да, нашёл МП 28ск. Сейчас в наличии 292 шт. Розничная цена 132 руб.",
+        {"resolved_followup_refinement": {"code": "26168"}},
+    )
+
+    assert "Код товара 26168." in text
+
+
+def test_assistant_service_sanitizes_dry_price_labels() -> None:
+    text = AssistantService._sanitize_customer_reply(  # noqa: SLF001
+        "Розничная цена: 13493 руб., корпоративная цена: 10500 руб."
+    )
+
+    assert "Розничная цена 13493 руб." in text.replace(",", ".")
+    assert "цена:" not in text
 
 
 def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
