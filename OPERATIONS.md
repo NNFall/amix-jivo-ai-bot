@@ -1270,6 +1270,24 @@
 - Проверки:
   - `python -m pytest -q` -> `80 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Итерация 35 - деплой turn handling и targeted live eval
+
+- GitHub:
+  - создан и отправлен commit `bae0736` (`Harden LLM turn handling`);
+  - создан и отправлен commit `63b15d3` (`Allow targeted live eval cases`).
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `63b15d3`;
+  - серверный `.venv/bin/python -m pytest -q` -> `80 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running`;
+  - подтверждены runtime settings: `kie_temperature=0.35`, `kie_stream=False`, `kie_read_timeout=180`, `kie_retry_max_attempts=4`, `kie_max_completion_tokens` отсутствует.
+- Live eval:
+  - полный `scripts/run_live_dialog_eval.py --output LIVE_DIALOG_EVALS.md` был запущен на VPS, но не завершился за 20 минут из-за долгого Kie running/provider состояния; процесс остановлен, старый `LIVE_DIALOG_EVALS.md` не перезаписывался;
+  - добавлен фильтр `--case` для targeted live-прогонов отдельных сценариев;
+  - запущен targeted live eval `L-032`-`L-035` с ограниченным test retry-budget, отчёт сохранён в `LIVE_DIALOG_EVALS_TARGETED.md`;
+  - результат targeted run: `4` сценария, `4` без style flags, `3` без content flags, `1` на ручную проверку;
+  - `L-032` не прошёл content-check из-за `rate_limit_or_quota` от Kie и безопасного provider fallback вместо ответа по памяти;
+  - `L-033`, `L-034`, `L-035` прошли без content flags.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

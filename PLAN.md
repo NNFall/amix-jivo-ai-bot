@@ -625,3 +625,23 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Задеплоить правки на VPS и запустить live-прогон через Kie уже на расширенных `35` сценариях.
+
+## Обновление 2026-05-18 - деплой synthetic tool history
+
+- Правки задеплоены на VPS commit `63b15d3`.
+- Серверные проверки:
+  - `.venv/bin/python -m pytest -q` -> `80 passed`;
+  - `amix-telegram-demo.service` -> `active/running`;
+  - Kie runtime settings: `temperature=0.35`, `stream=false`, `max_completion_tokens` отсутствует.
+- Полный live-прогон на VPS был запущен, но не завершился за 20 минут из-за долгого Kie running/provider состояния; процесс остановлен, чтобы не плодить зависшие задачи.
+- Добавлен targeted режим `scripts/run_live_dialog_eval.py --case L-032 --case L-033 ...`.
+- Targeted live-прогон `L-032`-`L-035`:
+  - сценариев: `4`;
+  - без style flags: `4`;
+  - без content flags: `3`;
+  - на ручную проверку: `1`.
+- `L-032` упал не из-за приветственного fallback, а из-за `rate_limit_or_quota`: бот ответил безопасным provider-delay текстом. `L-033`, `L-034`, `L-035` прошли без content flags.
+
+## Ближайший следующий шаг
+
+Когда Kie перестанет отдавать `rate_limit_or_quota`, повторить полный live-прогон на `35` сценариях или отдельно перезапустить `L-032`, чтобы проверить память первого товара без provider error.
