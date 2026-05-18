@@ -1306,6 +1306,18 @@
   - focused tests -> `42 passed`;
   - `python -m pytest -q` -> `83 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Итерация 37 - switch KIE model endpoint to Gemini
+
+- По запросу пользователя KIE endpoint переключён с `gpt-5-2` на Gemini:
+  - `KIE_CHAT_MODEL_PATH=/gemini-3-pro/v1/chat/completions`;
+  - обновлены `settings.py`, `.env.example`, `README.md`.
+- `stream=True` и `include_thoughts=True` из примера KIE не включались:
+  - текущий runtime читает non-stream JSON;
+  - reasoning/thoughts не должны попадать в клиентские ответы или debug payload.
+- Проверки:
+  - `python -m pytest -q` -> `83 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

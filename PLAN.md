@@ -660,3 +660,15 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Задеплоить fix на VPS, затем повторить Telegram-сценарий `/newchat -> есть мп 28ск -> 198 которая стоит -> сколько стоит 7843 silk brash -> а есть мп дешевле?` и проверить, что больше нет мусорных queries и обычного fallback.
+
+## Обновление 2026-05-18 - Gemini endpoint
+
+- KIE endpoint переключён на Gemini: `/gemini-3-pro/v1/chat/completions`.
+- `stream` оставлен `false`, `include_thoughts` не включался, потому что сервис сейчас работает с обычным JSON-ответом и не должен логировать reasoning/thoughts.
+- Проверки:
+  - `python -m pytest -q` -> `83 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить Gemini endpoint на VPS, обновить серверный `.env`, перезапустить Telegram demo service и проверить в Kie logs, что path стал `/gemini-3-pro/v1/chat/completions`.
