@@ -329,7 +329,143 @@ def test_assistant_service_passes_backend_actions_to_facts_prompt(isolated_app_e
     assert "backend_actions" in content
     assert "handoff_to_manager_called" in content
     assert "order_request" in content
-    assert "results" in content
+    assert "last_product_lookup" in content
+
+
+def test_assistant_service_sends_role_history_and_active_product_context(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="26139",
+                article="7843 silk brash",
+                normalized_article="7843SILKBRASH",
+                free_stock=Decimal("1"),
+                unit="шт",
+                retail_price=Decimal("13493"),
+                corporate_price=Decimal("10500"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        messages = kwargs["messages"]
+        if any(message.get("role") == "user" and message.get("content") == "скидки есть?" for message in messages):
+            captured["discount_messages"] = messages
+            return LLMTurnResult(
+                text="По этому товару отдельной скидки в текущих данных не вижу. Могу передать менеджеру для уточнения акций.",
+                tool_calls=[],
+            )
+        return LLMTurnResult(
+            text="Проверил, 7843 silk brash сейчас в наличии 1 шт. Розничная цена 13 493 руб., корпоративная 10 500 руб.",
+            tool_calls=[],
+        )
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:discount-context",
+            external_client_id="telegram-user:discount-context",
+            customer_name="Demo User",
+            customer_text="сколько стоит 7843 silk brash",
+            inbound_event_id="tg-discount-1",
+            outbound_event_id="tg-discount-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:discount-context",
+            external_client_id="telegram-user:discount-context",
+            customer_name="Demo User",
+            customer_text="скидки есть?",
+            inbound_event_id="tg-discount-2",
+            outbound_event_id="tg-discount-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    messages = captured["discount_messages"]
+    assert reply.text.startswith("По этому товару отдельной скидки")
+    assert [message["role"] for message in messages[:2]] == ["system", "system"]
+    assert any(message.get("role") == "assistant" and "7843 silk brash" in message.get("content", "") for message in messages)
+    assert sum(1 for message in messages if message.get("role") == "user" and message.get("content") == "скидки есть?") == 1
+    non_system_content = "\n".join(
+        str(message.get("content", "")) for message in messages if message.get("role") != "system"
+    )
+    assert "История диалога:" not in non_system_content
+    assert "Последнее сообщение клиента:" not in non_system_content
+    assert "active_product" in messages[1]["content"]
+    assert "7843 silk brash" in messages[1]["content"]
+
+
+def test_assistant_service_records_tool_flow_as_role_messages(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article="14025ПР",
+                free_stock=Decimal("7"),
+                unit="шт",
+                retail_price=Decimal("238"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        messages = kwargs["messages"]
+        if not any(message.get("role") == "tool" for message in messages):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        call_id="call_search_1",
+                        arguments={
+                            "queries": ["14.025пр."],
+                            "intent": "price",
+                            "use_dialog_context": False,
+                        },
+                    )
+                ],
+            )
+        captured["final_messages"] = messages
+        return LLMTurnResult(text="Проверил, 14.025пр. стоит 238 руб. Сейчас в наличии 7 шт.", tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:tool-flow",
+            external_client_id="telegram-user:tool-flow",
+            customer_name="Demo User",
+            customer_text="сколько стоит этот товар",
+            inbound_event_id="tg-tool-flow",
+            outbound_event_id="tg-tool-flow:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        stored_roles = [message.sender_role for message in session.query(Message).order_by(Message.id.asc()).all()]
+
+    assert reply.text == "Проверил, 14.025пр. стоит 238 руб. Сейчас в наличии 7 шт."
+    assert "assistant_tool_call" in stored_roles
+    assert "tool" in stored_roles
+    assert any(message.get("role") == "tool" for message in captured["final_messages"])
+    assert not any(
+        str(message.get("content", "")).startswith("TOOL_RESULTS_JSON")
+        for message in captured["final_messages"]
+    )
 
 
 def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_app_env) -> None:

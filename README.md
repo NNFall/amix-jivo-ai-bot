@@ -69,7 +69,9 @@ Telegram demo использует ту же SQLite-базу, историю д�
 
 Для тестирования в Telegram есть команда `/newchat`: она очищает контекст текущего демо-чата и позволяет начать новый диалог с нуля.
 
-LLM debug-логи пишутся в `data/logs/llm_debug.jsonl`, если `ASSISTANT_DEBUG_LLM_PAYLOADS=true`. В каждой строке JSONL видно, какие `messages` с ролями ушли в модель, какой `product_lookup_result` был передан, какие `backend_actions` рассчитаны и какой текст вернула модель.
+LLM debug-логи пишутся в `data/logs/llm_debug.jsonl`, если `ASSISTANT_DEBUG_LLM_PAYLOADS=true`. В каждой строке JSONL видно, какие `messages` с ролями ушли в модель, какой `INTERNAL_CONTEXT_JSON` был передан, какой `product_lookup_result` использовался, какие `backend_actions` рассчитаны и какой текст вернула модель.
+
+История диалога передаётся в LLM не строкой `Клиент/Бот`, а отдельными role-сообщениями `user`, `assistant` и, для tool flow, `tool`. Последнее сообщение клиента не дублируется отдельным блоком.
 
 ## Дальше по плану
 

@@ -1163,3 +1163,35 @@
   - `/root/amix` обновлён через `git pull --ff-only` до `1727cfb`;
   - серверный `.venv/bin/python -m pytest -q` -> `68 passed`;
   - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+
+## Итерация 30 - role-based история для LLM и INTERNAL_CONTEXT_JSON
+
+- По пользовательскому логу Kie подтверждено:
+  - история уходила в модель одним текстовым блоком `История диалога`;
+  - последнее сообщение клиента дублировалось отдельным user-блоком;
+  - в запросе не было структурного active product context;
+  - system prompt содержал повторяющиеся блоки.
+- `llm/prompts.py`:
+  - пересобран `SYSTEM_PROMPT` в структуру V3: роль, задача, источники данных, намерения, товары, скидки, дубли, handoff, стиль, справка AMIX;
+  - добавлены правила для `всм`, `в смысле`, `я спросил же`, active product и скидок;
+  - builders теперь принимают `dialog_messages` и `runtime_context`, а не упаковывают историю в один user-текст.
+- `core/dialog_service.py`:
+  - добавлена сборка LLM-истории как role-сообщений `user`, `assistant`, `tool`.
+- `core/assistant_service.py`:
+  - прямой LLM-вызов теперь отправляет role-based history;
+  - добавлен `INTERNAL_CONTEXT_JSON` с `active_product`, `last_product_lookup`, `pending_clarification`, настройками и каналом;
+  - product lookup сохраняется в payload bot-сообщения для последующих вопросов клиента;
+  - tool call и tool result сохраняются в историю как служебные сообщения;
+  - debug-лог теперь показывает role-based payload без дублирования последнего user-сообщения.
+- `llm/openai_client.py`:
+  - Kie payload теперь сохраняет `tool_calls`, `tool_call_id`, `name` и role `tool`.
+- `llm/tool_schemas.py`:
+  - уточнены схемы `search_products` и `handoff_to_manager`.
+- Тесты:
+  - добавлена проверка, что вопрос `скидки есть?` после обсуждения товара получает active product context;
+  - добавлена проверка сохранения tool flow как role messages;
+  - добавлена проверка Kie payload для `role=tool`.
+- Проверки:
+  - `python -m pytest -q` -> `71 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Live-прогон локально не запущен, потому что в локальном окружении нет `.env` с LLM API key; live-прогон будет выполнен на VPS после деплоя.

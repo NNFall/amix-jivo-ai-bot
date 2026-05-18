@@ -9,7 +9,13 @@ from pathlib import Path
 import re
 from typing import Any
 
-from database.repositories import append_message, get_or_create_chat, get_or_create_customer, search_products_structured
+from database.repositories import (
+    append_message,
+    get_or_create_chat,
+    get_or_create_customer,
+    list_recent_messages,
+    search_products_structured,
+)
 from llm.openai_client import OpenAIService
 from llm.prompts import build_llm_messages, build_product_facts_messages
 from llm.tool_schemas import OPENAI_TOOLS
@@ -216,16 +222,25 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
             )
 
-        messages = build_llm_messages(transcript=transcript, customer_text=customer_text, product_lookup_result=None)
+        dialog_messages = self.dialog_service.get_llm_messages(session, external_chat_id)
+        runtime_context = self._build_runtime_context(
+            session,
+            external_chat_id=external_chat_id,
+            customer_text=customer_text,
+            handoff_mode=handoff_mode,
+        )
+        messages = build_llm_messages(dialog_messages=dialog_messages, runtime_context=runtime_context)
         self._log_llm_debug_event(
             "llm_direct_request",
             {
                 "external_chat_id": external_chat_id,
                 "customer_text": customer_text,
                 "transcript": transcript,
+                "runtime_context": runtime_context,
                 "messages": messages,
                 "tools": self._summarize_tools(OPENAI_TOOLS),
                 "tool_choice": "auto",
+                "note": "Dialog history is sent as role-based messages; current customer message is the last role=user item.",
             },
         )
         first_turn = self.openai_service.run_messages(messages=messages, tools=OPENAI_TOOLS, tool_choice="auto")
@@ -277,7 +292,10 @@ class AssistantService:
         outbound_event_id: str | None,
         handoff_mode: str,
     ) -> AssistantReply | None:
-        for call in tool_calls:
+        for index, call in enumerate(tool_calls, start=1):
+            if not call.call_id:
+                call.call_id = f"call_{call.name}_{index}"
+
             if call.name == "handoff_to_manager":
                 reason = str(call.arguments.get("reason") or "llm_requested_manager")
                 return self._handoff_reply(
@@ -299,11 +317,32 @@ class AssistantService:
             if not queries:
                 continue
 
+            self._append_assistant_tool_call_message(
+                session,
+                external_chat_id=external_chat_id,
+                tool_calls=[call],
+            )
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=queries,
-                reason=str(call.arguments.get("reason") or "unknown"),
+                reason=str(call.arguments.get("intent") or call.arguments.get("reason") or "unknown"),
                 customer_text=customer_text,
+            )
+            tool_result_message = OpenAIService.build_tool_result_message(
+                tool_call_id=call.call_id,
+                name="search_products",
+                result={
+                    "tool_name": "search_products",
+                    "status": "ok",
+                    "request": call.arguments,
+                    "result": lookup_result,
+                },
+            )
+            self._append_tool_result_message(
+                session,
+                external_chat_id=external_chat_id,
+                message=tool_result_message,
+                tool_name="search_products",
             )
             self._log_lookup_result(stage="tool_call", payload=lookup_result)
             self._log_llm_debug_event(
@@ -328,6 +367,7 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
                 payload_source="llm_tool_search",
                 handoff_mode=handoff_mode,
+                include_tool_results_system=False,
             )
         return None
 
@@ -343,6 +383,7 @@ class AssistantService:
         payload_source: str,
         force_handoff_reason: str | None = None,
         handoff_mode: str = "jivo",
+        include_tool_results_system: bool = True,
     ) -> AssistantReply:
         product_lookup_result = self._apply_response_policy(product_lookup_result)
         followup_refinement = self._build_followup_refinement_context(customer_text, product_lookup_result)
@@ -372,11 +413,21 @@ class AssistantService:
 
         turn = None
         if self.openai_service.enabled:
-            fact_messages = build_product_facts_messages(
-                transcript=transcript,
+            dialog_messages = self.dialog_service.get_llm_messages(session, external_chat_id)
+            runtime_context = self._build_runtime_context(
+                session,
+                external_chat_id=external_chat_id,
                 customer_text=customer_text,
+                handoff_mode=handoff_mode,
                 product_lookup_result=product_lookup_result,
                 backend_actions=backend_actions,
+            )
+            fact_messages = build_product_facts_messages(
+                dialog_messages=dialog_messages,
+                runtime_context=runtime_context,
+                product_lookup_result=product_lookup_result,
+                backend_actions=backend_actions,
+                include_tool_results_system=include_tool_results_system,
             )
             self._log_llm_debug_event(
                 "product_facts_request",
@@ -384,12 +435,13 @@ class AssistantService:
                     "external_chat_id": external_chat_id,
                     "customer_text": customer_text,
                     "transcript": transcript,
+                    "runtime_context": runtime_context,
                     "product_lookup_result": product_lookup_result,
                     "backend_actions": backend_actions,
                     "messages": fact_messages,
                     "note": (
                         "messages is the exact role-based payload sent to the LLM. "
-                        "The dialog history is currently packed into a user message as transcript text."
+                        "Dialog history is sent as user/assistant/tool messages; current customer message is not duplicated."
                     ),
                 },
             )
@@ -425,6 +477,7 @@ class AssistantService:
                 "product_lookup_status": product_lookup_result.get("status"),
                 "exact_matches_count": product_lookup_result.get("exact_matches_count"),
                 "similar_matches_count": product_lookup_result.get("similar_matches_count"),
+                "product_lookup_result": product_lookup_result,
                 "backend_actions": backend_actions,
                 "handoff_reason": handoff_reason,
             },
@@ -792,6 +845,12 @@ class AssistantService:
             "queries": queries,
             "display_queries": [item.get("display_query") or item.get("query") for item in visible_query_results],
             "reason": reason,
+            "request": {
+                "queries": queries,
+                "intent": reason,
+                "use_dialog_context": self._looks_like_dialog_context_query(customer_text or ""),
+                "context_note": self._build_search_context_note(customer_text or "", reason),
+            },
             **best,
             "exact_matches": exact_matches or best.get("exact_matches", []),
             "similar_matches": similar_matches if exact_matches else best.get("similar_matches", []),
@@ -801,6 +860,171 @@ class AssistantService:
             "results": visible_query_results,
             "per_query_results": visible_query_results,
         }
+
+    def _build_runtime_context(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str | None = None,
+        handoff_mode: str = "jivo",
+        product_lookup_result: dict | None = None,
+        backend_actions: dict | None = None,
+    ) -> dict[str, Any]:
+        recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
+        last_lookup = product_lookup_result or self._find_latest_product_lookup(recent_messages)
+        active_product = self._extract_active_product(last_lookup)
+        pending_clarification = self._extract_pending_clarification(last_lookup)
+
+        return {
+            "type": "amix_internal_context",
+            "channel": "telegram_test" if external_chat_id.startswith("telegram:") else "jivo",
+            "handoff_mode": handoff_mode,
+            "settings": {
+                "show_corporate_price": self.show_corporate_price,
+                "show_price_on_availability_question": False,
+                "handoff_enabled": True,
+            },
+            "dialog_state": {
+                "active_product": active_product,
+                "last_product_lookup": self._compact_lookup_for_context(last_lookup),
+                "pending_clarification": pending_clarification,
+                "last_handoff_status": self._find_latest_handoff_status(recent_messages),
+            },
+            "backend_actions": backend_actions or {},
+            "current_user_message": customer_text,
+        }
+
+    @staticmethod
+    def _find_latest_product_lookup(messages: list) -> dict | None:
+        for message in reversed(messages):
+            payload = message.payload or {}
+            lookup = payload.get("product_lookup_result")
+            if isinstance(lookup, dict):
+                return lookup
+
+            if message.sender_role == "tool" and payload.get("tool_name") == "search_products":
+                try:
+                    tool_payload = json.loads(message.text or "{}")
+                except json.JSONDecodeError:
+                    continue
+                result = tool_payload.get("result") if isinstance(tool_payload, dict) else None
+                if isinstance(result, dict):
+                    return result
+        return None
+
+    @staticmethod
+    def _extract_active_product(product_lookup_result: dict | None) -> dict | None:
+        if not product_lookup_result:
+            return None
+        exact = product_lookup_result.get("exact_matches") or []
+        if len(exact) != 1:
+            return None
+
+        match = exact[0]
+        return {
+            "code": match.get("code"),
+            "article": match.get("article"),
+            "stock": match.get("stock"),
+            "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
+            "retail_price": match.get("retail_price"),
+            "retail_price_display": match.get("retail_price_display"),
+            "corporate_price": match.get("corporate_price"),
+            "corporate_price_display": match.get("corporate_price_display"),
+            "unit": match.get("unit"),
+            "weight": match.get("weight"),
+            "volume": match.get("volume"),
+            "discount_status": "unknown",
+        }
+
+    @staticmethod
+    def _extract_pending_clarification(product_lookup_result: dict | None) -> dict | None:
+        if not product_lookup_result:
+            return None
+        exact = product_lookup_result.get("exact_matches") or []
+        if len(exact) < 2:
+            return None
+        articles = {str(item.get("article") or "").strip() for item in exact if item.get("article")}
+        if len(articles) != 1:
+            return None
+        article = next(iter(articles))
+        return {
+            "type": "choose_product_variant",
+            "article": article,
+            "allowed_clarifications": ["code", "retail_price", "link", "photo"],
+        }
+
+    @staticmethod
+    def _compact_lookup_for_context(product_lookup_result: dict | None) -> dict | None:
+        if not product_lookup_result:
+            return None
+        return {
+            "status": product_lookup_result.get("status"),
+            "query": product_lookup_result.get("display_query") or product_lookup_result.get("query"),
+            "queries": product_lookup_result.get("queries"),
+            "exact_matches_count": product_lookup_result.get("exact_matches_count"),
+            "similar_matches_count": product_lookup_result.get("similar_matches_count"),
+            "exact_matches": product_lookup_result.get("exact_matches", [])[:5],
+            "similar_matches": product_lookup_result.get("similar_matches", [])[:3],
+            "resolved_followup_refinement": product_lookup_result.get("resolved_followup_refinement"),
+            "summary": product_lookup_result.get("summary"),
+        }
+
+    @staticmethod
+    def _find_latest_handoff_status(messages: list) -> dict | None:
+        for message in reversed(messages):
+            payload = message.payload or {}
+            reason = payload.get("handoff_reason")
+            if reason:
+                return {"handoff_reason": reason, "source": payload.get("source")}
+        return None
+
+    @staticmethod
+    def _looks_like_dialog_context_query(customer_text: str) -> bool:
+        text = customer_text.lower()
+        keywords = ("скидк", "акци", "корпоратив", "всм", "в смысле", "я спросил", "цена", "код", "руб", "стоит")
+        return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _build_search_context_note(customer_text: str, reason: str) -> str:
+        if AssistantService._looks_like_dialog_context_query(customer_text):
+            return f"Запрос может быть продолжением текущей темы диалога. Intent: {reason}."
+        return f"Поиск выполнен по текущему сообщению клиента. Intent: {reason}."
+
+    def _append_assistant_tool_call_message(self, session, *, external_chat_id: str, tool_calls: list) -> None:
+        message = OpenAIService.build_assistant_tool_call_message(tool_calls)
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="assistant_tool_call",
+            text="",
+            payload={
+                "source": "llm_tool_call",
+                "content": message.get("content") or "",
+                "tool_calls": message.get("tool_calls") or [],
+            },
+        )
+
+    def _append_tool_result_message(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        message: dict[str, Any],
+        tool_name: str,
+    ) -> None:
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="tool",
+            text=str(message.get("content") or ""),
+            payload={
+                "source": "tool_result",
+                "tool_name": tool_name,
+                "tool_call_id": message.get("tool_call_id"),
+                "content": message.get("content"),
+            },
+        )
 
     def _handoff_reply(
         self,

@@ -481,3 +481,33 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 После деплоя проверить живой Telegram-диалог с `/newchat`, затем задать `есть мп 28ск` и `198 которая стоит`; если ответ снова будет неверным, смотреть свежие строки `data/logs/llm_debug.jsonl`.
+
+## Обновление 2026-05-18 - role-based LLM context
+
+- Перестроена сборка LLM-запроса:
+  - история больше не передаётся одним текстовым блоком `История диалога`;
+  - последние сообщения идут как отдельные role-objects `user`, `assistant`, `tool`;
+  - последнее сообщение клиента не дублируется отдельным блоком.
+- Добавлен `INTERNAL_CONTEXT_JSON`:
+  - `active_product`;
+  - `last_product_lookup`;
+  - `pending_clarification`;
+  - настройки показа цен и handoff;
+  - текущий канал `telegram_test`/`jivo`.
+- Обновлён tool flow:
+  - assistant tool call сохраняется в историю;
+  - результат `search_products` сохраняется как `role=tool`;
+  - Kie payload сохраняет `tool_calls`, `tool_call_id` и `name`.
+- Пересобран `SYSTEM_PROMPT`:
+  - убраны дубли;
+  - добавлены правила по `всм`, `я спросил же`, скидкам, active product, наличию без цены и уточнениям после дублей.
+- Обновлены schemas:
+  - `search_products` получил `intent`, `use_dialog_context`, `context_note`, `requested_quantity`;
+  - `handoff_to_manager` получил enum причин и `customer_message`.
+- Проверки:
+  - `python -m pytest -q` -> `71 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+После деплоя на VPS запустить live-прогон через реальную модель, обновить `LIVE_DIALOG_EVALS.md`, затем проверить в Telegram сценарии: `скидки есть?`, `всм`, `я спросил же скидки есть?`, `есть мп 28ск -> цена 132/198`.

@@ -124,7 +124,7 @@ class OpenAIService:
             return LLMTurnResult(text=None, tool_calls=[])
 
         url = f"{self.kie_api_base_url}{self.kie_chat_model_path}"
-        payload_messages = [{"role": msg["role"], "content": [{"type": "text", "text": msg["content"]}]} for msg in messages]
+        payload_messages = [self._format_kie_message(msg) for msg in messages]
         payload: dict[str, Any] = {
             "messages": payload_messages,
             "reasoning_effort": self.kie_reasoning_effort,
@@ -213,8 +213,55 @@ class OpenAIService:
         return {"value": payload}
 
     @staticmethod
-    def build_tool_result_message(*, tool_call_id: str | None, result: dict[str, Any]) -> dict[str, Any]:
+    def _format_kie_message(message: dict[str, Any]) -> dict[str, Any]:
+        payload: dict[str, Any] = {"role": message["role"]}
+        if "tool_call_id" in message and message["tool_call_id"]:
+            payload["tool_call_id"] = message["tool_call_id"]
+        if "name" in message and message["name"]:
+            payload["name"] = message["name"]
+        if "tool_calls" in message and message["tool_calls"]:
+            payload["tool_calls"] = message["tool_calls"]
+
+        content = message.get("content")
+        if isinstance(content, list):
+            payload["content"] = content
+        elif isinstance(content, str) and content:
+            payload["content"] = [{"type": "text", "text": content}]
+        else:
+            payload["content"] = []
+        return payload
+
+    @staticmethod
+    def build_assistant_tool_call_message(tool_calls: list[ToolCall]) -> dict[str, Any]:
+        return {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": dumps(call.arguments, ensure_ascii=False),
+                    },
+                }
+                for call in tool_calls
+            ],
+        }
+
+    @staticmethod
+    def build_tool_result_message(
+        *,
+        tool_call_id: str | None,
+        result: dict[str, Any],
+        name: str | None = None,
+    ) -> dict[str, Any]:
         content = dumps(result, ensure_ascii=False)
+        message: dict[str, Any]
         if tool_call_id:
-            return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
-        return {"role": "tool", "content": content}
+            message = {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+        else:
+            message = {"role": "tool", "content": content}
+        if name:
+            message["name"] = name
+        return message

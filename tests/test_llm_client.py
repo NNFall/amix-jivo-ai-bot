@@ -58,7 +58,8 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["headers"]["Authorization"] == "Bearer test-kie-key"
     assert collector["json"]["reasoning_effort"] == "high"
     assert collector["json"]["messages"][0]["role"] == "system"
-    assert collector["json"]["messages"][1]["role"] == "user"
+    assert collector["json"]["messages"][1]["role"] == "system"
+    assert collector["json"]["messages"][2]["role"] == "user"
 
 
 def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
@@ -80,10 +81,53 @@ def test_product_facts_messages_include_grouped_result_and_backend_actions() -> 
         },
     )
 
-    user_content = messages[1]["content"]
+    context_content = messages[1]["content"]
+    tool_content = messages[2]["content"]
 
-    assert "Данные для ответа" in user_content
-    assert "backend_actions" in user_content
-    assert "handoff_to_manager_called" in user_content
-    assert "results" in user_content
-    assert "14.023л." in user_content
+    assert "INTERNAL_CONTEXT_JSON" in context_content
+    assert "backend_actions" in context_content
+    assert "handoff_to_manager_called" in context_content
+    assert "TOOL_RESULTS_JSON" in tool_content
+    assert "results" in tool_content
+    assert "14.023л." in tool_content
+
+
+def test_kie_payload_preserves_tool_role_messages(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kie")
+    monkeypatch.setenv("KIE_API_KEY", "test-kie-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    service = OpenAIService(get_settings())
+    service.run_messages(
+        messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "сколько стоит 14.025пр."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search_products", "arguments": '{"queries":["14.025пр."]}'},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "name": "search_products",
+                "content": '{"status":"ok"}',
+            },
+        ]
+    )
+
+    payload_messages = collector["json"]["messages"]
+    assert payload_messages[2]["role"] == "assistant"
+    assert payload_messages[2]["tool_calls"][0]["id"] == "call_1"
+    assert payload_messages[3]["role"] == "tool"
+    assert payload_messages[3]["tool_call_id"] == "call_1"
+    assert payload_messages[3]["name"] == "search_products"
