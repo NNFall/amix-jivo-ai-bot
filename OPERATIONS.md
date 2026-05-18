@@ -1216,3 +1216,15 @@
 - Проверки:
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub/VPS:
+  - создан и отправлен commit `e777179` (`Tighten FAQ and refinement replies`);
+  - `/root/amix` обновлён до `e777179`;
+  - серверный `.venv/bin/python -m pytest -q` -> `74 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
+- Повторный live-прогон на VPS:
+  - `scripts/run_live_dialog_eval.py --output LIVE_DIALOG_EVALS.md`;
+  - сценариев: `31`;
+  - ответов без style flags: `31`;
+  - ответов без content flags: `31`;
+  - ответов на ручную проверку: `0`;
+  - обновлён локальный `LIVE_DIALOG_EVALS.md` из серверного отчёта.
