@@ -645,3 +645,17 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Когда Kie перестанет отдавать `rate_limit_or_quota`, повторить полный live-прогон на `35` сценариях или отдельно перезапустить `L-032`, чтобы проверить память первого товара без provider error.
+
+## Обновление 2026-05-18 - transcript/tool cleanup
+
+- Найдена причина странных queries вроде `МП28СКINTENTPRODUCTINFO`: служебный `role=tool` JSON попадал в legacy transcript как текст бота.
+- `get_transcript()` теперь отдаёт только реальные реплики клиента и финальные ответы бота.
+- Kie failure body `status=failure`, `error_code=500`, `Server exception...` и пустой ответ теперь считаются retryable provider error, а не успешным пустым ответом.
+- Follow-up `а есть мп дешевле?` теперь использует историю товара и backend prelookup.
+- Проверки:
+  - `python -m pytest -q` -> `83 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить fix на VPS, затем повторить Telegram-сценарий `/newchat -> есть мп 28ск -> 198 которая стоит -> сколько стоит 7843 silk brash -> а есть мп дешевле?` и проверить, что больше нет мусорных queries и обычного fallback.

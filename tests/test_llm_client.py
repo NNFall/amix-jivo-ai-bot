@@ -39,6 +39,18 @@ class DummyKieLimitResponse:
         }
 
 
+class DummyKieFailureResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {
+            "status": "failure",
+            "error_code": 500,
+            "error_message": "Server exception, please try again later",
+        }
+
+
 class DummyKieClient:
     def __init__(self, collector: dict, response=None) -> None:
         self.collector = collector
@@ -55,6 +67,9 @@ class DummyKieClient:
         self.collector["headers"] = headers
         self.collector["json"] = json
         self.collector["calls"] = self.collector.get("calls", 0) + 1
+        if isinstance(self.response, list):
+            index = min(self.collector["calls"] - 1, len(self.response) - 1)
+            return self.response[index]
         return self.response
 
 
@@ -183,3 +198,25 @@ def test_kie_limit_text_is_provider_error(monkeypatch, isolated_app_env) -> None
     assert turn.text is None
     assert turn.error_type == "rate_limit_or_quota"
     assert turn.retryable is True
+
+
+def test_kie_failure_body_is_retried(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kie")
+    monkeypatch.setenv("KIE_API_KEY", "test-kie-key")
+    monkeypatch.setenv("KIE_RETRY_MAX_ATTEMPTS", "2")
+    get_settings.cache_clear()
+    monkeypatch.setattr(OpenAIService, "_sleep_before_retry", staticmethod(lambda attempt: None))
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda timeout: DummyKieClient(collector, response=[DummyKieFailureResponse(), DummyKieResponse()]),
+    )
+
+    service = OpenAIService(get_settings())
+    turn = service.run_messages(messages=[{"role": "user", "content": "а есть мп дешевле?"}])
+
+    assert collector["calls"] == 2
+    assert turn.text == "Тестовый ответ от KIE"
+    assert turn.error_type is None

@@ -204,6 +204,14 @@ class OpenAIService:
 
             text = self._extract_kie_text(data)
             tool_calls = self._extract_kie_tool_calls(data)
+            if not text and not tool_calls:
+                last_error_type = "empty_response"
+                last_retryable = True
+                logger.warning("KIE provider returned empty response on attempt %s", attempt)
+                if self._should_retry_kie(started_at, attempt, last_retryable):
+                    self._sleep_before_retry(attempt)
+                    continue
+                return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
             return LLMTurnResult(text=text, tool_calls=tool_calls)
 
         return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
@@ -221,6 +229,15 @@ class OpenAIService:
         time.sleep(delay)
 
     def _extract_provider_error(self, data: dict) -> tuple[str, bool] | None:
+        provider_status = str(data.get("status") or data.get("state") or "").strip().lower()
+        provider_code = self._extract_provider_code(data)
+        if provider_code == 429:
+            return "rate_limit_or_quota", True
+        if provider_code is not None and provider_code >= 500:
+            return f"provider_{provider_code}", True
+        if provider_status in {"failure", "failed", "error"}:
+            return ("provider_error", True)
+
         for text in self._iter_error_texts(data):
             normalized = text.lower()
             if (
@@ -233,6 +250,8 @@ class OpenAIService:
                 return "rate_limit_or_quota", True
             if "timeout" in normalized or "timed out" in normalized:
                 return "timeout", True
+            if "server exception" in normalized or "server error" in normalized:
+                return "provider_500", True
         return None
 
     def _iter_error_texts(self, value: Any):
@@ -242,7 +261,7 @@ class OpenAIService:
             return
         if isinstance(value, dict):
             for key, item in value.items():
-                if key in {"message", "error", "content", "detail", "status"}:
+                if key in {"message", "error", "error_message", "msg", "content", "detail", "status", "result"}:
                     yield from self._iter_error_texts(item)
                 elif isinstance(item, (dict, list)):
                     yield from self._iter_error_texts(item)
@@ -250,6 +269,27 @@ class OpenAIService:
         if isinstance(value, list):
             for item in value:
                 yield from self._iter_error_texts(item)
+
+    @staticmethod
+    def _extract_provider_code(data: dict) -> int | None:
+        for key in ("error_code", "code", "status_code"):
+            value = data.get(key)
+            try:
+                if value is not None:
+                    return int(value)
+            except (TypeError, ValueError):
+                continue
+
+        error = data.get("error")
+        if isinstance(error, dict):
+            for key in ("code", "status_code"):
+                value = error.get(key)
+                try:
+                    if value is not None:
+                        return int(value)
+                except (TypeError, ValueError):
+                    continue
+        return None
 
     @staticmethod
     def _extract_kie_text(data: dict) -> str | None:

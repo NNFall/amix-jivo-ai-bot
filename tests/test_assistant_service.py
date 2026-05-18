@@ -112,6 +112,56 @@ def test_assistant_service_requests_article_for_stock_question(isolated_app_env)
         )
 
     assert reply.text == ARTICLE_REQUIRED_TEXT
+
+
+def test_assistant_service_uses_history_for_cheaper_followup(isolated_app_env) -> None:
+    with session_scope() as session:
+        for code, price, stock in (
+            ("26167", "118", "124"),
+            ("26168", "132", "292"),
+            ("26169", "198", "237"),
+        ):
+            session.add(
+                Product(
+                    code=code,
+                    article="МП 28ск",
+                    normalized_article="МП28СК",
+                    free_stock=Decimal(stock),
+                    unit="шт.",
+                    retail_price=Decimal(price),
+                    raw_payload={},
+                )
+            )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:cheaper",
+            external_client_id="telegram-user:cheaper",
+            customer_name="Demo User",
+            customer_text="есть мп 28ск",
+            inbound_event_id="tg-cheaper-1",
+            outbound_event_id="tg-cheaper-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:cheaper",
+            external_client_id="telegram-user:cheaper",
+            customer_name="Demo User",
+            customer_text="а есть мп дешевле?",
+            inbound_event_id="tg-cheaper-2",
+            outbound_event_id="tg-cheaper-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.text != SAFE_FALLBACK_TEXT
+    assert "МП 28ск" in reply.text
+    assert "кодом и ценой" in reply.text
     assert reply.handoff_reason is None
 
 

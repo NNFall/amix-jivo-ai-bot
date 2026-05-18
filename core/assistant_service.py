@@ -111,6 +111,8 @@ class AssistantService:
         history_article_candidates = self._extract_history_article_candidates(transcript)
         if self._looks_like_price_refinement(customer_text, article_candidates) and history_article_candidates:
             article_candidates = history_article_candidates
+        if not article_candidates and history_article_candidates and self._looks_like_history_product_followup(customer_text):
+            article_candidates = self._select_history_candidates_for_followup(customer_text, history_article_candidates)
         if self._is_explicit_manager_request(customer_text) and article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
@@ -280,6 +282,8 @@ class AssistantService:
                 "mode": "tool_auto",
                 "has_text": bool(first_turn.text),
                 "tool_calls_count": len(first_turn.tool_calls),
+                "error_type": first_turn.error_type,
+                "retryable": first_turn.retryable,
             },
         )
         self._log_llm_debug_event(
@@ -527,6 +531,8 @@ class AssistantService:
                     "mode": "backend_prelookup_final_answer",
                     "has_text": bool(turn.text),
                     "tool_calls_count": len(turn.tool_calls),
+                    "error_type": turn.error_type,
+                    "retryable": turn.retryable,
                 },
             )
             self._log_llm_debug_event(
@@ -1291,14 +1297,14 @@ class AssistantService:
     def _is_stock_only_request(customer_text: str) -> bool:
         text = customer_text.lower()
         has_stock_intent = any(keyword in text for keyword in ("налич", "остат", "есть"))
-        has_price_intent = any(keyword in text for keyword in ("цен", "стоит", "стоим", "руб", "корп", "опт"))
+        has_price_intent = any(keyword in text for keyword in ("цен", "стоит", "стоим", "руб", "корп", "опт", "дешев", "дороже"))
         has_order_intent = any(keyword in text for keyword in ("заказ", "купить", "оформ"))
         return has_stock_intent and not has_price_intent and not has_order_intent
 
     @staticmethod
     def _guess_lookup_reason(customer_text: str) -> str:
         text = customer_text.lower()
-        if "цен" in text or "стоит" in text:
+        if "цен" in text or "стоит" in text or "дешев" in text or "дороже" in text:
             return "price"
         if "остат" in text or "в наличии" in text or "налич" in text:
             return "stock"
@@ -1339,6 +1345,32 @@ class AssistantService:
         ):
             return False
         return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
+
+    @staticmethod
+    def _looks_like_history_product_followup(customer_text: str) -> bool:
+        text = customer_text.lower()
+        return any(
+            keyword in text
+            for keyword in (
+                "дешев",
+                "дороже",
+                "подешевле",
+                "вариант",
+                "такие",
+                "те котор",
+                "сперва",
+                "мп",
+            )
+        )
+
+    @staticmethod
+    def _select_history_candidates_for_followup(customer_text: str, candidates: list[str]) -> list[str]:
+        normalized_text = normalize_article(customer_text)
+        if "МП" in normalized_text:
+            matched = [candidate for candidate in candidates if "МП" in normalize_article(candidate)]
+            if matched:
+                return matched[:2]
+        return candidates[:2]
 
     def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
         if self.debug_lookup_logs:

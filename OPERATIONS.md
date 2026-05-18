@@ -1288,6 +1288,23 @@
   - результат targeted run: `4` сценария, `4` без style flags, `3` без content flags, `1` на ручную проверку;
   - `L-032` не прошёл content-check из-за `rate_limit_or_quota` от Kie и безопасного provider fallback вместо ответа по памяти;
   - `L-033`, `L-034`, `L-035` прошли без content flags.
+
+## Итерация 36 - fix transcript tool pollution и Kie failure retry
+
+- По свежему Kie payload и Telegram-скрину обнаружено:
+  - `stream_options.include_usage` виден в Kie UI, хотя проектный `llm/openai_client.py` не добавляет `stream_options`;
+  - `role=tool` JSON попадал в legacy transcript как `Бот: {...}`;
+  - из этого transcript backend извлекал мусорные article candidates вроде `МП28СКINTENTPRODUCTINFO` и `EXACTMATCHESCOUNT3`;
+  - Kie provider-side `status=failure/error_code=500` мог вернуться как пустой ответ без `error_type`, из-за чего direct LLM-flow уходил в обычный fallback `Подскажите, что нужно посмотреть?`.
+- Исправлено:
+  - `DialogService.get_transcript()` теперь включает только реальные `client` и финальные `bot` сообщения, без `assistant_tool_call` и `tool`;
+  - Kie response parser теперь распознаёт `status=failure/failed/error`, `error_code/code/status_code >= 500`, `server exception` и пустой body как retryable provider error;
+  - `llm_response_received` логирует `error_type` и `retryable`;
+  - follow-up вопросы вроде `а есть мп дешевле?` используют историю товара и идут в backend prelookup, а не в generic LLM fallback.
+- Проверки:
+  - focused tests -> `42 passed`;
+  - `python -m pytest -q` -> `83 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

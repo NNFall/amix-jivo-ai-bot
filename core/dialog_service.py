@@ -10,6 +10,8 @@ class DialogService:
         lines: list[str] = []
 
         for message in messages:
+            if message.sender_role not in {"client", "bot"}:
+                continue
             speaker = "Клиент" if message.sender_role == "client" else "Бот"
             if not message.text:
                 continue
