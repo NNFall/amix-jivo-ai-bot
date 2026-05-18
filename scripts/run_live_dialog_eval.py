@@ -107,6 +107,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run live AMIX dialog eval through the real configured LLM provider.")
     parser.add_argument("--output", default="LIVE_DIALOG_EVALS.md", help="Markdown report path.")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of scenarios. 0 means all.")
+    parser.add_argument("--case", action="append", default=[], help="Run only selected case id. Can be passed multiple times.")
     parser.add_argument("--append", action="store_true", help="Append to report instead of replacing it.")
     parser.add_argument(
         "--allow-disabled-llm",
@@ -124,7 +125,14 @@ def main() -> None:
             "or pass --allow-disabled-llm for fallback-only run."
         )
 
-    scenarios = DEFAULT_SCENARIOS[: args.limit] if args.limit else DEFAULT_SCENARIOS
+    if args.case:
+        selected_case_ids = set(args.case)
+        scenarios = [scenario for scenario in DEFAULT_SCENARIOS if scenario.case_id in selected_case_ids]
+        missing_case_ids = sorted(selected_case_ids - {scenario.case_id for scenario in scenarios})
+        if missing_case_ids:
+            raise SystemExit(f"Unknown live eval case id(s): {', '.join(missing_case_ids)}")
+    else:
+        scenarios = DEFAULT_SCENARIOS[: args.limit] if args.limit else DEFAULT_SCENARIOS
     started_at = datetime.now(UTC)
     rows = []
     with session_scope() as session:
