@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
 from typing import Any
@@ -26,6 +28,8 @@ class ToolCall:
 class LLMTurnResult:
     text: str | None
     tool_calls: list[ToolCall]
+    error_type: str | None = None
+    retryable: bool = False
 
 
 class OpenAIService:
@@ -41,6 +45,10 @@ class OpenAIService:
         self.kie_top_p = settings.kie_top_p
         self.kie_parallel_tool_calls = settings.kie_parallel_tool_calls
         self.kie_stream = settings.kie_stream
+        self.kie_http_connect_timeout_seconds = settings.kie_http_connect_timeout_seconds
+        self.kie_http_read_timeout_seconds = settings.kie_http_read_timeout_seconds
+        self.kie_retry_max_attempts = settings.kie_retry_max_attempts
+        self.kie_retry_total_timeout_seconds = settings.kie_retry_total_timeout_seconds
         self.kie_enable_web_search = settings.kie_enable_web_search
 
         self.enabled = self._is_enabled()
@@ -149,18 +157,99 @@ class OpenAIService:
             "Content-Type": "application/json",
         }
 
-        try:
-            with httpx.Client(timeout=60) as client:
-                response = client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-        except Exception:  # pragma: no cover - external API failure path
-            logger.exception("KIE request failed")
-            return LLMTurnResult(text=None, tool_calls=[])
+        started_at = time.monotonic()
+        last_error_type = "provider_error"
+        last_retryable = True
+        for attempt in range(1, max(1, self.kie_retry_max_attempts) + 1):
+            try:
+                timeout = httpx.Timeout(
+                    connect=self.kie_http_connect_timeout_seconds,
+                    read=self.kie_http_read_timeout_seconds,
+                    write=self.kie_http_connect_timeout_seconds,
+                    pool=self.kie_http_connect_timeout_seconds,
+                )
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.HTTPStatusError as exc:  # pragma: no cover - external API failure path
+                status_code = exc.response.status_code
+                last_error_type = "rate_limit_or_quota" if status_code == 429 else f"http_{status_code}"
+                last_retryable = status_code in {429, 500, 502, 503, 504}
+                logger.warning("KIE request failed with HTTP %s on attempt %s", status_code, attempt)
+                if self._should_retry_kie(started_at, attempt, last_retryable):
+                    self._sleep_before_retry(attempt)
+                    continue
+                return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:  # pragma: no cover - external API failure path
+                last_error_type = "timeout" if isinstance(exc, httpx.TimeoutException) else "network_error"
+                last_retryable = True
+                logger.warning("KIE %s on attempt %s: %s", last_error_type, attempt, exc)
+                if self._should_retry_kie(started_at, attempt, last_retryable):
+                    self._sleep_before_retry(attempt)
+                    continue
+                return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=True)
+            except Exception:  # pragma: no cover - external API failure path
+                logger.exception("KIE request failed")
+                return LLMTurnResult(text=None, tool_calls=[], error_type="provider_error", retryable=True)
 
-        text = self._extract_kie_text(data)
-        tool_calls = self._extract_kie_tool_calls(data)
-        return LLMTurnResult(text=text, tool_calls=tool_calls)
+            provider_error = self._extract_provider_error(data)
+            if provider_error is not None:
+                last_error_type, last_retryable = provider_error
+                logger.warning("KIE provider returned %s on attempt %s", last_error_type, attempt)
+                if self._should_retry_kie(started_at, attempt, last_retryable):
+                    self._sleep_before_retry(attempt)
+                    continue
+                return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
+
+            text = self._extract_kie_text(data)
+            tool_calls = self._extract_kie_tool_calls(data)
+            return LLMTurnResult(text=text, tool_calls=tool_calls)
+
+        return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
+
+    def _should_retry_kie(self, started_at: float, attempt: int, retryable: bool) -> bool:
+        if not retryable:
+            return False
+        if attempt >= max(1, self.kie_retry_max_attempts):
+            return False
+        return (time.monotonic() - started_at) < self.kie_retry_total_timeout_seconds
+
+    @staticmethod
+    def _sleep_before_retry(attempt: int) -> None:
+        delay = min(40.0, 2.0 * (2 ** (attempt - 1))) + random.uniform(0, 2)
+        time.sleep(delay)
+
+    def _extract_provider_error(self, data: dict) -> tuple[str, bool] | None:
+        for text in self._iter_error_texts(data):
+            normalized = text.lower()
+            if (
+                "you've hit your limit" in normalized
+                or "you have hit your limit" in normalized
+                or "please try again later" in normalized
+                or "rate limit" in normalized
+                or "quota" in normalized
+            ):
+                return "rate_limit_or_quota", True
+            if "timeout" in normalized or "timed out" in normalized:
+                return "timeout", True
+        return None
+
+    def _iter_error_texts(self, value: Any):
+        if isinstance(value, str):
+            if value.strip():
+                yield value.strip()
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"message", "error", "content", "detail", "status"}:
+                    yield from self._iter_error_texts(item)
+                elif isinstance(item, (dict, list)):
+                    yield from self._iter_error_texts(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                yield from self._iter_error_texts(item)
 
     @staticmethod
     def _extract_kie_text(data: dict) -> str | None:

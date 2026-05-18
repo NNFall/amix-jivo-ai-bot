@@ -23,9 +23,26 @@ class DummyKieResponse:
         }
 
 
+class DummyKieLimitResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "You've hit your limit. Please try again later.",
+                    }
+                }
+            ]
+        }
+
+
 class DummyKieClient:
-    def __init__(self, collector: dict) -> None:
+    def __init__(self, collector: dict, response=None) -> None:
         self.collector = collector
+        self.response = response or DummyKieResponse()
 
     def __enter__(self):
         return self
@@ -37,7 +54,8 @@ class DummyKieClient:
         self.collector["url"] = url
         self.collector["headers"] = headers
         self.collector["json"] = json
-        return DummyKieResponse()
+        self.collector["calls"] = self.collector.get("calls", 0) + 1
+        return self.response
 
 
 def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None:
@@ -59,7 +77,7 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["url"] == "https://api.kie.ai/gpt-5-2/v1/chat/completions"
     assert collector["headers"]["Authorization"] == "Bearer test-kie-key"
     assert collector["json"]["reasoning_effort"] == "high"
-    assert collector["json"]["temperature"] == 0.6
+    assert collector["json"]["temperature"] == 0.35
     assert collector["json"]["top_p"] == 1.0
     assert collector["json"]["parallel_tool_calls"] is False
     assert "max_completion_tokens" not in collector["json"]
@@ -148,3 +166,20 @@ def test_kie_payload_preserves_tool_role_messages(monkeypatch, isolated_app_env)
     assert payload_messages[3]["tool_call_id"] == "call_1"
     assert payload_messages[3]["name"] == "search_products"
     assert payload_messages[3]["content"] == '{"status":"ok"}'
+
+
+def test_kie_limit_text_is_provider_error(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kie")
+    monkeypatch.setenv("KIE_API_KEY", "test-kie-key")
+    monkeypatch.setenv("KIE_RETRY_MAX_ATTEMPTS", "1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector, response=DummyKieLimitResponse()))
+
+    service = OpenAIService(get_settings())
+    turn = service.run_messages(messages=[{"role": "user", "content": "скидки есть?"}])
+
+    assert turn.text is None
+    assert turn.error_type == "rate_limit_or_quota"
+    assert turn.retryable is True

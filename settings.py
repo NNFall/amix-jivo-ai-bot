@@ -28,10 +28,14 @@ class Settings(BaseSettings):
     kie_api_base_url: str = "https://api.kie.ai"
     kie_chat_model_path: str = "/gpt-5-2/v1/chat/completions"
     kie_reasoning_effort: str = "low"
-    kie_temperature: float = 0.6
+    kie_temperature: float = 0.35
     kie_top_p: float = 1.0
     kie_parallel_tool_calls: bool = False
     kie_stream: bool = False
+    kie_http_connect_timeout_seconds: int = 10
+    kie_http_read_timeout_seconds: int = 180
+    kie_retry_max_attempts: int = 4
+    kie_retry_total_timeout_seconds: int = 120
     kie_enable_web_search: bool = False
     assistant_debug_lookup_logs: bool = True
     assistant_debug_llm_payloads: bool = True

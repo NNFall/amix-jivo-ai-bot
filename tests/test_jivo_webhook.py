@@ -85,12 +85,14 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
     with session_scope() as session:
         messages = session.query(Message).order_by(Message.id.asc()).all()
 
-    assert len(messages) == 2
+    assert len(messages) == 4
     assert messages[0].sender_role == "client"
     assert "AB-123" in messages[0].text
-    assert messages[1].sender_role == "bot"
-    assert "Да, нашёл AB-123." in messages[1].text
-    assert "Сейчас в наличии 5 шт." in messages[1].text
+    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
+    assert messages[1].payload["source"] == "backend_prelookup_tool_call"
+    assert messages[2].payload["source"] == "backend_prelookup_tool_result"
+    assert "Да, нашёл AB-123." in messages[3].text
+    assert "Сейчас в наличии 5 шт." in messages[3].text
 
 
 def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> None:

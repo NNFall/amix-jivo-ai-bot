@@ -591,3 +591,37 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Проверить живой Telegram-диалог и свежие Kie logs: payload должен содержать `temperature=0.6`, не содержать `max_completion_tokens`, а full lookup должен быть только в `TOOL_RESULTS_JSON`.
+
+## Обновление 2026-05-18 - synthetic tool history и provider fallback
+
+- Backend-prelookup теперь сохраняется в историю как synthetic tool-flow:
+  - `assistant_tool_call` с `search_products`;
+  - `role=tool` с JSON результата;
+  - затем финальный `assistant`/bot ответ.
+- `INTERNAL_CONTEXT_JSON` стал компактнее:
+  - удалён `current_user_message`;
+  - полный lookup больше не кладётся внутрь context;
+  - добавлен `dialog_state.product_memory`;
+  - `pending_clarification.allowed_clarifications` ограничен `code` и `retail_price`.
+- Обновлены правила ответа:
+  - убрать просьбы прислать ссылку/фото при дублях артикула;
+  - при `stock_only` не показывать цены;
+  - корпоративную цену показывать только по прямому запросу;
+  - при provider timeout/rate-limit не отправлять стандартное приветствие.
+- Kie-настройки:
+  - `temperature=0.35`;
+  - `stream=false`;
+  - `stream_options` не отправляется;
+  - добавлены connect/read timeout и retry budget.
+- Добавлены live-сценарии:
+  - память первого товара после смены темы;
+  - `не понял` после уточнения;
+  - цена без корпоративной;
+  - дубль артикула без просьбы ссылки/фото.
+- Проверки:
+  - `python -m pytest -q` -> `80 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить правки на VPS и запустить live-прогон через Kie уже на расширенных `35` сценариях.

@@ -49,9 +49,12 @@ def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
     with session_scope() as session:
         messages = session.query(Message).order_by(Message.id.asc()).all()
 
-    assert len(messages) == 2
+    assert len(messages) == 4
     assert messages[0].external_event_id == "tg-1"
-    assert messages[1].external_event_id == "tg-1:bot"
+    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
+    assert messages[1].payload["source"] == "backend_prelookup_tool_call"
+    assert messages[2].payload["source"] == "backend_prelookup_tool_result"
+    assert messages[3].external_event_id == "tg-1:bot"
 
 
 def test_assistant_service_returns_demo_handoff_reply(isolated_app_env) -> None:
@@ -110,6 +113,34 @@ def test_assistant_service_requests_article_for_stock_question(isolated_app_env)
 
     assert reply.text == ARTICLE_REQUIRED_TEXT
     assert reply.handoff_reason is None
+
+
+def test_assistant_service_avoids_greeting_fallback_on_provider_error(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[],
+        error_type="rate_limit_or_quota",
+        retryable=True,
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:provider-error",
+            external_client_id="telegram-user:provider-error",
+            customer_name="Demo User",
+            customer_text="скидки есть?",
+            inbound_event_id="tg-provider-error",
+            outbound_event_id="tg-provider-error:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Добрый день" not in reply.text
+    assert "Подскажите, что нужно посмотреть" not in reply.text
+    assert "задерживается" in reply.text
 
 
 def test_assistant_service_reports_missing_article_when_not_found(isolated_app_env) -> None:
@@ -329,7 +360,10 @@ def test_assistant_service_passes_backend_actions_to_facts_prompt(isolated_app_e
     assert "backend_actions" in content
     assert "handoff_to_manager_called" in content
     assert "order_request" in content
-    assert "last_product_lookup" in content
+    assert "product_memory" in content
+    assert "current_user_message" not in content
+    assert any(message.get("role") == "tool" for message in captured["messages"])
+    assert not any(str(message.get("content", "")).startswith("TOOL_RESULTS_JSON") for message in captured["messages"])
 
 
 def test_assistant_service_sends_role_history_and_active_product_context(isolated_app_env) -> None:
@@ -401,6 +435,8 @@ def test_assistant_service_sends_role_history_and_active_product_context(isolate
     assert "История диалога:" not in non_system_content
     assert "Последнее сообщение клиента:" not in non_system_content
     assert "active_product" in messages[1]["content"]
+    assert "product_memory" in messages[1]["content"]
+    assert "current_user_message" not in messages[1]["content"]
     assert "7843 silk brash" in messages[1]["content"]
 
 
@@ -747,6 +783,114 @@ def test_assistant_service_can_hide_corporate_price(isolated_app_env, monkeypatc
     assert "Корпоративная" not in reply.text
 
 
+def test_assistant_service_does_not_show_corporate_price_without_request(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article="14025ПР",
+                free_stock=Decimal("7"),
+                unit="шт",
+                retail_price=Decimal("238"),
+                corporate_price=Decimal("165.98"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:no-corp-by-default",
+            external_client_id="telegram-user:no-corp-by-default",
+            customer_name="Demo User",
+            customer_text="Сколько стоит 14.025пр.?",
+            inbound_event_id="tg-no-corp-by-default",
+            outbound_event_id="tg-no-corp-by-default:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Розничная цена 238 руб." in reply.text
+    assert "Корпоративная" not in reply.text
+
+
+def test_assistant_service_shows_corporate_price_when_requested(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article="14025ПР",
+                free_stock=Decimal("7"),
+                unit="шт",
+                retail_price=Decimal("238"),
+                corporate_price=Decimal("165.98"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:corp-request",
+            external_client_id="telegram-user:corp-request",
+            customer_name="Demo User",
+            customer_text="Корпоративная цена 14.025пр.?",
+            inbound_event_id="tg-corp-request",
+            outbound_event_id="tg-corp-request:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Корпоративная цена 165,98 руб." in reply.text
+
+
+def test_assistant_service_uses_product_fallback_on_provider_timeout(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                free_stock=Decimal("220"),
+                unit="шт",
+                retail_price=Decimal("473"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[],
+        error_type="timeout",
+        retryable=True,
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:provider-timeout-product",
+            external_client_id="telegram-user:provider-timeout-product",
+            customer_name="Demo User",
+            customer_text="Проверьте 14.023пр.",
+            inbound_event_id="tg-provider-timeout-product",
+            outbound_event_id="tg-provider-timeout-product:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "14.023пр" in reply.text
+    assert "220 шт" in reply.text
+    assert "Подскажите, что нужно посмотреть" not in reply.text
+
+
 def test_assistant_service_marks_short_number_as_followup_refinement() -> None:
     assert AssistantService._looks_like_price_refinement("132", ["132"])  # noqa: SLF001
     assert AssistantService._looks_like_price_refinement("цена 132", ["132"])  # noqa: SLF001
@@ -828,6 +972,16 @@ def test_assistant_service_sanitizes_dry_price_labels() -> None:
 
     assert "Розничная цена 13493 руб." in text.replace(",", ".")
     assert "цена:" not in text
+
+
+def test_assistant_service_sanitizes_link_or_photo_request() -> None:
+    text = AssistantService._sanitize_customer_reply(  # noqa: SLF001
+        "Пришлите ссылку или фото, чтобы я уточнил позицию."
+    )
+
+    assert "ссылку" not in text.lower()
+    assert "фото" not in text.lower()
+    assert "код товара с сайта или цену в карточке" in text
 
 
 def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:

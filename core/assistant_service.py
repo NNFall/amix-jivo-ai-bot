@@ -16,7 +16,7 @@ from database.repositories import (
     list_recent_messages,
     search_products_structured,
 )
-from llm.openai_client import OpenAIService
+from llm.openai_client import OpenAIService, ToolCall
 from llm.prompts import build_llm_messages, build_product_facts_messages
 from llm.tool_schemas import OPENAI_TOOLS
 from products.article_utils import extract_article_candidates, normalize_article
@@ -29,8 +29,11 @@ from .handoff_service import HandoffService
 logger = logging.getLogger(__name__)
 
 
-SAFE_FALLBACK_TEXT = (
-    "Добрый день! Подскажите, что нужно посмотреть?"
+SAFE_FALLBACK_TEXT = "Подскажите, что нужно посмотреть?"
+
+PROVIDER_DELAY_TEXT = (
+    "Сейчас автоматическая проверка задерживается. Попробуйте, пожалуйста, ещё раз чуть позже "
+    "или позовите менеджера."
 )
 
 JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
@@ -305,7 +308,10 @@ class AssistantService:
 
         reply_text = first_turn.text
         if not reply_text:
-            reply_text = ARTICLE_REQUIRED_TEXT if self._is_price_stock_request(customer_text) else SAFE_FALLBACK_TEXT
+            if first_turn.error_type:
+                reply_text = PROVIDER_DELAY_TEXT
+            else:
+                reply_text = ARTICLE_REQUIRED_TEXT if self._is_price_stock_request(customer_text) else SAFE_FALLBACK_TEXT
         reply_text = self._sanitize_customer_reply(reply_text)
 
         self._append_bot_message(
@@ -313,7 +319,10 @@ class AssistantService:
             external_chat_id=external_chat_id,
             text=reply_text,
             outbound_event_id=outbound_event_id,
-            payload={"source": "llm_direct" if first_turn.text else "fallback"},
+            payload={
+                "source": "llm_direct" if first_turn.text else "llm_provider_error" if first_turn.error_type else "fallback",
+                "provider_error": first_turn.error_type,
+            },
         )
         return AssistantReply(text=reply_text)
 
@@ -421,31 +430,42 @@ class AssistantService:
         handoff_mode: str = "jivo",
         include_tool_results_system: bool = True,
     ) -> AssistantReply:
-        product_lookup_result = self._apply_response_policy(product_lookup_result)
+        corporate_price_requested = self._is_corporate_price_request(customer_text)
+        product_lookup_result = self._apply_response_policy(
+            product_lookup_result,
+            show_corporate_price=self.show_corporate_price and corporate_price_requested,
+        )
         followup_refinement = self._build_followup_refinement_context(customer_text, product_lookup_result)
         product_lookup_result = self._apply_followup_refinement(product_lookup_result, followup_refinement)
         stock_only_request = self._is_stock_only_request(customer_text)
         product_lookup_result = self._apply_stock_only_policy(product_lookup_result, stock_only_request)
         requested_quantity = self._extract_requested_quantity(customer_text)
         stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
-        corporate_price_handoff_reason = (
-            "corporate_price_request"
-            if self._is_corporate_price_request(customer_text) and not self.show_corporate_price
-            else None
-        )
+        corporate_price_handoff_reason = "corporate_price_request" if corporate_price_requested and not self.show_corporate_price else None
         handoff_reason = stock_handoff_reason or force_handoff_reason or corporate_price_handoff_reason
         backend_actions = {
             "search_products_called": True,
             "handoff_to_manager_called": bool(handoff_reason),
             "handoff_reason": handoff_reason,
-            "response_mode": self._resolve_response_mode(handoff_reason),
+            "response_mode": self._resolve_response_mode(handoff_reason, stock_only_request=stock_only_request),
             "requested_quantity": requested_quantity,
             "show_corporate_price": self.show_corporate_price,
-            "corporate_price_request": bool(corporate_price_handoff_reason),
+            "corporate_price_request": corporate_price_requested,
             "queried_by_code": self._lookup_queried_by_code(customer_text, product_lookup_result),
             "stock_only_request": stock_only_request,
             "followup_refinement": followup_refinement,
         }
+
+        prelookup_tool_persisted = False
+        if include_tool_results_system:
+            self._append_backend_prelookup_tool_history(
+                session,
+                external_chat_id=external_chat_id,
+                product_lookup_result=product_lookup_result,
+                customer_text=customer_text,
+            )
+            include_tool_results_system = False
+            prelookup_tool_persisted = True
 
         turn = None
         if self.openai_service.enabled:
@@ -476,6 +496,7 @@ class AssistantService:
                     "tool_choice": "none",
                     "has_tools": False,
                     "has_tool_results_json": include_tool_results_system,
+                    "prelookup_tool_persisted": prelookup_tool_persisted,
                 },
             )
             self._log_llm_debug_event(
@@ -492,7 +513,7 @@ class AssistantService:
                     "note": (
                         "messages is the exact role-based payload sent to the LLM. "
                         "Dialog history is sent as user/assistant/tool messages; current customer message is not duplicated. "
-                        "Backend prelookup results are sent as TOOL_RESULTS_JSON after the dialog messages; no tools are passed."
+                        "Backend prelookup results are persisted as synthetic assistant tool_call + role=tool before final generation; no tools are passed."
                     ),
                 },
             )
@@ -548,12 +569,13 @@ class AssistantService:
         )
         return AssistantReply(text=reply_text, handoff_reason=handoff_reason)
 
-    def _apply_response_policy(self, product_lookup_result: dict) -> dict:
+    @staticmethod
+    def _apply_response_policy(product_lookup_result: dict, *, show_corporate_price: bool) -> dict:
         payload = deepcopy(product_lookup_result)
-        if self.show_corporate_price:
+        if show_corporate_price:
             return payload
 
-        for container in self._iter_lookup_result_containers(payload):
+        for container in AssistantService._iter_lookup_result_containers(payload):
             for key in ("exact_matches", "similar_matches"):
                 for match in container.get(key, []):
                     match["corporate_price"] = None
@@ -569,8 +591,7 @@ class AssistantService:
 
     @staticmethod
     def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
-        exact = product_lookup_result.get("exact_matches") or []
-        if not stock_only_request or len(exact) != 1:
+        if not stock_only_request:
             return product_lookup_result
 
         payload = deepcopy(product_lookup_result)
@@ -625,7 +646,9 @@ class AssistantService:
         return payload
 
     @staticmethod
-    def _resolve_response_mode(handoff_reason: str | None) -> str | None:
+    def _resolve_response_mode(handoff_reason: str | None, *, stock_only_request: bool = False) -> str | None:
+        if stock_only_request:
+            return "stock_only"
         if handoff_reason == "requested_quantity_exceeds_stock":
             return "stock_shortage_handoff"
         if handoff_reason == "order_request":
@@ -807,6 +830,8 @@ class AssistantService:
         text = re.sub(r"\b[Оо]н свяжется с вами\b", "он подключится к диалогу", text)
         text = re.sub(r"\b[Мм]енеджер свяжется с вами\b", "менеджер подключится к диалогу", text)
         text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
+        text = re.sub(r"\bссылку или фото\b", "код товара с сайта или цену в карточке", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bссылку/фото\b", "код товара с сайта или цену в карточке", text, flags=re.IGNORECASE)
         text = re.sub(r"\b([Кк]од(?:у|ом)?)(\d+)\b", r"\1 \2", text)
         text = re.sub(r"\b[Рр]озничная цена:\s*", "Розничная цена ", text)
         text = re.sub(r"\b[Кк]орпоративная цена:\s*", "корпоративная цена ", text)
@@ -970,6 +995,7 @@ class AssistantService:
         last_lookup = product_lookup_result or self._find_latest_product_lookup(recent_messages)
         active_product = self._extract_active_product(last_lookup)
         pending_clarification = self._extract_pending_clarification(last_lookup)
+        product_memory = self._build_product_memory(recent_messages, active_product)
 
         return {
             "type": "amix_internal_context",
@@ -982,12 +1008,11 @@ class AssistantService:
             },
             "dialog_state": {
                 "active_product": active_product,
-                "last_product_lookup": self._compact_lookup_for_context(last_lookup),
+                "product_memory": product_memory,
                 "pending_clarification": pending_clarification,
                 "last_handoff_status": self._find_latest_handoff_status(recent_messages),
             },
             "backend_actions": backend_actions or {},
-            "current_user_message": customer_text,
         }
 
     @staticmethod
@@ -1046,8 +1071,46 @@ class AssistantService:
         return {
             "type": "choose_product_variant",
             "article": article,
-            "allowed_clarifications": ["code", "retail_price", "link", "photo"],
+            "allowed_clarifications": ["code", "retail_price"],
         }
+
+    @staticmethod
+    def _build_product_memory(messages: list, active_product: dict | None, limit: int = 5) -> list[dict[str, Any]]:
+        memory: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add_match(match: dict, source_message_id: Any = None) -> None:
+            key = str(match.get("code") or match.get("article") or "").strip()
+            if not key or key in seen:
+                return
+            item = AssistantService._compact_match_for_context(match)
+            if source_message_id is not None:
+                item["last_discussed_at_turn"] = f"message_{source_message_id}"
+            memory.append(item)
+            seen.add(key)
+
+        if active_product:
+            add_match(active_product, "active")
+
+        for message in reversed(messages):
+            lookup = None
+            payload = message.payload or {}
+            if isinstance(payload.get("product_lookup_result"), dict):
+                lookup = payload["product_lookup_result"]
+            elif message.sender_role == "tool" and payload.get("tool_name") == "search_products":
+                try:
+                    tool_payload = json.loads(message.text or "{}")
+                except json.JSONDecodeError:
+                    tool_payload = {}
+                result = tool_payload.get("result") if isinstance(tool_payload, dict) else None
+                lookup = result if isinstance(result, dict) else None
+            if not isinstance(lookup, dict):
+                continue
+            for match in lookup.get("exact_matches") or []:
+                add_match(match, getattr(message, "id", None))
+                if len(memory) >= limit:
+                    return memory[:limit]
+        return memory[:limit]
 
     @staticmethod
     def _compact_lookup_for_context(product_lookup_result: dict | None) -> dict | None:
@@ -1102,7 +1165,60 @@ class AssistantService:
             return f"Запрос может быть продолжением текущей темы диалога. Intent: {reason}."
         return f"Поиск выполнен по текущему сообщению клиента. Intent: {reason}."
 
-    def _append_assistant_tool_call_message(self, session, *, external_chat_id: str, tool_calls: list) -> None:
+    def _append_backend_prelookup_tool_history(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        product_lookup_result: dict,
+        customer_text: str,
+    ) -> None:
+        request = product_lookup_result.get("request") or {}
+        call_arguments = {
+            "queries": product_lookup_result.get("display_queries")
+            or request.get("queries")
+            or product_lookup_result.get("queries")
+            or [product_lookup_result.get("display_query") or product_lookup_result.get("query")],
+            "intent": product_lookup_result.get("reason") or request.get("intent") or "product_info",
+            "use_dialog_context": bool(request.get("use_dialog_context")),
+            "context_note": request.get("context_note") or self._build_search_context_note(customer_text, product_lookup_result.get("reason") or "product_info"),
+            "source": "backend_prelookup",
+        }
+        call_id = f"prelookup_search_{int(datetime.now(UTC).timestamp() * 1000)}"
+        call = ToolCall(name="search_products", arguments=call_arguments, call_id=call_id)
+        self._append_assistant_tool_call_message(
+            session,
+            external_chat_id=external_chat_id,
+            tool_calls=[call],
+            source="backend_prelookup_tool_call",
+        )
+        tool_result_message = OpenAIService.build_tool_result_message(
+            tool_call_id=call_id,
+            name="search_products",
+            result={
+                "tool_name": "search_products",
+                "mode": "backend_prelookup",
+                "status": "ok",
+                "request": call_arguments,
+                "result": product_lookup_result,
+            },
+        )
+        self._append_tool_result_message(
+            session,
+            external_chat_id=external_chat_id,
+            message=tool_result_message,
+            tool_name="search_products",
+            source="backend_prelookup_tool_result",
+        )
+
+    def _append_assistant_tool_call_message(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        tool_calls: list,
+        source: str = "llm_tool_call",
+    ) -> None:
         message = OpenAIService.build_assistant_tool_call_message(tool_calls)
         append_message(
             session,
@@ -1110,7 +1226,7 @@ class AssistantService:
             sender_role="assistant_tool_call",
             text="",
             payload={
-                "source": "llm_tool_call",
+                "source": source,
                 "content": message.get("content") or "",
                 "tool_calls": message.get("tool_calls") or [],
             },
@@ -1123,6 +1239,7 @@ class AssistantService:
         external_chat_id: str,
         message: dict[str, Any],
         tool_name: str,
+        source: str = "tool_result",
     ) -> None:
         append_message(
             session,
@@ -1130,7 +1247,7 @@ class AssistantService:
             sender_role="tool",
             text=str(message.get("content") or ""),
             payload={
-                "source": "tool_result",
+                "source": source,
                 "tool_name": tool_name,
                 "tool_call_id": message.get("tool_call_id"),
                 "content": message.get("content"),
@@ -1305,7 +1422,8 @@ class AssistantService:
         similar = product_lookup_result.get("similar_matches", [])
         query = product_lookup_result.get("display_query") or product_lookup_result.get("query", "")
         per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results", [])
-        show_corporate_price = backend_actions.get("show_corporate_price", True)
+        show_corporate_price = bool(backend_actions.get("show_corporate_price", True) and backend_actions.get("corporate_price_request"))
+        stock_only_request = bool(backend_actions.get("stock_only_request") or backend_actions.get("response_mode") == "stock_only")
 
         if len(per_query_results) > 1:
             lines = ["Проверил."]
@@ -1318,7 +1436,9 @@ class AssistantService:
                     if len(item_exact) == 1:
                         match = item_exact[0]
                         retail_price = AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
-                        price_text = f", розничная цена {retail_price}" if retail_price else ", цена в текущих данных не указана"
+                        price_text = ""
+                        if not stock_only_request:
+                            price_text = f", розничная цена {retail_price}" if retail_price else ", цена в текущих данных не указана"
                         display_article = match.get("article") or item_query
                         prefix = f"По {display_article} остаток "
                         if AssistantService._lookup_item_queried_by_code(customer_text, item, match):
@@ -1360,11 +1480,13 @@ class AssistantService:
                 else:
                     parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
                 parts.append(f"Сейчас в наличии {stock_text}.")
-                if retail_price:
+                if stock_only_request:
+                    parts.append("По цене тоже подсказать?")
+                elif retail_price:
                     parts.append(f"Розничная цена {retail_price}.")
                 if corporate_price:
                     parts.append(f"Корпоративная цена {corporate_price}.")
-                if not retail_price and not corporate_price:
+                if not stock_only_request and not retail_price and not corporate_price:
                     parts.append("Цена в текущих данных не указана.")
                 return " ".join(parts)
 

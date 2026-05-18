@@ -1237,19 +1237,39 @@
   - `amix-telegram-demo.service` перезапущен;
   - проверка systemd: `ActiveState=active`, `SubState=running`, `UnitFileState=enabled`;
   - проверка settings на VPS: `kie_temperature 0.6`, `has_kie_max_completion_tokens False`.
-- GitHub/VPS:
-  - создан и отправлен commit `e777179` (`Tighten FAQ and refinement replies`);
-  - `/root/amix` обновлён до `e777179`;
-  - серверный `.venv/bin/python -m pytest -q` -> `74 passed`;
-  - `amix-telegram-demo.service` перезапущен и проверен: `active`.
-- Повторный live-прогон на VPS:
-  - `scripts/run_live_dialog_eval.py --output LIVE_DIALOG_EVALS.md`;
-  - сценариев: `31`;
-  - ответов без style flags: `31`;
-  - ответов без content flags: `31`;
-  - ответов на ручную проверку: `0`;
-  - обновлён локальный `LIVE_DIALOG_EVALS.md` из серверного отчёта.
 
+## Итерация 34 - synthetic prelookup tool history и безопасные provider fallback
+
+- По новому ТЗ внесены архитектурные правки LLM pipeline:
+  - backend-prelookup сохраняется как synthetic `assistant_tool_call` + `role=tool`;
+  - последующие LLM-запросы видят search result на своём месте в role-history;
+  - в final-answer вызов больше не добавляется временный `system TOOL_RESULTS_JSON`, если tool result уже сохранён в истории.
+- `INTERNAL_CONTEXT_JSON`:
+  - удалён `current_user_message`;
+  - полный текущий lookup не дублируется в context;
+  - добавлен компактный `dialog_state.product_memory`;
+  - `pending_clarification` больше не предлагает `link/photo`, только `code` и `retail_price`.
+- Товарные правила:
+  - stock-only вопросы удаляют розничную и корпоративную цену из payload перед LLM;
+  - `backend_actions.response_mode="stock_only"` выставляется для вопросов только по наличию;
+  - corporate price скрывается по умолчанию и показывается только при прямом запросе корпоративной/оптовой цены;
+  - ответы, где модель просит `ссылку или фото`, санитайзятся в `код товара с сайта или цену в карточке`.
+- Kie provider:
+  - `temperature` изменён на `0.35`;
+  - добавлены `KIE_HTTP_CONNECT_TIMEOUT_SECONDS`, `KIE_HTTP_READ_TIMEOUT_SECONDS`, `KIE_RETRY_MAX_ATTEMPTS`, `KIE_RETRY_TOTAL_TIMEOUT_SECONDS`;
+  - добавлен retry/backoff для 429/5xx/network/timeout;
+  - текст `You've hit your limit. Please try again later.` распознаётся как `rate_limit_or_quota`, не как ответ клиенту;
+  - при provider error прямой LLM-flow не отдаёт стандартное приветствие.
+- Live eval:
+  - добавлены сценарии `L-032`-`L-035` на память первого товара, `не понял`, цену без корпоративной и запрет ссылки/фото.
+- Тесты:
+  - добавлены проверки synthetic prelookup tool history;
+  - добавлены проверки provider timeout/rate-limit fallback;
+  - добавлены проверки stock-only/corporate-price правил;
+  - добавлены проверки Kie payload/error parsing.
+- Проверки:
+  - `python -m pytest -q` -> `80 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:
