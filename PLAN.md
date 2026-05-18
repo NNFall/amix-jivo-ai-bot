@@ -688,3 +688,14 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Задеплоить fix на VPS, проверить серверные тесты и перезапустить `amix-telegram-demo.service`.
+
+## Обновление 2026-05-18 - deploy follow-up cleanup
+
+- Commit `c3d5679` задеплоен на VPS в `/root/amix`.
+- Серверные проверки:
+  - `.venv/bin/python -m pytest -q` -> `85 passed`;
+  - `amix-telegram-demo.service` -> `active/running`.
+
+## Ближайший следующий шаг
+
+Проверить новый Telegram/Kie сценарий: `есть мп 28ск -> 198 которая -> сколько стоит 7843 silk brash -> а есть мп дешевле?`, и убедиться в Kie payload, что больше нет stale queries `1108035`/`50820` на уточнении по МП.

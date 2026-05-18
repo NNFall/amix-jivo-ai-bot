@@ -1339,6 +1339,13 @@
 - Проверки:
   - `python -m pytest -q` -> `85 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - создан и отправлен commit `c3d5679` (`Clean up product follow-up lookups`).
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `c3d5679`;
+  - серверный `.venv/bin/python -m pytest -q` -> `85 passed`;
+  - `amix-telegram-demo.service` перезапущен;
+  - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState` -> `active/running`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:
