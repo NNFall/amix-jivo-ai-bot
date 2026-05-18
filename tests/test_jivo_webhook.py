@@ -115,9 +115,10 @@ def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> N
 
     assert len(handoffs) == 1
     assert handoffs[0].reason == "client_requested_manager"
-    assert len(messages) == 2
-    assert messages[1].sender_role == "bot"
-    assert "Передаю вопрос менеджеру." in messages[1].text
+    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
+    assert messages[1].payload["tool_calls"][0]["function"]["name"] == "handoff_to_manager"
+    assert messages[2].payload["tool_name"] == "handoff_to_manager"
+    assert "Передаю вопрос менеджеру." in messages[3].text
 
 
 def test_jivo_webhook_agent_joined_marks_chat_as_terminal(isolated_app_env) -> None:

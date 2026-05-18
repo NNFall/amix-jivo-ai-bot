@@ -1217,6 +1217,26 @@
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 39 - real handoff action guard
+
+- По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.
+- В `core/assistant_service.py` добавлена серверная защита:
+  - `_handoff_reply()` теперь сохраняет synthetic `assistant_tool_call` + `role=tool` для `handoff_to_manager`;
+  - demo-mode handoff логируется с `real_jivo_invite_sent=false`;
+  - если модель текстом обещает передачу менеджеру без tool-call, backend создаёт handoff action с причиной `bot_uncertain`;
+  - если chat status уже `handoff_requested`, новые сообщения не идут в товарный/LLM сценарий и получают короткий ответ `Менеджер уже вызван, он подключится к диалогу.`
+- В `llm/prompts.py` добавлен запрет обещать передачу менеджеру без реального `handoff_to_manager` или `backend_actions.handoff_to_manager_called=true`.
+- Обновлены тесты:
+  - direct manager request должен создавать `assistant_tool_call` + `tool`;
+  - текстовый handoff от модели конвертируется в реальный handoff action;
+  - после handoff обычные ответы блокируются;
+  - Jivo webhook handoff сохраняет tool-слой в истории.
+- Проверки:
+  - focused handoff/Jivo pytest -> `4 passed`;
+  - `python -m pytest tests\test_assistant_service.py tests\test_jivo_webhook.py -q` -> `45 passed`;
+  - `python -m pytest -q` -> `87 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## Итерация 33 - деплой cleanup payload на VPS
 
 - Локально изменён Kie generation payload по просьбе пользователя:

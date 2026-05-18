@@ -699,3 +699,18 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Проверить новый Telegram/Kie сценарий: `есть мп 28ск -> 198 которая -> сколько стоит 7843 silk brash -> а есть мп дешевле?`, и убедиться в Kie payload, что больше нет stale queries `1108035`/`50820` на уточнении по МП.
+
+## Обновление 2026-05-19 - real handoff action guard
+
+- Исправлена live-проблема, где модель могла написать клиенту `Передаю вопрос менеджеру`, но в истории не было реального handoff-действия.
+- Любой backend handoff теперь сохраняется как `assistant_tool_call` + `role=tool` с `handoff_to_manager`, включая Telegram demo mode.
+- Если модель всё же вернула текст с обещанием передачи менеджеру без tool-call, backend фиксирует handoff сам с причиной `bot_uncertain`.
+- После `handoff_requested` новые сообщения в этом чате больше не запускают обычный товарный сценарий; бот отвечает только `Менеджер уже вызван, он подключится к диалогу.`
+- Промпты дополнены запретом обещать передачу менеджеру без `handoff_to_manager` или `backend_actions.handoff_to_manager_called=true`.
+- Проверки:
+  - `python -m pytest -q` -> `87 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить handoff guard на VPS, прогнать серверный pytest и перезапустить `amix-telegram-demo.service`.

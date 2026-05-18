@@ -39,6 +39,7 @@ PROVIDER_DELAY_TEXT = (
 JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 
 TELEGRAM_DEMO_HANDOFF_TEXT = JIVO_HANDOFF_TEXT
+HANDOFF_ALREADY_REQUESTED_TEXT = "Менеджер уже вызван, он подключится к диалогу."
 
 ARTICLE_REQUIRED_TEXT = (
     "Пришлите, пожалуйста, артикул или код товара. Тогда посмотрю цену и наличие."
@@ -86,6 +87,13 @@ class AssistantService:
             external_event_id=inbound_event_id,
             payload=payload or {},
         )
+
+        if chat.status == "handoff_requested":
+            return self._handoff_already_requested_reply(
+                session,
+                external_chat_id=chat.external_chat_id,
+                outbound_event_id=outbound_event_id,
+            )
 
         transcript = self.dialog_service.get_transcript(session, chat.external_chat_id)
         return self._handle_message(
@@ -344,6 +352,17 @@ class AssistantService:
                 reply_text = ARTICLE_REQUIRED_TEXT if self._is_price_stock_request(customer_text) else SAFE_FALLBACK_TEXT
         reply_text = self._sanitize_customer_reply(reply_text)
 
+        handoff_reason = None
+        if self._reply_claims_handoff(reply_text):
+            handoff_reason = "bot_uncertain"
+            self._register_handoff_action(
+                session,
+                external_chat_id=external_chat_id,
+                reason=handoff_reason,
+                handoff_mode=handoff_mode,
+                source="llm_text_handoff_guard",
+            )
+
         self._append_bot_message(
             session,
             external_chat_id=external_chat_id,
@@ -352,9 +371,13 @@ class AssistantService:
             payload={
                 "source": "llm_direct" if first_turn.text else "llm_provider_error" if first_turn.error_type else "fallback",
                 "provider_error": first_turn.error_type,
+                "handoff_reason": handoff_reason,
+                "backend_actions": self._build_handoff_backend_actions(handoff_reason, handoff_mode)
+                if handoff_reason
+                else None,
             },
         )
-        return AssistantReply(text=reply_text)
+        return AssistantReply(text=reply_text, handoff_reason=handoff_reason)
 
     def _handle_tool_calls(
         self,
@@ -581,8 +604,20 @@ class AssistantService:
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
+        if not handoff_reason and self._reply_claims_handoff(reply_text):
+            handoff_reason = "bot_uncertain"
+            backend_actions["handoff_to_manager_called"] = True
+            backend_actions["handoff_reason"] = handoff_reason
+            backend_actions["response_mode"] = self._resolve_response_mode(handoff_reason, stock_only_request=stock_only_request)
+
         if handoff_reason:
-            self.handoff_service.register_handoff(session, external_chat_id, handoff_reason)
+            self._register_handoff_action(
+                session,
+                external_chat_id=external_chat_id,
+                reason=handoff_reason,
+                handoff_mode=handoff_mode,
+                source=f"{payload_source}_handoff",
+            )
             reply_text = self._sanitize_customer_reply(self._ensure_handoff_text(reply_text, handoff_reason))
 
         self._append_bot_message(
@@ -814,6 +849,14 @@ class AssistantService:
     @staticmethod
     def _same_product(left: dict, right: dict) -> bool:
         return str(left.get("code") or "") == str(right.get("code") or "") and str(left.get("article") or "") == str(right.get("article") or "")
+
+    @staticmethod
+    def _reply_claims_handoff(reply_text: str) -> bool:
+        text = reply_text.lower()
+        return (
+            ("передаю" in text and ("менеджер" in text or "специалист" in text))
+            or ("подключится к диалогу" in text and ("менеджер" in text or "специалист" in text))
+        )
 
     @staticmethod
     def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
@@ -1381,6 +1424,80 @@ class AssistantService:
             raw_product_lookup_result=product_lookup_result,
         )
 
+    def _register_handoff_action(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        reason: str,
+        handoff_mode: str,
+        source: str,
+    ) -> None:
+        self.handoff_service.register_handoff(session, external_chat_id, reason)
+        self._append_handoff_tool_history(
+            session,
+            external_chat_id=external_chat_id,
+            reason=reason,
+            handoff_mode=handoff_mode,
+            source=source,
+        )
+
+    def _append_handoff_tool_history(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        reason: str,
+        handoff_mode: str,
+        source: str,
+    ) -> None:
+        call_id = f"handoff_{int(datetime.now(UTC).timestamp() * 1000)}"
+        call_arguments = {
+            "reason": reason,
+            "summary": f"Backend requested manager handoff. Reason: {reason}.",
+            "customer_message": self._resolve_handoff_text(handoff_mode, reason),
+            "handoff_mode": handoff_mode,
+        }
+        if handoff_mode == "demo":
+            call_arguments["real_jivo_invite_sent"] = False
+
+        call = ToolCall(name="handoff_to_manager", arguments=call_arguments, call_id=call_id)
+        self._append_assistant_tool_call_message(
+            session,
+            external_chat_id=external_chat_id,
+            tool_calls=[call],
+            source=f"{source}_tool_call",
+        )
+        tool_result_message = OpenAIService.build_tool_result_message(
+            tool_call_id=call_id,
+            name="handoff_to_manager",
+            result={
+                "tool_name": "handoff_to_manager",
+                "status": "ok",
+                "reason": reason,
+                "handoff_mode": handoff_mode,
+                "real_jivo_invite_sent": False if handoff_mode == "demo" else None,
+                "jivo_invite_requested": handoff_mode == "jivo",
+            },
+        )
+        self._append_tool_result_message(
+            session,
+            external_chat_id=external_chat_id,
+            message=tool_result_message,
+            tool_name="handoff_to_manager",
+            source=f"{source}_tool_result",
+        )
+
+    @staticmethod
+    def _build_handoff_backend_actions(reason: str, handoff_mode: str) -> dict[str, Any]:
+        return {
+            "handoff_to_manager_called": True,
+            "handoff_reason": reason,
+            "handoff_mode": handoff_mode,
+            "real_jivo_invite_sent": False if handoff_mode == "demo" else None,
+            "jivo_invite_requested": handoff_mode == "jivo",
+        }
+
     def _append_assistant_tool_call_message(
         self,
         session,
@@ -1438,16 +1555,42 @@ class AssistantService:
         reason: str,
         source: str,
     ) -> AssistantReply:
-        self.handoff_service.register_handoff(session, external_chat_id, reason)
+        self._register_handoff_action(
+            session,
+            external_chat_id=external_chat_id,
+            reason=reason,
+            handoff_mode=handoff_mode,
+            source=source,
+        )
         handoff_text = self._resolve_handoff_text(handoff_mode, reason)
         self._append_bot_message(
             session,
             external_chat_id=external_chat_id,
             text=self._sanitize_customer_reply(handoff_text),
             outbound_event_id=outbound_event_id,
-            payload={"source": source, "handoff_reason": reason},
+            payload={
+                "source": source,
+                "handoff_reason": reason,
+                "backend_actions": self._build_handoff_backend_actions(reason, handoff_mode),
+            },
         )
         return AssistantReply(text=self._sanitize_customer_reply(handoff_text), handoff_reason=reason)
+
+    def _handoff_already_requested_reply(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        outbound_event_id: str | None,
+    ) -> AssistantReply:
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=HANDOFF_ALREADY_REQUESTED_TEXT,
+            outbound_event_id=outbound_event_id,
+            payload={"source": "handoff_already_requested", "handoff_already_requested": True},
+        )
+        return AssistantReply(text=HANDOFF_ALREADY_REQUESTED_TEXT)
 
     @staticmethod
     def _is_explicit_manager_request(customer_text: str) -> bool:

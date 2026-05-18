@@ -3,6 +3,7 @@ from decimal import Decimal
 from core.assistant_service import (
     ARTICLE_REQUIRED_TEXT,
     AssistantService,
+    HANDOFF_ALREADY_REQUESTED_TEXT,
     SAFE_FALLBACK_TEXT,
     TELEGRAM_DEMO_HANDOFF_TEXT,
 )
@@ -76,8 +77,96 @@ def test_assistant_service_returns_demo_handoff_reply(isolated_app_env) -> None:
 
     with session_scope() as session:
         handoffs = session.query(Handoff).all()
+        messages = session.query(Message).order_by(Message.id.asc()).all()
 
     assert len(handoffs) == 1
+    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
+    assert messages[1].payload["tool_calls"][0]["function"]["name"] == "handoff_to_manager"
+    assert messages[2].payload["tool_name"] == "handoff_to_manager"
+    assert '"real_jivo_invite_sent": false' in messages[2].payload["content"]
+    assert messages[3].payload["backend_actions"]["handoff_to_manager_called"] is True
+    assert messages[3].payload["backend_actions"]["real_jivo_invite_sent"] is False
+
+
+def test_assistant_service_blocks_normal_reply_after_handoff(isolated_app_env) -> None:
+    service = AssistantService()
+
+    with session_scope() as session:
+        first_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:handoff-block",
+            external_client_id="telegram-user:handoff-block",
+            customer_name="Demo User",
+            customer_text="Нужен менеджер",
+            inbound_event_id="tg-handoff-block-1",
+            outbound_event_id="tg-handoff-block-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        second_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:handoff-block",
+            external_client_id="telegram-user:handoff-block",
+            customer_name="Demo User",
+            customer_text="а 14.023пр сколько осталось?",
+            inbound_event_id="tg-handoff-block-2",
+            outbound_event_id="tg-handoff-block-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert first_reply.handoff_reason == "client_requested_manager"
+    assert second_reply.text == HANDOFF_ALREADY_REQUESTED_TEXT
+    assert second_reply.handoff_reason is None
+
+    with session_scope() as session:
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+        handoffs = session.query(Handoff).all()
+
+    assert len(handoffs) == 1
+    assert messages[-1].sender_role == "bot"
+    assert messages[-1].payload["source"] == "handoff_already_requested"
+    assert not any(
+        message.sender_role == "assistant_tool_call"
+        and "search_products" in str(message.payload)
+        and message.id > messages[3].id
+        for message in messages
+    )
+
+
+def test_assistant_service_converts_text_only_handoff_to_real_action(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Передаю вопрос менеджеру. Он подключится к диалогу.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:text-handoff",
+            external_client_id="telegram-user:text-handoff",
+            customer_name="Demo User",
+            customer_text="помогите пожалуйста",
+            inbound_event_id="tg-text-handoff",
+            outbound_event_id="tg-text-handoff:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "bot_uncertain"
+
+    with session_scope() as session:
+        handoffs = session.query(Handoff).all()
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+
+    assert len(handoffs) == 1
+    assert handoffs[0].reason == "bot_uncertain"
+    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
+    assert messages[1].payload["tool_calls"][0]["function"]["name"] == "handoff_to_manager"
+    assert messages[2].payload["tool_name"] == "handoff_to_manager"
+    assert messages[3].payload["backend_actions"]["handoff_to_manager_called"] is True
 
 
 def test_assistant_service_uses_safe_fallback_without_openai(isolated_app_env) -> None:
