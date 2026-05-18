@@ -1236,6 +1236,13 @@
   - `python -m pytest tests\test_assistant_service.py tests\test_jivo_webhook.py -q` -> `45 passed`;
   - `python -m pytest -q` -> `87 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - создан и отправлен commit `72f0795` (`Enforce real handoff actions`).
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` с `907aa81` до `72f0795`;
+  - серверный `.venv/bin/python -m pytest -q` -> `87 passed`;
+  - `amix-telegram-demo.service` перезапущен;
+  - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState -p UnitFileState` -> `active/running/enabled`.
 
 ## Итерация 33 - деплой cleanup payload на VPS
 
