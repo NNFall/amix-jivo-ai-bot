@@ -1275,6 +1275,13 @@
   - focused pending/superseded/Jivo tests -> `7 passed`;
   - `python -m pytest -q` -> `89 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - создан и отправлен commit `b0c62d6` (`Coalesce consecutive chat turns`).
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` с `bdf3cdb` до `b0c62d6`;
+  - серверный `.venv/bin/python -m pytest -q` -> `89 passed`;
+  - `amix-telegram-demo.service` перезапущен;
+  - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState -p UnitFileState` -> `active/running/enabled`.
 
 ## Итерация 33 - деплой cleanup payload на VPS
 
