@@ -1246,7 +1246,7 @@
   - добавлены `llm_request_started` и `llm_response_received` в LLM debug JSONL;
   - product/prelookup debug note теперь явно указывает, что это final-answer request без tools.
 - `llm/openai_client.py` и `settings.py`:
-  - добавлены Kie-параметры `temperature=0.2`, `top_p=1`, `parallel_tool_calls=false`, `max_completion_tokens=600`, `stream=false`;
+  - добавлены Kie-параметры `temperature=0.6`, `top_p=1`, `parallel_tool_calls=false`, `stream=false`;
   - обычный текст в Kie payload теперь отправляется строкой `content`, без `type=text` parts;
   - `stream_options` проект не добавляет.
 - `core/message_processor.py`:

@@ -40,7 +40,6 @@ class OpenAIService:
         self.kie_temperature = settings.kie_temperature
         self.kie_top_p = settings.kie_top_p
         self.kie_parallel_tool_calls = settings.kie_parallel_tool_calls
-        self.kie_max_completion_tokens = settings.kie_max_completion_tokens
         self.kie_stream = settings.kie_stream
         self.kie_enable_web_search = settings.kie_enable_web_search
 
@@ -136,7 +135,6 @@ class OpenAIService:
             "temperature": self.kie_temperature,
             "top_p": self.kie_top_p,
             "parallel_tool_calls": self.kie_parallel_tool_calls,
-            "max_completion_tokens": self.kie_max_completion_tokens,
             "stream": self.kie_stream,
         }
         if tools:

@@ -28,10 +28,9 @@ class Settings(BaseSettings):
     kie_api_base_url: str = "https://api.kie.ai"
     kie_chat_model_path: str = "/gpt-5-2/v1/chat/completions"
     kie_reasoning_effort: str = "low"
-    kie_temperature: float = 0.2
+    kie_temperature: float = 0.6
     kie_top_p: float = 1.0
     kie_parallel_tool_calls: bool = False
-    kie_max_completion_tokens: int = 600
     kie_stream: bool = False
     kie_enable_web_search: bool = False
     assistant_debug_lookup_logs: bool = True

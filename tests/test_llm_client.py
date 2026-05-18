@@ -59,10 +59,10 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["url"] == "https://api.kie.ai/gpt-5-2/v1/chat/completions"
     assert collector["headers"]["Authorization"] == "Bearer test-kie-key"
     assert collector["json"]["reasoning_effort"] == "high"
-    assert collector["json"]["temperature"] == 0.2
+    assert collector["json"]["temperature"] == 0.6
     assert collector["json"]["top_p"] == 1.0
     assert collector["json"]["parallel_tool_calls"] is False
-    assert collector["json"]["max_completion_tokens"] == 600
+    assert "max_completion_tokens" not in collector["json"]
     assert collector["json"]["stream"] is False
     assert "stream_options" not in collector["json"]
     assert collector["json"]["messages"][0]["role"] == "system"

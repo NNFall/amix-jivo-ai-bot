@@ -558,10 +558,9 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - backend-prelookup используется как final-answer request без tools;
   - настоящий tool-flow остаётся через `assistant.tool_calls` и `role=tool`.
 - Обновлён Kie payload:
-  - `temperature=0.2`;
+  - `temperature=0.6`;
   - `top_p=1`;
   - `parallel_tool_calls=false`;
-  - `max_completion_tokens=600`;
   - `stream=false`;
   - `stream_options` проект не отправляет.
 - Добавлены phase-логи:
