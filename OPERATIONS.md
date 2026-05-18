@@ -1244,6 +1244,38 @@
   - `amix-telegram-demo.service` перезапущен;
   - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState -p UnitFileState` -> `active/running/enabled`.
 
+## Итерация 40 - turn coalescing для быстрых сообщений подряд
+
+- Проверена текущая архитектура:
+  - Telegram demo обрабатывал updates синхронно и блокировал polling на время LLM;
+  - Jivo webhook запускал каждый CLIENT_MESSAGE как отдельную обработку без supersede/coalescing;
+  - общей логики отмены устаревшего ответа не было.
+- Добавлен `core/turn_coordinator.py`:
+  - in-process generation per chat;
+  - debounce перед обработкой;
+  - устаревший worker пропускает обработку или не отправляет ответ после LLM.
+- `AssistantService` расширен:
+  - `record_client_message()` сохраняет user message без генерации ответа;
+  - `handle_pending_client_messages()` собирает все client messages после последнего bot message и отвечает по ним одним актуальным turn;
+  - `AssistantReply.superseded` позволяет transport-слою не отправлять устаревший ответ;
+  - direct LLM и product-facts LLM проверяют `is_turn_current` после provider call перед сохранением bot reply.
+- `notifications/telegram_demo_bot.py`:
+  - normal messages теперь сохраняются сразу и планируют worker через coordinator;
+  - polling не ждёт LLM и может принять следующее сообщение клиента.
+- `core/message_processor.py`:
+  - Jivo CLIENT_MESSAGE сохраняет user message и планирует общий pending-turn worker;
+  - send/invite выполняются только если turn всё ещё актуален.
+- Настройка:
+  - добавлен `TURN_DEBOUNCE_SECONDS=1.2` в `settings.py` и `.env.example`.
+- Тесты:
+  - добавлена проверка двух подряд user messages до ответа;
+  - добавлена проверка, что stale LLM reply не сохраняется как bot message;
+  - Jivo webhook tests адаптированы к async worker ожиданию.
+- Проверки:
+  - focused pending/superseded/Jivo tests -> `7 passed`;
+  - `python -m pytest -q` -> `89 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## Итерация 33 - деплой cleanup payload на VPS
 
 - Локально изменён Kie generation payload по просьбе пользователя:

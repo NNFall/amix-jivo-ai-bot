@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from database.db import session_scope
@@ -8,6 +10,18 @@ from main import create_application
 def build_client():
     app = create_application()
     return TestClient(app)
+
+
+def wait_for_db(predicate, timeout: float = 3.0, interval: float = 0.05):
+    deadline = time.time() + timeout
+    last_value = None
+    while time.time() < deadline:
+        with session_scope() as session:
+            last_value = predicate(session)
+        if last_value:
+            return last_value
+        time.sleep(interval)
+    return last_value
 
 
 def test_jivo_webhook_rejects_invalid_token(isolated_app_env) -> None:
@@ -82,8 +96,11 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
 
     assert response.status_code == 200
 
-    with session_scope() as session:
-        messages = session.query(Message).order_by(Message.id.asc()).all()
+    messages = wait_for_db(
+        lambda session: session.query(Message).order_by(Message.id.asc()).all()
+        if session.query(Message).count() >= 4
+        else None
+    )
 
     assert len(messages) == 4
     assert messages[0].sender_role == "client"
@@ -109,9 +126,14 @@ def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> N
 
     assert response.status_code == 200
 
-    with session_scope() as session:
-        handoffs = session.query(Handoff).all()
-        messages = session.query(Message).order_by(Message.id.asc()).all()
+    handoffs, messages = wait_for_db(
+        lambda session: (
+            session.query(Handoff).all(),
+            session.query(Message).order_by(Message.id.asc()).all(),
+        )
+        if session.query(Handoff).count() >= 1 and session.query(Message).count() >= 4
+        else None
+    )
 
     assert len(handoffs) == 1
     assert handoffs[0].reason == "client_requested_manager"

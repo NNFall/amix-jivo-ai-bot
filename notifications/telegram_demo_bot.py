@@ -4,6 +4,7 @@ import time
 import httpx
 
 from core.assistant_service import AssistantService
+from core.turn_coordinator import GLOBAL_TURN_COORDINATOR
 from database.db import create_db_and_tables, session_scope
 from database.repositories import message_exists_by_external_event_id, reset_chat_context
 from settings import get_settings
@@ -39,6 +40,7 @@ class TelegramDemoBot:
         self.settings = get_settings()
         self.token = self.settings.telegram_bot_token
         self.timeout = self.settings.telegram_demo_poll_timeout_seconds
+        self.turn_debounce_seconds = self.settings.turn_debounce_seconds
         self.assistant_service = AssistantService()
 
         if not self.token:
@@ -121,22 +123,55 @@ class TelegramDemoBot:
             return
 
         with session_scope() as session:
-            assistant_reply = self.assistant_service.handle_client_message(
+            self.assistant_service.record_client_message(
                 session,
                 external_chat_id=external_chat_id,
                 external_client_id=external_client_id,
                 customer_name=customer_name,
                 customer_text=normalized_text,
                 inbound_event_id=inbound_event_id,
-                outbound_event_id=f"{inbound_event_id}:bot",
                 payload={
                     "platform": "telegram",
                     "update_id": update_id,
                     "chat_id": chat_id,
                     "message_id": message.get("message_id"),
                 },
-                handoff_mode="demo",
             )
+
+        GLOBAL_TURN_COORDINATOR.submit(
+            chat_id=external_chat_id,
+            delay_seconds=self.turn_debounce_seconds,
+            callback=lambda handle: self._process_pending_turn(
+                handle=handle,
+                chat_id=chat_id,
+                external_chat_id=external_chat_id,
+                outbound_event_id=f"{inbound_event_id}:bot",
+            ),
+        )
+
+    def _process_pending_turn(
+        self,
+        *,
+        handle,
+        chat_id: str,
+        external_chat_id: str,
+        outbound_event_id: str,
+    ) -> None:
+        with session_scope() as session:
+            assistant_reply = self.assistant_service.handle_pending_client_messages(
+                session,
+                external_chat_id=external_chat_id,
+                outbound_event_id=outbound_event_id,
+                handoff_mode="demo",
+                is_turn_current=handle.is_current,
+            )
+
+        if assistant_reply.superseded or not assistant_reply.text:
+            logger.info("Skipping superseded Telegram turn for chat %s", external_chat_id)
+            return
+        if not handle.is_current():
+            logger.info("Skipping Telegram send for superseded chat %s", external_chat_id)
+            return
 
         self._send_text(chat_id, assistant_reply.text)
 

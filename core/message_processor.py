@@ -20,6 +20,7 @@ from notifications.telegram import TelegramNotifier
 from settings import get_settings
 
 from .assistant_service import AssistantService
+from .turn_coordinator import GLOBAL_TURN_COORDINATOR
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ AGENT_UNAVAILABLE_TEXT = (
 class MessageProcessor:
     def __init__(self) -> None:
         settings = get_settings()
+        self.turn_debounce_seconds = settings.turn_debounce_seconds
         self.assistant_service = AssistantService()
         self.jivo_client = JivoClient(settings)
         self.telegram_notifier = TelegramNotifier(settings)
@@ -93,29 +95,49 @@ class MessageProcessor:
             return
 
         client_text = event.message.text if event.message else ""
-        assistant_reply = self.assistant_service.handle_client_message(
+        self.assistant_service.record_client_message(
             session,
             external_chat_id=chat.external_chat_id,
             external_client_id=event.client_id,
             customer_name=event.sender.name if event.sender else None,
             customer_text=client_text,
             inbound_event_id=event.id,
-            outbound_event_id=f"{event.id}:bot",
             payload=event.model_dump(mode="json"),
-            handoff_mode="jivo",
+        )
+        GLOBAL_TURN_COORDINATOR.submit(
+            chat_id=chat.external_chat_id,
+            delay_seconds=max(self.turn_debounce_seconds, 0.05),
+            callback=lambda handle: self._process_pending_client_turn(handle=handle, event=event),
         )
 
-        self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
-        if assistant_reply.handoff_reason:
-            try:
-                self.jivo_client.invite_agent(event=event, reason=assistant_reply.handoff_reason)
-            except Exception:
-                logger.exception(
-                    "phase=error_after_send chat_id=%s event_id=%s action=invite_agent",
-                    event.chat_id,
-                    event.id,
-                )
-                raise
+    def _process_pending_client_turn(self, *, handle, event: JivoIncomingEvent) -> None:
+        with session_scope() as session:
+            assistant_reply = self.assistant_service.handle_pending_client_messages(
+                session,
+                external_chat_id=event.chat_id,
+                outbound_event_id=f"{event.id}:bot",
+                handoff_mode="jivo",
+                is_turn_current=handle.is_current,
+            )
+
+            if assistant_reply.superseded or not assistant_reply.text:
+                logger.info("Skipping superseded Jivo turn for chat %s", event.chat_id)
+                return
+            if not handle.is_current():
+                logger.info("Skipping Jivo send for superseded chat %s", event.chat_id)
+                return
+
+            self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
+            if assistant_reply.handoff_reason:
+                try:
+                    self.jivo_client.invite_agent(event=event, reason=assistant_reply.handoff_reason)
+                except Exception:
+                    logger.exception(
+                        "phase=error_after_send chat_id=%s event_id=%s action=invite_agent",
+                        event.chat_id,
+                        event.id,
+                    )
+                    raise
 
     def _deliver_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
         if should_stop_bot_after_event(event.event):

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
     history_limit: int = 20
+    turn_debounce_seconds: float = 1.2
 
     jivo_webhook_token: str = "change-me"
     jivo_bot_api_url: str = ""

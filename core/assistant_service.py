@@ -11,6 +11,7 @@ from typing import Any
 
 from database.repositories import (
     append_message,
+    get_chat_by_external_id,
     get_or_create_chat,
     get_or_create_customer,
     list_recent_messages,
@@ -50,6 +51,7 @@ ARTICLE_REQUIRED_TEXT = (
 class AssistantReply:
     text: str
     handoff_reason: str | None = None
+    superseded: bool = False
 
 
 class AssistantService:
@@ -75,10 +77,38 @@ class AssistantService:
         outbound_event_id: str | None,
         payload: dict | None = None,
         handoff_mode: str = "jivo",
+        is_turn_current=None,
     ) -> AssistantReply:
+        chat_external_id = self.record_client_message(
+            session,
+            external_chat_id=external_chat_id,
+            external_client_id=external_client_id,
+            customer_name=customer_name,
+            customer_text=customer_text,
+            inbound_event_id=inbound_event_id,
+            payload=payload,
+        )
+        return self.handle_pending_client_messages(
+            session,
+            external_chat_id=chat_external_id,
+            outbound_event_id=outbound_event_id,
+            handoff_mode=handoff_mode,
+            is_turn_current=is_turn_current,
+        )
+
+    def record_client_message(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        external_client_id: str,
+        customer_name: str | None,
+        customer_text: str,
+        inbound_event_id: str | None,
+        payload: dict | None = None,
+    ) -> str:
         customer = get_or_create_customer(session, external_client_id=external_client_id, name=customer_name)
         chat = get_or_create_chat(session, external_chat_id, customer.id)
-
         append_message(
             session,
             external_chat_id=chat.external_chat_id,
@@ -87,13 +117,39 @@ class AssistantService:
             external_event_id=inbound_event_id,
             payload=payload or {},
         )
+        return chat.external_chat_id
 
+    def handle_pending_client_messages(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        outbound_event_id: str | None,
+        handoff_mode: str = "jivo",
+        is_turn_current=None,
+    ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
+        chat = get_chat_by_external_id(session, external_chat_id)
+        if chat is None:
+            return self._superseded_reply()
         if chat.status == "handoff_requested":
             return self._handoff_already_requested_reply(
                 session,
                 external_chat_id=chat.external_chat_id,
                 outbound_event_id=outbound_event_id,
             )
+
+        pending_messages = self._collect_pending_client_messages(
+            list_recent_messages(session, chat.external_chat_id, limit=self.dialog_service.history_limit)
+        )
+        if not pending_messages:
+            return self._superseded_reply()
+
+        customer_text = "\n".join(message.text.strip() for message in pending_messages if message.text.strip()).strip()
+        if not customer_text:
+            return self._superseded_reply()
 
         transcript = self.dialog_service.get_transcript(session, chat.external_chat_id)
         return self._handle_message(
@@ -103,6 +159,7 @@ class AssistantService:
             transcript=transcript,
             outbound_event_id=outbound_event_id,
             handoff_mode=handoff_mode,
+            is_turn_current=is_turn_current,
         )
 
     def _handle_message(
@@ -114,7 +171,11 @@ class AssistantService:
         transcript: str,
         outbound_event_id: str | None,
         handoff_mode: str,
+        is_turn_current=None,
     ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
         article_candidates = extract_article_candidates(customer_text)
         history_article_candidates = self._extract_recent_lookup_article_candidates(recent_messages)
@@ -140,6 +201,7 @@ class AssistantService:
                     outbound_event_id=outbound_event_id,
                     payload_source="backend_context_refinement",
                     handoff_mode=handoff_mode,
+                    is_turn_current=is_turn_current,
                 )
         if (
             not article_candidates
@@ -164,6 +226,7 @@ class AssistantService:
                 payload_source="backend_manager_prelookup",
                 force_handoff_reason="client_requested_manager",
                 handoff_mode=handoff_mode,
+                is_turn_current=is_turn_current,
             )
 
         if self._is_explicit_manager_request(customer_text):
@@ -174,6 +237,7 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
                 reason="client_requested_manager",
                 source="backend_rule",
+                is_turn_current=is_turn_current,
             )
 
         handoff_decision = self.handoff_service.evaluate(customer_text)
@@ -195,6 +259,7 @@ class AssistantService:
                 payload_source="backend_order_prelookup",
                 force_handoff_reason="order_request",
                 handoff_mode=handoff_mode,
+                is_turn_current=is_turn_current,
             )
 
         if (
@@ -222,6 +287,7 @@ class AssistantService:
                 payload_source="backend_complex_prelookup",
                 force_handoff_reason="complex_technical_question",
                 handoff_mode=handoff_mode,
+                is_turn_current=is_turn_current,
             )
 
         if handoff_decision.should_handoff and handoff_decision.reason:
@@ -232,6 +298,7 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
                 reason=handoff_decision.reason,
                 source="backend_handoff_rule",
+                is_turn_current=is_turn_current,
             )
 
         company_answer = self._build_company_faq_answer(customer_text)
@@ -262,6 +329,7 @@ class AssistantService:
                 outbound_event_id=outbound_event_id,
                 payload_source="backend_prelookup",
                 handoff_mode=handoff_mode,
+                is_turn_current=is_turn_current,
             )
 
         if not self.openai_service.enabled:
@@ -270,6 +338,7 @@ class AssistantService:
                 external_chat_id=external_chat_id,
                 customer_text=customer_text,
                 outbound_event_id=outbound_event_id,
+                is_turn_current=is_turn_current,
             )
 
         dialog_messages = self.dialog_service.get_llm_messages(session, external_chat_id)
@@ -332,6 +401,9 @@ class AssistantService:
         )
         self._log_tool_turn(customer_text=customer_text, turn=first_turn)
 
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         tool_reply = self._handle_tool_calls(
             session,
             external_chat_id=external_chat_id,
@@ -340,6 +412,7 @@ class AssistantService:
             tool_calls=first_turn.tool_calls,
             outbound_event_id=outbound_event_id,
             handoff_mode=handoff_mode,
+            is_turn_current=is_turn_current,
         )
         if tool_reply is not None:
             return tool_reply
@@ -389,7 +462,11 @@ class AssistantService:
         tool_calls: list,
         outbound_event_id: str | None,
         handoff_mode: str,
+        is_turn_current=None,
     ) -> AssistantReply | None:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         for index, call in enumerate(tool_calls, start=1):
             if not call.call_id:
                 call.call_id = f"call_{call.name}_{index}"
@@ -403,6 +480,7 @@ class AssistantService:
                     outbound_event_id=outbound_event_id,
                     reason=reason,
                     source="llm_tool",
+                    is_turn_current=is_turn_current,
                 )
 
             if call.name != "search_products":
@@ -467,6 +545,7 @@ class AssistantService:
                 payload_source="llm_tool_search",
                 handoff_mode=handoff_mode,
                 include_tool_results_system=False,
+                is_turn_current=is_turn_current,
             )
         return None
 
@@ -483,7 +562,11 @@ class AssistantService:
         force_handoff_reason: str | None = None,
         handoff_mode: str = "jivo",
         include_tool_results_system: bool = True,
+        is_turn_current=None,
     ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         corporate_price_requested = self._is_corporate_price_request(customer_text)
         product_lookup_result = self._apply_response_policy(
             product_lookup_result,
@@ -595,6 +678,9 @@ class AssistantService:
                     "tool_calls": self._serialize_tool_calls(turn.tool_calls),
                 },
             )
+
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
 
         reply_text = (turn.text if turn else None) or self._build_programmatic_lookup_fallback(
             product_lookup_result,
@@ -851,6 +937,22 @@ class AssistantService:
         return str(left.get("code") or "") == str(right.get("code") or "") and str(left.get("article") or "") == str(right.get("article") or "")
 
     @staticmethod
+    def _collect_pending_client_messages(messages: list) -> list:
+        last_bot_index = -1
+        for index, message in enumerate(messages):
+            if message.sender_role == "bot":
+                last_bot_index = index
+        return [message for message in messages[last_bot_index + 1 :] if message.sender_role == "client"]
+
+    @staticmethod
+    def _turn_is_stale(is_turn_current) -> bool:
+        return is_turn_current is not None and not is_turn_current()
+
+    @staticmethod
+    def _superseded_reply() -> AssistantReply:
+        return AssistantReply(text="", superseded=True)
+
+    @staticmethod
     def _reply_claims_handoff(reply_text: str) -> bool:
         text = reply_text.lower()
         return (
@@ -948,7 +1050,11 @@ class AssistantService:
         external_chat_id: str,
         customer_text: str,
         outbound_event_id: str | None,
+        is_turn_current=None,
     ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         reply_text = ARTICLE_REQUIRED_TEXT if self._is_price_stock_request(customer_text) else SAFE_FALLBACK_TEXT
         self._append_bot_message(
             session,
@@ -1554,7 +1660,11 @@ class AssistantService:
         outbound_event_id: str | None,
         reason: str,
         source: str,
+        is_turn_current=None,
     ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
         self._register_handoff_action(
             session,
             external_chat_id=external_chat_id,

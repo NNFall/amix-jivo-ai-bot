@@ -725,3 +725,27 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Проверить в Telegram сценарий `чем л отличается от пр? -> а 14.023пр сколько именно осталось? -> ну позови менеджера тогда`: после первого handoff бот должен отвечать только `Менеджер уже вызван, он подключится к диалогу.` и не запускать товарный поиск заново.
+
+## Обновление 2026-05-19 - turn coalescing for fast consecutive messages
+
+- До этой итерации логика отмены устаревшего LLM turn не была реализована:
+  - Telegram polling блокировался на текущем `handle_client_message()` и не забирал новые updates до ответа LLM;
+  - Jivo CLIENT_MESSAGE запускал обработку каждого event отдельно, без `active_turn/superseded`.
+- Добавлен in-process `ChatTurnCoordinator`:
+  - входящее сообщение сохраняется сразу;
+  - ответ планируется с коротким debounce (`TURN_DEBOUNCE_SECONDS`, default `1.2`);
+  - новое сообщение в том же чате увеличивает generation и делает старый turn устаревшим;
+  - если старый LLM-запрос вернулся после нового сообщения, его ответ не сохраняется и не отправляется.
+- `AssistantService` разделён на:
+  - `record_client_message()` для немедленного сохранения user-сообщения;
+  - `handle_pending_client_messages()` для ответа по всем user-сообщениям после последнего bot-ответа.
+- Telegram demo теперь не блокирует polling на LLM: normal messages сохраняются и обрабатываются coordinator worker’ом.
+- Jivo CLIENT_MESSAGE использует тот же coordinator; для Jivo delay принудительно не ниже `0.05s`, чтобы worker не стартовал до commit входящего event.
+- Проверки:
+  - focused pending/superseded/Jivo tests -> `7 passed`;
+  - `python -m pytest -q` -> `89 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить turn coalescing на VPS и проверить Telegram live: отправить два сообщения подряд до ответа бота, убедиться, что в Kie уходит один актуальный turn с двумя `user` сообщениями в истории, а старый ответ не приходит.

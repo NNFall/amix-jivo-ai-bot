@@ -169,6 +169,98 @@ def test_assistant_service_converts_text_only_handoff_to_real_action(isolated_ap
     assert messages[3].payload["backend_actions"]["handoff_to_manager_called"] is True
 
 
+def test_assistant_service_answers_pending_consecutive_user_messages(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                free_stock=Decimal("220"),
+                unit="шт",
+                retail_price=Decimal("473"),
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        service.record_client_message(
+            session,
+            external_chat_id="telegram:pending-two",
+            external_client_id="telegram-user:pending-two",
+            customer_name="Demo User",
+            customer_text="тогда проверьте 14.023пр",
+            inbound_event_id="tg-pending-two-1",
+            payload={"platform": "telegram"},
+        )
+        service.record_client_message(
+            session,
+            external_chat_id="telegram:pending-two",
+            external_client_id="telegram-user:pending-two",
+            customer_name="Demo User",
+            customer_text="и xyz-999",
+            inbound_event_id="tg-pending-two-2",
+            payload={"platform": "telegram"},
+        )
+        reply = service.handle_pending_client_messages(
+            session,
+            external_chat_id="telegram:pending-two",
+            outbound_event_id="tg-pending-two-2:bot",
+            handoff_mode="demo",
+        )
+
+    assert "14.023пр" in reply.text
+    assert "220 шт" in reply.text
+    assert "xyz-999" in reply.text.lower()
+
+    with session_scope() as session:
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+
+    assert [message.sender_role for message in messages] == ["client", "client", "assistant_tool_call", "tool", "bot"]
+    assert messages[-1].external_event_id == "tg-pending-two-2:bot"
+
+
+def test_assistant_service_does_not_store_stale_llm_reply(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    current = {"value": True}
+
+    def stale_llm_call(**kwargs):
+        current["value"] = False
+        return LLMTurnResult(text="Устаревший ответ", tool_calls=[])
+
+    service.openai_service.run_messages = stale_llm_call
+
+    with session_scope() as session:
+        service.record_client_message(
+            session,
+            external_chat_id="telegram:stale-turn",
+            external_client_id="telegram-user:stale-turn",
+            customer_name="Demo User",
+            customer_text="можете подсказать?",
+            inbound_event_id="tg-stale-turn-1",
+            payload={"platform": "telegram"},
+        )
+        reply = service.handle_pending_client_messages(
+            session,
+            external_chat_id="telegram:stale-turn",
+            outbound_event_id="tg-stale-turn-1:bot",
+            handoff_mode="demo",
+            is_turn_current=lambda: current["value"],
+        )
+
+    assert reply.superseded is True
+    assert reply.text == ""
+
+    with session_scope() as session:
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+
+    assert [message.sender_role for message in messages] == ["client"]
+
+
 def test_assistant_service_uses_safe_fallback_without_openai(isolated_app_env) -> None:
     with session_scope() as session:
         reply = AssistantService().handle_client_message(
