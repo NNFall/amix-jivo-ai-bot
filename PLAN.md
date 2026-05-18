@@ -546,3 +546,35 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Проверить вручную в Telegram через `/newchat`: сценарий со скидкой после товара, `всм`, `я спросил же скидки есть?`, `есть мп 28ск -> цена 132/198`.
+
+## Обновление 2026-05-18 - cleanup LLM payload
+
+- Уточнена схема product/prelookup вызова:
+  - полный результат текущего поиска больше не дублируется в `INTERNAL_CONTEXT_JSON`;
+  - compact state остаётся в `dialog_state.last_product_lookup`;
+  - полный результат backend-prelookup передаётся только в `TOOL_RESULTS_JSON`;
+  - `TOOL_RESULTS_JSON` теперь добавляется после role-based истории и текущего `user`.
+- Разделены режимы на уровне payload:
+  - backend-prelookup используется как final-answer request без tools;
+  - настоящий tool-flow остаётся через `assistant.tool_calls` и `role=tool`.
+- Обновлён Kie payload:
+  - `temperature=0.2`;
+  - `top_p=1`;
+  - `parallel_tool_calls=false`;
+  - `max_completion_tokens=600`;
+  - `stream=false`;
+  - `stream_options` проект не отправляет.
+- Добавлены phase-логи:
+  - `llm_request_started`;
+  - `llm_response_received`;
+  - `message_send_started`;
+  - `message_sent_to_user`;
+  - `message_send_failed`;
+  - `error_after_send` для ошибок после отправки ответа при handoff.
+- Проверки:
+  - `python -m pytest -q` -> `74 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить cleanup payload на VPS, прогнать live eval через Kie и проверить свежий Kie payload: compact `INTERNAL_CONTEXT_JSON`, отдельный `TOOL_RESULTS_JSON` после истории, `stream=false` без `stream_options`.

@@ -259,21 +259,20 @@ def build_product_facts_messages(
     context = dict(runtime_context or {})
     context.setdefault("type", "amix_internal_context")
     context["backend_actions"] = backend_actions or {}
-    context["last_product_lookup"] = product_lookup_result
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": PRODUCT_FACTS_RESPONSE_PROMPT}]
     messages.append(_internal_context_message(context))
+    messages.extend(_resolve_dialog_messages(dialog_messages, transcript, customer_text))
     if include_tool_results_system:
         messages.append(
             {
                 "role": "system",
                 "content": (
                     "TOOL_RESULTS_JSON:\n"
-                    f"{json.dumps({'tool_name': 'search_products', 'result': product_lookup_result}, ensure_ascii=False)}"
+                    f"{json.dumps({'tool_name': 'search_products', 'mode': 'backend_prelookup', 'result': product_lookup_result}, ensure_ascii=False)}"
                 ),
             }
         )
-    messages.extend(_resolve_dialog_messages(dialog_messages, transcript, customer_text))
     return messages
 
 

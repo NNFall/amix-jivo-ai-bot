@@ -37,6 +37,11 @@ class OpenAIService:
         self.kie_api_base_url = settings.kie_api_base_url.rstrip("/")
         self.kie_chat_model_path = settings.kie_chat_model_path
         self.kie_reasoning_effort = settings.kie_reasoning_effort
+        self.kie_temperature = settings.kie_temperature
+        self.kie_top_p = settings.kie_top_p
+        self.kie_parallel_tool_calls = settings.kie_parallel_tool_calls
+        self.kie_max_completion_tokens = settings.kie_max_completion_tokens
+        self.kie_stream = settings.kie_stream
         self.kie_enable_web_search = settings.kie_enable_web_search
 
         self.enabled = self._is_enabled()
@@ -128,6 +133,11 @@ class OpenAIService:
         payload: dict[str, Any] = {
             "messages": payload_messages,
             "reasoning_effort": self.kie_reasoning_effort,
+            "temperature": self.kie_temperature,
+            "top_p": self.kie_top_p,
+            "parallel_tool_calls": self.kie_parallel_tool_calls,
+            "max_completion_tokens": self.kie_max_completion_tokens,
+            "stream": self.kie_stream,
         }
         if tools:
             payload["tools"] = tools
@@ -226,9 +236,9 @@ class OpenAIService:
         if isinstance(content, list):
             payload["content"] = content
         elif isinstance(content, str) and content:
-            payload["content"] = [{"type": "text", "text": content}]
+            payload["content"] = content
         else:
-            payload["content"] = []
+            payload["content"] = ""
         return payload
 
     @staticmethod

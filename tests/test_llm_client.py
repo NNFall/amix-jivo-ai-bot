@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from llm.openai_client import OpenAIService
@@ -57,6 +59,12 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["url"] == "https://api.kie.ai/gpt-5-2/v1/chat/completions"
     assert collector["headers"]["Authorization"] == "Bearer test-kie-key"
     assert collector["json"]["reasoning_effort"] == "high"
+    assert collector["json"]["temperature"] == 0.2
+    assert collector["json"]["top_p"] == 1.0
+    assert collector["json"]["parallel_tool_calls"] is False
+    assert collector["json"]["max_completion_tokens"] == 600
+    assert collector["json"]["stream"] is False
+    assert "stream_options" not in collector["json"]
     assert collector["json"]["messages"][0]["role"] == "system"
     assert collector["json"]["messages"][1]["role"] == "system"
     assert collector["json"]["messages"][2]["role"] == "user"
@@ -82,12 +90,18 @@ def test_product_facts_messages_include_grouped_result_and_backend_actions() -> 
     )
 
     context_content = messages[1]["content"]
-    tool_content = messages[2]["content"]
+    tool_content = next(message["content"] for message in messages if str(message.get("content", "")).startswith("TOOL_RESULTS_JSON"))
+    internal_context = json.loads(context_content.removeprefix("INTERNAL_CONTEXT_JSON:\n"))
 
+    assert messages[-1]["content"].startswith("TOOL_RESULTS_JSON")
+    assert messages[-2]["role"] == "user"
+    assert messages[-2]["content"] == "Сравните 14.023л. и 14.023пр."
     assert "INTERNAL_CONTEXT_JSON" in context_content
     assert "backend_actions" in context_content
     assert "handoff_to_manager_called" in context_content
+    assert "last_product_lookup" not in internal_context
     assert "TOOL_RESULTS_JSON" in tool_content
+    assert "backend_prelookup" in tool_content
     assert "results" in tool_content
     assert "14.023л." in tool_content
 
@@ -126,8 +140,11 @@ def test_kie_payload_preserves_tool_role_messages(monkeypatch, isolated_app_env)
     )
 
     payload_messages = collector["json"]["messages"]
+    assert payload_messages[0]["content"] == "system prompt"
+    assert payload_messages[1]["content"] == "сколько стоит 14.025пр."
     assert payload_messages[2]["role"] == "assistant"
     assert payload_messages[2]["tool_calls"][0]["id"] == "call_1"
     assert payload_messages[3]["role"] == "tool"
     assert payload_messages[3]["tool_call_id"] == "call_1"
     assert payload_messages[3]["name"] == "search_products"
+    assert payload_messages[3]["content"] == '{"status":"ok"}'

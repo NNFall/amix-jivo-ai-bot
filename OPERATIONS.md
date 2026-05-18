@@ -1228,3 +1228,34 @@
   - ответов без content flags: `31`;
   - ответов на ручную проверку: `0`;
   - обновлён локальный `LIVE_DIALOG_EVALS.md` из серверного отчёта.
+
+## Итерация 32 - cleanup LLM payload после проверки Kie-логов
+
+- По Kie-логу подтверждено:
+  - role-based история уже работает;
+  - payload всё ещё дублировал полный поиск в `INTERNAL_CONTEXT_JSON` и `TOOL_RESULTS_JSON`;
+  - `TOOL_RESULTS_JSON` шёл до role-history;
+  - в запросе не было явных параметров `temperature`, `top_p`, `stream`, `max_completion_tokens`;
+  - нужны phase-логи для диагностики 500 после/до отправки ответа.
+- `llm/prompts.py`:
+  - `build_product_facts_messages` больше не кладёт полный `product_lookup_result` в top-level `INTERNAL_CONTEXT_JSON`;
+  - backend-prelookup маркируется как `mode=backend_prelookup`;
+  - `TOOL_RESULTS_JSON` добавляется после role-based истории и текущего user-сообщения.
+- `core/assistant_service.py`:
+  - `dialog_state.last_product_lookup` стал компактнее;
+  - добавлены `llm_request_started` и `llm_response_received` в LLM debug JSONL;
+  - product/prelookup debug note теперь явно указывает, что это final-answer request без tools.
+- `llm/openai_client.py` и `settings.py`:
+  - добавлены Kie-параметры `temperature=0.2`, `top_p=1`, `parallel_tool_calls=false`, `max_completion_tokens=600`, `stream=false`;
+  - обычный текст в Kie payload теперь отправляется строкой `content`, без `type=text` parts;
+  - `stream_options` проект не добавляет.
+- `core/message_processor.py`:
+  - добавлены фазовые логи отправки ответа клиенту;
+  - ошибки `invite_agent` после отправки ответа логируются как `phase=error_after_send`.
+- Тесты:
+  - обновлены проверки Kie payload;
+  - добавлена проверка порядка сообщений: `system`, `INTERNAL_CONTEXT_JSON`, role-history/current user, затем `TOOL_RESULTS_JSON`;
+  - добавлена проверка отсутствия top-level full `last_product_lookup` в internal context.
+- Проверки:
+  - `python -m pytest -q` -> `74 passed`;
+  - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.

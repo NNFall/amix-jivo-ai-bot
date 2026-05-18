@@ -241,9 +241,22 @@ class AssistantService:
             handoff_mode=handoff_mode,
         )
         messages = build_llm_messages(dialog_messages=dialog_messages, runtime_context=runtime_context)
+        llm_request_id = self._new_llm_request_id(external_chat_id, "direct")
+        self._log_llm_debug_event(
+            "llm_request_started",
+            {
+                "llm_request_id": llm_request_id,
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "mode": "tool_auto",
+                "tool_choice": "auto",
+                "has_tools": True,
+            },
+        )
         self._log_llm_debug_event(
             "llm_direct_request",
             {
+                "llm_request_id": llm_request_id,
                 "external_chat_id": external_chat_id,
                 "customer_text": customer_text,
                 "transcript": transcript,
@@ -256,8 +269,20 @@ class AssistantService:
         )
         first_turn = self.openai_service.run_messages(messages=messages, tools=OPENAI_TOOLS, tool_choice="auto")
         self._log_llm_debug_event(
+            "llm_response_received",
+            {
+                "llm_request_id": llm_request_id,
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "mode": "tool_auto",
+                "has_text": bool(first_turn.text),
+                "tool_calls_count": len(first_turn.tool_calls),
+            },
+        )
+        self._log_llm_debug_event(
             "llm_direct_response",
             {
+                "llm_request_id": llm_request_id,
                 "external_chat_id": external_chat_id,
                 "customer_text": customer_text,
                 "text": first_turn.text,
@@ -440,9 +465,23 @@ class AssistantService:
                 backend_actions=backend_actions,
                 include_tool_results_system=include_tool_results_system,
             )
+            llm_request_id = self._new_llm_request_id(external_chat_id, "product_facts")
+            self._log_llm_debug_event(
+                "llm_request_started",
+                {
+                    "llm_request_id": llm_request_id,
+                    "external_chat_id": external_chat_id,
+                    "customer_text": customer_text,
+                    "mode": "backend_prelookup_final_answer",
+                    "tool_choice": "none",
+                    "has_tools": False,
+                    "has_tool_results_json": include_tool_results_system,
+                },
+            )
             self._log_llm_debug_event(
                 "product_facts_request",
                 {
+                    "llm_request_id": llm_request_id,
                     "external_chat_id": external_chat_id,
                     "customer_text": customer_text,
                     "transcript": transcript,
@@ -452,14 +491,27 @@ class AssistantService:
                     "messages": fact_messages,
                     "note": (
                         "messages is the exact role-based payload sent to the LLM. "
-                        "Dialog history is sent as user/assistant/tool messages; current customer message is not duplicated."
+                        "Dialog history is sent as user/assistant/tool messages; current customer message is not duplicated. "
+                        "Backend prelookup results are sent as TOOL_RESULTS_JSON after the dialog messages; no tools are passed."
                     ),
                 },
             )
             turn = self.openai_service.run_messages(messages=fact_messages)
             self._log_llm_debug_event(
+                "llm_response_received",
+                {
+                    "llm_request_id": llm_request_id,
+                    "external_chat_id": external_chat_id,
+                    "customer_text": customer_text,
+                    "mode": "backend_prelookup_final_answer",
+                    "has_text": bool(turn.text),
+                    "tool_calls_count": len(turn.tool_calls),
+                },
+            )
+            self._log_llm_debug_event(
                 "product_facts_response",
                 {
+                    "llm_request_id": llm_request_id,
                     "external_chat_id": external_chat_id,
                     "customer_text": customer_text,
                     "text": turn.text,
@@ -1001,16 +1053,32 @@ class AssistantService:
     def _compact_lookup_for_context(product_lookup_result: dict | None) -> dict | None:
         if not product_lookup_result:
             return None
+        exact_matches = product_lookup_result.get("exact_matches", [])
+        similar_matches = product_lookup_result.get("similar_matches", [])
         return {
             "status": product_lookup_result.get("status"),
             "query": product_lookup_result.get("display_query") or product_lookup_result.get("query"),
             "queries": product_lookup_result.get("queries"),
             "exact_matches_count": product_lookup_result.get("exact_matches_count"),
             "similar_matches_count": product_lookup_result.get("similar_matches_count"),
-            "exact_matches": product_lookup_result.get("exact_matches", [])[:5],
-            "similar_matches": product_lookup_result.get("similar_matches", [])[:3],
+            "exact_matches": [AssistantService._compact_match_for_context(item) for item in exact_matches[:5]],
+            "similar_matches": [AssistantService._compact_match_for_context(item) for item in similar_matches[:3]],
             "resolved_followup_refinement": product_lookup_result.get("resolved_followup_refinement"),
             "summary": product_lookup_result.get("summary"),
+        }
+
+    @staticmethod
+    def _compact_match_for_context(match: dict) -> dict[str, Any]:
+        return {
+            "code": match.get("code"),
+            "article": match.get("article"),
+            "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
+            "retail_price": match.get("retail_price"),
+            "retail_price_display": match.get("retail_price_display"),
+            "corporate_price": match.get("corporate_price"),
+            "corporate_price_display": match.get("corporate_price_display"),
+            "unit": match.get("unit"),
+            "discount_status": "unknown",
         }
 
     @staticmethod
@@ -1158,6 +1226,12 @@ class AssistantService:
     def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
         if self.debug_lookup_logs:
             logger.info("assistant_lookup_%s payload=%s", stage, json.dumps(payload, ensure_ascii=False))
+
+    @staticmethod
+    def _new_llm_request_id(external_chat_id: str, mode: str) -> str:
+        safe_chat_id = re.sub(r"[^A-Za-z0-9_.:-]+", "_", external_chat_id)[:80]
+        timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+        return f"{mode}:{safe_chat_id}:{timestamp_ms}"
 
     def _log_llm_debug_event(self, stage: str, payload: dict[str, Any]) -> None:
         if not self.debug_llm_payloads:
