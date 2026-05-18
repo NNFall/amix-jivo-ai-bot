@@ -378,10 +378,18 @@ def _format_price_display(value) -> str | None:
     if "." in text:
         whole, fraction = text.split(".", 1)
         fraction = fraction.rstrip("0")
+        whole = _group_price_whole(whole)
         if fraction:
             return f"{whole},{fraction} руб."
         return f"{whole} руб."
     return f"{text} руб."
+
+
+def _group_price_whole(value: str) -> str:
+    stripped = value.strip().replace(" ", "")
+    if not stripped.isdigit():
+        return value
+    return f"{int(stripped):,}".replace(",", " ")
 
 
 def create_product_import(session, filename: str, source_path: str) -> ProductImport:

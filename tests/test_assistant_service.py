@@ -167,6 +167,143 @@ def test_assistant_service_uses_history_for_cheaper_followup(isolated_app_env) -
     assert reply.handoff_reason is None
 
 
+def test_assistant_service_refines_pending_variant_without_stale_history_queries(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="26141",
+                article="1108035",
+                normalized_article="1108035",
+                free_stock=Decimal("2"),
+                unit="компл",
+                retail_price=Decimal("50820"),
+                raw_payload={},
+            )
+        )
+        for code, price, stock in (
+            ("26167", "118", "124"),
+            ("26168", "132", "292"),
+            ("26169", "198", "237"),
+        ):
+            session.add(
+                Product(
+                    code=code,
+                    article="МП 28ск",
+                    normalized_article="МП28СК",
+                    free_stock=Decimal(stock),
+                    unit="шт.",
+                    retail_price=Decimal(price),
+                    raw_payload={},
+                )
+            )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:refine-no-stale",
+            external_client_id="telegram-user:refine-no-stale",
+            customer_name="Demo User",
+            customer_text="сколько стоит 1108035",
+            inbound_event_id="tg-refine-stale-1",
+            outbound_event_id="tg-refine-stale-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:refine-no-stale",
+            external_client_id="telegram-user:refine-no-stale",
+            customer_name="Demo User",
+            customer_text="есть мп 28ск",
+            inbound_event_id="tg-refine-stale-2",
+            outbound_event_id="tg-refine-stale-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:refine-no-stale",
+            external_client_id="telegram-user:refine-no-stale",
+            customer_name="Demo User",
+            customer_text="198 которая",
+            inbound_event_id="tg-refine-stale-3",
+            outbound_event_id="tg-refine-stale-3:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "237 шт" in reply.text
+    assert "1108035" not in reply.text
+
+    with session_scope() as session:
+        tool_messages = (
+            session.query(Message)
+            .filter(Message.sender_role == "tool")
+            .order_by(Message.id.asc())
+            .all()
+        )
+
+    last_tool_payload = tool_messages[-1].payload["raw_product_lookup_result"]
+    serialized = str(last_tool_payload)
+    assert "1108035" not in serialized
+    assert "50820" not in serialized
+    assert last_tool_payload["exact_matches"][0]["code"] == "26169"
+
+
+def test_assistant_service_sends_compact_tool_result_without_similar_when_exact_found(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="26141",
+                    article="1108035",
+                    normalized_article="1108035",
+                    free_stock=Decimal("2"),
+                    unit="компл",
+                    retail_price=Decimal("50820"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="26656",
+                    article="1108036",
+                    normalized_article="1108036",
+                    free_stock=Decimal("1"),
+                    unit="шт",
+                    retail_price=Decimal("50820"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:compact-tool",
+            external_client_id="telegram-user:compact-tool",
+            customer_name="Demo User",
+            customer_text="1108035 сколько в наличии?",
+            inbound_event_id="tg-compact-tool",
+            outbound_event_id="tg-compact-tool:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    with session_scope() as session:
+        tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
+
+    assert "similar_matches" not in tool_message.text
+    assert "1108036" not in tool_message.text
+    assert "тип" in tool_message.text
+    assert "50 820" not in tool_message.text
+    raw_lookup = tool_message.payload["raw_product_lookup_result"]
+    assert raw_lookup["similar_matches_count"] == 0
+    assert raw_lookup["per_query_results"][0]["similar_matches_count"] == 0
+
+
 def test_assistant_service_avoids_greeting_fallback_on_provider_error(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

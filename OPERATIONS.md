@@ -1318,6 +1318,27 @@
 - Проверки:
   - `python -m pytest -q` -> `83 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Итерация 38 - cleanup follow-up prelookup и compact tool result
+
+- По свежему Kie payload обнаружено, что backend всё ещё строил search queries из истории/product_memory:
+  - на `198 которая` в поиск попадали старые `1108035`, `50820`, `МП28СК`;
+  - при точном `1108035` в LLM-visible result уходили похожие `1108036`, `1108038`, `1108039`;
+  - `pending_clarification` работал как повод для широкого backend поиска, а не как мягкая подсказка.
+- Исправлено:
+  - `_handle_message()` больше не берёт article candidates из полного transcript для short numeric refinement;
+  - для `198 которая` используется последний pending multiple-exact lookup, а если цены были скрыты stock-only политикой, backend переищет только pending артикул;
+  - `_search_products_by_queries()` вычищает `similar_matches`, если есть exact match;
+  - `role=tool` content стал компактным русским result для модели, raw lookup хранится отдельно в message payload;
+  - `product_memory` восстанавливается из raw payload, а не из компактного текста tool-result;
+  - формат цен теперь группирует тысячи.
+- Добавлены тесты:
+  - уточнение `198 которая` после старого товара не содержит stale queries `1108035`/`50820`;
+  - exact `1108035` не отдаёт `similar_matches` в tool content;
+  - compact tool result сохраняет raw lookup в payload.
+- Проверки:
+  - `python -m pytest -q` -> `85 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

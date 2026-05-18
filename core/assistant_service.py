@@ -107,11 +107,37 @@ class AssistantService:
         outbound_event_id: str | None,
         handoff_mode: str,
     ) -> AssistantReply:
+        recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
         article_candidates = extract_article_candidates(customer_text)
-        history_article_candidates = self._extract_history_article_candidates(transcript)
-        if self._looks_like_price_refinement(customer_text, article_candidates) and history_article_candidates:
-            article_candidates = history_article_candidates
-        if not article_candidates and history_article_candidates and self._looks_like_history_product_followup(customer_text):
+        history_article_candidates = self._extract_recent_lookup_article_candidates(recent_messages)
+        pending_lookup = self._find_latest_pending_product_lookup(recent_messages)
+        if self._looks_like_price_refinement(customer_text, article_candidates):
+            if pending_lookup:
+                pending_refinement = self._build_followup_refinement_context(customer_text, pending_lookup)
+                if pending_refinement.get("matched_exact_count") != 1:
+                    pending_query = self._resolve_pending_lookup_query(pending_lookup)
+                    if pending_query:
+                        pending_lookup = self._search_products_by_queries(
+                            session,
+                            queries=[pending_query],
+                            reason="price",
+                            customer_text=customer_text,
+                        )
+                return self._reply_from_product_result(
+                    session,
+                    external_chat_id=external_chat_id,
+                    customer_text=customer_text,
+                    transcript=transcript,
+                    product_lookup_result=pending_lookup,
+                    outbound_event_id=outbound_event_id,
+                    payload_source="backend_context_refinement",
+                    handoff_mode=handoff_mode,
+                )
+        if (
+            not article_candidates
+            and history_article_candidates
+            and self._looks_like_explicit_history_article_followup(customer_text)
+        ):
             article_candidates = self._select_history_candidates_for_followup(customer_text, history_article_candidates)
         if self._is_explicit_manager_request(customer_text) and article_candidates:
             lookup_result = self._search_products_by_queries(
@@ -384,7 +410,7 @@ class AssistantService:
                     "tool_name": "search_products",
                     "status": "ok",
                     "request": call.arguments,
-                    "result": lookup_result,
+                    "result": self._build_llm_product_lookup_result(lookup_result, customer_text=customer_text),
                 },
             )
             self._append_tool_result_message(
@@ -392,6 +418,7 @@ class AssistantService:
                 external_chat_id=external_chat_id,
                 message=tool_result_message,
                 tool_name="search_products",
+                raw_product_lookup_result=lookup_result,
             )
             self._log_lookup_result(stage="tool_call", payload=lookup_result)
             self._log_llm_debug_event(
@@ -594,6 +621,23 @@ class AssistantService:
         containers.extend(product_lookup_result.get("results") or [])
         containers.extend(product_lookup_result.get("per_query_results") or [])
         return [item for item in containers if isinstance(item, dict)]
+
+    @staticmethod
+    def _strip_similar_when_exact_found(product_lookup_result: dict) -> dict:
+        payload = deepcopy(product_lookup_result)
+        for container in AssistantService._iter_lookup_result_containers(payload):
+            exact = container.get("exact_matches") or []
+            if not exact:
+                continue
+            container["similar_matches"] = []
+            container["similar_matches_count"] = 0
+        if payload.get("exact_matches"):
+            payload["similar_matches"] = []
+            payload["similar_matches_count"] = 0
+        summary = payload.get("summary")
+        if isinstance(summary, dict) and (payload.get("exact_matches") or summary.get("total_exact_matches")):
+            summary["total_similar_matches"] = 0
+        return payload
 
     @staticmethod
     def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
@@ -915,6 +959,7 @@ class AssistantService:
             display_query = self._resolve_display_query(query, customer_text)
             search_query = display_query or query
             item = search_products_structured(session, query=search_query, search_type="auto")
+            item = self._strip_similar_when_exact_found(item)
             item["raw_backend_query"] = query
             item["display_query"] = display_query
             item_exact_keys = {
@@ -967,7 +1012,7 @@ class AssistantService:
             "has_errors": any(item.get("status") == "error" for item in visible_query_results),
         }
 
-        return {
+        result = {
             "queries": queries,
             "display_queries": [item.get("display_query") or item.get("query") for item in visible_query_results],
             "reason": reason,
@@ -986,6 +1031,7 @@ class AssistantService:
             "results": visible_query_results,
             "per_query_results": visible_query_results,
         }
+        return self._strip_similar_when_exact_found(result)
 
     def _build_runtime_context(
         self,
@@ -1024,19 +1070,46 @@ class AssistantService:
     @staticmethod
     def _find_latest_product_lookup(messages: list) -> dict | None:
         for message in reversed(messages):
-            payload = message.payload or {}
-            lookup = payload.get("product_lookup_result")
+            lookup = AssistantService._extract_product_lookup_from_message(message)
+            if lookup:
+                return lookup
+        return None
+
+    @staticmethod
+    def _find_latest_pending_product_lookup(messages: list) -> dict | None:
+        for message in reversed(messages):
+            lookup = AssistantService._extract_product_lookup_from_message(message)
+            if lookup and AssistantService._extract_pending_clarification(lookup):
+                return lookup
+        return None
+
+    @staticmethod
+    def _extract_product_lookup_from_message(message) -> dict | None:
+        payload = message.payload or {}
+        for key in ("raw_product_lookup_result", "product_lookup_result"):
+            lookup = payload.get(key)
             if isinstance(lookup, dict):
                 return lookup
 
-            if message.sender_role == "tool" and payload.get("tool_name") == "search_products":
-                try:
-                    tool_payload = json.loads(message.text or "{}")
-                except json.JSONDecodeError:
-                    continue
-                result = tool_payload.get("result") if isinstance(tool_payload, dict) else None
-                if isinstance(result, dict):
-                    return result
+        if message.sender_role != "tool" or payload.get("tool_name") != "search_products":
+            return None
+
+        try:
+            tool_payload = json.loads(message.text or "{}")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(tool_payload, dict):
+            return None
+
+        raw_result = tool_payload.get("raw_result")
+        if isinstance(raw_result, dict):
+            return raw_result
+
+        result = tool_payload.get("result")
+        if isinstance(result, dict) and (
+            "exact_matches" in result or "per_query_results" in result or "results" in result
+        ):
+            return result
         return None
 
     @staticmethod
@@ -1054,9 +1127,12 @@ class AssistantService:
             "stock": match.get("stock"),
             "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
             "retail_price": match.get("retail_price"),
-            "retail_price_display": match.get("retail_price_display"),
+            "retail_price_display": AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price")),
             "corporate_price": match.get("corporate_price"),
-            "corporate_price_display": match.get("corporate_price_display"),
+            "corporate_price_display": AssistantService._format_price_text(
+                match.get("corporate_price_display"),
+                match.get("corporate_price"),
+            ),
             "unit": match.get("unit"),
             "weight": match.get("weight"),
             "volume": match.get("volume"),
@@ -1081,6 +1157,20 @@ class AssistantService:
         }
 
     @staticmethod
+    def _resolve_pending_lookup_query(product_lookup_result: dict) -> str | None:
+        pending = AssistantService._extract_pending_clarification(product_lookup_result)
+        if pending and pending.get("article"):
+            return str(pending["article"])
+        for key in ("display_query", "query"):
+            value = product_lookup_result.get(key)
+            if value:
+                return str(value)
+        for value in product_lookup_result.get("display_queries") or product_lookup_result.get("queries") or []:
+            if value:
+                return str(value)
+        return None
+
+    @staticmethod
     def _build_product_memory(messages: list, active_product: dict | None, limit: int = 5) -> list[dict[str, Any]]:
         memory: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -1099,17 +1189,7 @@ class AssistantService:
             add_match(active_product, "active")
 
         for message in reversed(messages):
-            lookup = None
-            payload = message.payload or {}
-            if isinstance(payload.get("product_lookup_result"), dict):
-                lookup = payload["product_lookup_result"]
-            elif message.sender_role == "tool" and payload.get("tool_name") == "search_products":
-                try:
-                    tool_payload = json.loads(message.text or "{}")
-                except json.JSONDecodeError:
-                    tool_payload = {}
-                result = tool_payload.get("result") if isinstance(tool_payload, dict) else None
-                lookup = result if isinstance(result, dict) else None
+            lookup = AssistantService._extract_product_lookup_from_message(message)
             if not isinstance(lookup, dict):
                 continue
             for match in lookup.get("exact_matches") or []:
@@ -1143,12 +1223,95 @@ class AssistantService:
             "article": match.get("article"),
             "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
             "retail_price": match.get("retail_price"),
-            "retail_price_display": match.get("retail_price_display"),
+            "retail_price_display": AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price")),
             "corporate_price": match.get("corporate_price"),
-            "corporate_price_display": match.get("corporate_price_display"),
+            "corporate_price_display": AssistantService._format_price_text(
+                match.get("corporate_price_display"),
+                match.get("corporate_price"),
+            ),
             "unit": match.get("unit"),
             "discount_status": "unknown",
         }
+
+    @staticmethod
+    def _build_llm_product_lookup_result(product_lookup_result: dict, *, customer_text: str = "") -> dict[str, Any]:
+        payload = AssistantService._strip_similar_when_exact_found(product_lookup_result)
+        reason = str(payload.get("reason") or (payload.get("request") or {}).get("intent") or "product_info")
+        status_map = {
+            "exact_found": "точное_совпадение",
+            "multiple_exact": "несколько_точных_позиций",
+            "similar_found": "похожие_варианты",
+            "not_found": "не_найдено",
+            "invalid_query": "некорректный_запрос",
+            "error": "ошибка",
+        }
+        task_map = {
+            "availability": "наличие",
+            "stock": "наличие",
+            "price": "цена",
+            "product_info": "информация_о_товаре",
+            "compare": "сравнение",
+            "order": "заказ",
+            "discount_check": "скидка",
+            "clarification": "уточнение_варианта",
+        }
+
+        def compact_match(match: dict) -> dict[str, Any]:
+            result = {
+                "код_товара": match.get("code"),
+                "артикул": match.get("article"),
+                "остаток": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
+                "единица": str(match.get("unit") or "").strip() or None,
+            }
+            retail_price = AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
+            corporate_price = AssistantService._format_price_text(
+                match.get("corporate_price_display"),
+                match.get("corporate_price"),
+            )
+            if retail_price:
+                result["розничная_цена"] = retail_price
+            if corporate_price:
+                result["корпоративная_цена"] = corporate_price
+            if match.get("weight") is not None:
+                result["вес"] = match.get("weight")
+            if match.get("volume") is not None:
+                result["объем"] = match.get("volume")
+            return {key: value for key, value in result.items() if value not in (None, "")}
+
+        def compact_container(container: dict) -> dict[str, Any]:
+            exact = container.get("exact_matches") or []
+            similar = [] if exact else container.get("similar_matches") or []
+            return {
+                "запрос_клиента": container.get("display_query") or container.get("query"),
+                "статус": status_map.get(container.get("status"), container.get("status")),
+                "товары": [compact_match(match) for match in exact],
+                "похожие_варианты": [compact_match(match) for match in similar[:3]],
+            }
+
+        result = {
+            "тип": "результат_поиска_товаров",
+            "задача": task_map.get(reason, reason),
+            "статус": status_map.get(payload.get("status"), payload.get("status")),
+            "запрос_клиента": payload.get("display_query") or payload.get("query"),
+            "товары": [compact_match(match) for match in (payload.get("exact_matches") or [])],
+            "похожие_варианты": [
+                compact_match(match)
+                for match in ([] if payload.get("exact_matches") else (payload.get("similar_matches") or [])[:3])
+            ],
+        }
+
+        per_query_results = payload.get("results") or payload.get("per_query_results") or []
+        if len(per_query_results) > 1:
+            result["результаты_по_запросам"] = [compact_container(item) for item in per_query_results]
+
+        refinement = payload.get("resolved_followup_refinement")
+        if refinement:
+            result["уточнение_выбрало"] = {
+                "код_товара": refinement.get("code"),
+                "артикул": refinement.get("article"),
+                "значение": refinement.get("value"),
+            }
+        return {key: value for key, value in result.items() if value not in (None, [], {})}
 
     @staticmethod
     def _find_latest_handoff_status(messages: list) -> dict | None:
@@ -1206,7 +1369,7 @@ class AssistantService:
                 "mode": "backend_prelookup",
                 "status": "ok",
                 "request": call_arguments,
-                "result": product_lookup_result,
+                "result": self._build_llm_product_lookup_result(product_lookup_result, customer_text=customer_text),
             },
         )
         self._append_tool_result_message(
@@ -1215,6 +1378,7 @@ class AssistantService:
             message=tool_result_message,
             tool_name="search_products",
             source="backend_prelookup_tool_result",
+            raw_product_lookup_result=product_lookup_result,
         )
 
     def _append_assistant_tool_call_message(
@@ -1246,18 +1410,22 @@ class AssistantService:
         message: dict[str, Any],
         tool_name: str,
         source: str = "tool_result",
+        raw_product_lookup_result: dict | None = None,
     ) -> None:
+        payload = {
+            "source": source,
+            "tool_name": tool_name,
+            "tool_call_id": message.get("tool_call_id"),
+            "content": message.get("content"),
+        }
+        if raw_product_lookup_result is not None:
+            payload["raw_product_lookup_result"] = raw_product_lookup_result
         append_message(
             session,
             external_chat_id=external_chat_id,
             sender_role="tool",
             text=str(message.get("content") or ""),
-            payload={
-                "source": source,
-                "tool_name": tool_name,
-                "tool_call_id": message.get("tool_call_id"),
-                "content": message.get("content"),
-            },
+            payload=payload,
         )
 
     def _handoff_reply(
@@ -1325,6 +1493,33 @@ class AssistantService:
         return result[:5]
 
     @staticmethod
+    def _extract_recent_lookup_article_candidates(messages: list) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for message in reversed(messages):
+            lookup = AssistantService._extract_product_lookup_from_message(message)
+            if not lookup:
+                continue
+            for match in lookup.get("exact_matches") or []:
+                article = str(match.get("article") or "").strip()
+                if not article:
+                    continue
+                normalized = normalize_article(article)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                result.append(article)
+                if len(result) >= 5:
+                    return result
+        return result
+
+    @staticmethod
+    def _is_short_numeric_query_only(article_candidates: list[str]) -> bool:
+        if not article_candidates:
+            return False
+        return all(re.fullmatch(r"\d{1,6}(?:[,.]\d{1,2})?", str(candidate).strip()) for candidate in article_candidates)
+
+    @staticmethod
     def _looks_like_price_refinement(customer_text: str, article_candidates: list[str]) -> bool:
         text = customer_text.lower()
         if "код" in text:
@@ -1345,6 +1540,13 @@ class AssistantService:
         ):
             return False
         return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
+
+    @staticmethod
+    def _looks_like_explicit_history_article_followup(customer_text: str) -> bool:
+        if not AssistantService._looks_like_history_product_followup(customer_text):
+            return False
+        normalized_text = normalize_article(customer_text)
+        return bool(normalized_text and not normalized_text.isdigit())
 
     @staticmethod
     def _looks_like_history_product_followup(customer_text: str) -> bool:
@@ -1566,11 +1768,24 @@ class AssistantService:
     @staticmethod
     def _format_price_text(display_value: Any, raw_value: Any) -> str | None:
         if display_value:
-            return str(display_value).strip().rstrip(".")
+            text = str(display_value).strip().rstrip(".")
+            return AssistantService._format_price_spacing(text)
         number = AssistantService._format_number(raw_value)
         if not number:
             return None
         return f"{number} руб"
+
+    @staticmethod
+    def _format_price_spacing(text: str) -> str:
+        def replace(match: re.Match) -> str:
+            whole = re.sub(r"\s+", "", match.group("whole"))
+            fraction = match.group("fraction") or ""
+            if not whole.isdigit():
+                return match.group(0)
+            grouped = f"{int(whole):,}".replace(",", " ")
+            return f"{grouped}{fraction}"
+
+        return re.sub(r"(?P<whole>\d+(?:\s\d{3})*)(?P<fraction>[,.]\d+)?", replace, text, count=1)
 
     @staticmethod
     def _format_quantity(value: Any, unit: Any) -> str:

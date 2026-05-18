@@ -672,3 +672,19 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Задеплоить Gemini endpoint на VPS, обновить серверный `.env`, перезапустить Telegram demo service и проверить в Kie logs, что path стал `/gemini-3-pro/v1/chat/completions`.
+
+## Обновление 2026-05-18 - cleanup product follow-up queries
+
+- Убрана опасная подстановка article candidates из полного transcript для коротких уточнений.
+- `product_memory` теперь используется как контекст для модели, а не как источник backend search queries.
+- Для уточнений вроде `198 которая` backend берёт последний pending multiple-exact lookup и при необходимости переищет только его артикул, без старых товаров и цен из истории.
+- Если найдено точное совпадение, `similar_matches` вычищаются из LLM-visible результата, включая nested `results/per_query_results`.
+- `role=tool` content для модели теперь компактный и русскоязычный; raw lookup остаётся только в payload БД для восстановления product memory.
+- Цены форматируются с пробелами в тысячах, например `50 820 руб.`.
+- Проверки:
+  - `python -m pytest -q` -> `85 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Ближайший следующий шаг
+
+Задеплоить fix на VPS, проверить серверные тесты и перезапустить `amix-telegram-demo.service`.
