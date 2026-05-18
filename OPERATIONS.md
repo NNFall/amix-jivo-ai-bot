@@ -1216,6 +1216,27 @@
 - Проверки:
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
+## Итерация 33 - деплой cleanup payload на VPS
+
+- Локально изменён Kie generation payload по просьбе пользователя:
+  - `temperature` изменён на `0.6`;
+  - `max_completion_tokens` удалён из настроек и payload;
+  - обновлены `.env.example`, `settings.py`, `llm/openai_client.py`, `tests/test_llm_client.py`.
+- Локальные проверки:
+  - `python -m pytest tests\test_llm_client.py -q` -> `3 passed`;
+  - `python -m pytest -q` -> `74 passed`.
+- GitHub:
+  - создан и отправлен commit `d5514fe` (`Adjust Kie generation settings`).
+- VPS:
+  - подключение выполнено к серверу пользователя;
+  - перед деплоем `/root/amix` был на `4e0e2e8`;
+  - выполнено `cd /root/amix && git pull --ff-only`;
+  - `/root/amix` обновлён до `d5514fe`;
+  - серверный `.venv/bin/python -m pytest -q` -> `74 passed`;
+  - `amix-telegram-demo.service` перезапущен;
+  - проверка systemd: `ActiveState=active`, `SubState=running`, `UnitFileState=enabled`;
+  - проверка settings на VPS: `kie_temperature 0.6`, `has_kie_max_completion_tokens False`.
 - GitHub/VPS:
   - создан и отправлен commit `e777179` (`Tighten FAQ and refinement replies`);
   - `/root/amix` обновлён до `e777179`;

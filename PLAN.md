@@ -577,3 +577,17 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 ## Ближайший следующий шаг
 
 Задеплоить cleanup payload на VPS, прогнать live eval через Kie и проверить свежий Kie payload: compact `INTERNAL_CONTEXT_JSON`, отдельный `TOOL_RESULTS_JSON` после истории, `stream=false` без `stream_options`.
+
+## Обновление 2026-05-18 - VPS sync после Kie payload cleanup
+
+- GitHub/VPS:
+  - отправлен commit `8fd2e45` с cleanup LLM payload;
+  - отправлен commit `d5514fe` с `temperature=0.6` и удалением `max_completion_tokens`;
+  - `/root/amix` на VPS обновлён до `d5514fe`;
+  - серверный `.venv/bin/python -m pytest -q` -> `74 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running`;
+  - на VPS подтверждено: `kie_temperature=0.6`, `kie_max_completion_tokens` отсутствует.
+
+## Ближайший следующий шаг
+
+Проверить живой Telegram-диалог и свежие Kie logs: payload должен содержать `temperature=0.6`, не содержать `max_completion_tokens`, а full lookup должен быть только в `TOOL_RESULTS_JSON`.
