@@ -2,7 +2,7 @@
 
 ## Update 2026-05-20 (Switchable LLM-First Product Search)
 
-- Status: completed locally, pending VPS deploy.
+- Status: completed and deployed.
 - Done:
   - Added `ASSISTANT_BACKEND_PRELOOKUP_ENABLED`.
   - Default stays `true` so existing production behavior is unchanged unless the flag is explicitly disabled.
@@ -15,8 +15,14 @@
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`.
   - `python -m pytest -q` -> `108 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- VPS:
+  - deployed commit `1f70810`;
+  - server `.env` set to `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false`;
+  - server `.venv/bin/python -m pytest -q` -> `108 passed`;
+  - `amix-telegram-demo.service` -> `active/running/enabled`;
+  - smoke confirmed LLM-first flow: `client`, `llm_tool_call`, `tool_result`, `llm_tool_search`; stock-only reply returned only availability.
 - Next:
-  - Commit, push, deploy to VPS and set `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false` there for live Telegram testing.
+  - Test live Telegram wording with the LLM-first product search mode enabled.
 
 ## Update 2026-05-19 (LLM-first FAQ and Product Follow-ups)
 

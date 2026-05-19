@@ -19,6 +19,17 @@
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`;
   - `python -m pytest -q` -> `108 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit `daf9b10` (`Add switchable LLM-first product search`);
+  - commit `407ac06` (`Isolate backend prelookup test default`);
+  - commit `1f70810` (`Harden stock-only LLM tool results`).
+- VPS:
+  - `/root/amix` обновлён до `1f70810`;
+  - `.env` установлен `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false`;
+  - `.venv/bin/python -m pytest -q` -> `108 passed`;
+  - `amix-telegram-demo.service` перезапущен, состояние `active/running/enabled`;
+  - smoke без Telegram-отправки подтвердил LLM-first flow: `client`, `assistant_tool_call`, `tool`, `bot` с payload sources `llm_tool_call`, `tool_result`, `llm_tool_search`;
+  - smoke на `нужно наличие 14.023пр` вернул только наличие: `220 шт`, без цены/веса.
 
 ## 2026-05-16 - Iteration 16
 
