@@ -12,6 +12,7 @@
 - Backend в этом режиме только исполняет `search_products`, если LLM сама вернула tool call, и сохраняет историю как `assistant_tool_call` + `tool`.
 - Дефолт оставлен `true`, чтобы без изменения `.env` старый режим не поменялся.
 - Добавлен регрессионный тест на отключенный prelookup для артикульного вопроса.
+- Тестовая фикстура явно выставляет `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=true`, чтобы серверный `.env=false` не ломал тесты старого дефолтного сценария.
 - Проверки:
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`;
   - `python -m pytest -q` -> `107 passed`;
