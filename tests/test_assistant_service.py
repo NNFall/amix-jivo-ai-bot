@@ -1634,6 +1634,30 @@ def test_assistant_service_sanitizes_internal_search_and_database_phrasing() -> 
     assert "в текущих данных" in text
 
 
+def test_assistant_service_marks_currency_suffix_as_price_refinement() -> None:
+    assert AssistantService._looks_like_price_refinement("194р", [])  # noqa: SLF001
+    assert AssistantService._looks_like_price_refinement("194 руб", [])  # noqa: SLF001
+
+
+def test_assistant_service_extracts_named_digitless_product_query() -> None:
+    query = AssistantService._extract_named_product_query("МП ЦК белая она сколько весит")  # noqa: SLF001
+
+    assert query == "МП ЦК белая"
+
+
+def test_assistant_service_detects_unknown_codes_in_llm_reply() -> None:
+    lookup = {
+        "exact_matches": [
+            {"code": "32107", "article": "МП/ОЗ"},
+            {"code": "32108", "article": "МП/ОЗ"},
+        ],
+        "similar_matches": [],
+    }
+
+    assert AssistantService._reply_mentions_unknown_product_codes("Код 27790: МП/ЦК белая", lookup)  # noqa: SLF001
+    assert not AssistantService._reply_mentions_unknown_product_codes("Код 32107: МП/ОЗ", lookup)  # noqa: SLF001
+
+
 def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
     lookup = {
         "status": "exact_found",
@@ -1732,6 +1756,129 @@ def test_assistant_service_searches_explicit_digitless_slash_article_instead_of_
     assert "1.76 кг" in reply.text
     assert "2.16 кг" in reply.text
     assert "1108035" not in reply.text
+
+
+def test_assistant_service_searches_named_digitless_product_instead_of_previous_article(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="32107",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("15"),
+                    unit="компл",
+                    retail_price=Decimal("37"),
+                    weight=Decimal("0.060"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="28834",
+                    article="МП ЦК белая",
+                    normalized_article=normalize_article("МП ЦК белая"),
+                    free_stock=Decimal("39"),
+                    unit="шт",
+                    retail_price=Decimal("314"),
+                    weight=Decimal("0.538"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpck-weight",
+            external_client_id="telegram-user:mpck-weight",
+            customer_name="Demo User",
+            customer_text="МП/ОЗ какая масса?",
+            inbound_event_id="tg-mpck-weight-1",
+            outbound_event_id="tg-mpck-weight-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpck-weight",
+            external_client_id="telegram-user:mpck-weight",
+            customer_name="Demo User",
+            customer_text="МП ЦК белая она сколько весит",
+            inbound_event_id="tg-mpck-weight-2",
+            outbound_event_id="tg-mpck-weight-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "МП ЦК белая" in reply.text
+    assert "0.538 кг" in reply.text
+    assert "МП/ОЗ" not in reply.text
+
+
+def test_assistant_service_uses_pending_lookup_for_currency_price_refinement(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="32107",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("15"),
+                    unit="компл",
+                    retail_price=Decimal("37"),
+                    weight=Decimal("0.060"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="32108",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("18"),
+                    unit="компл",
+                    retail_price=Decimal("73"),
+                    weight=Decimal("0.012"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpoz-price-refine",
+            external_client_id="telegram-user:mpoz-price-refine",
+            customer_name="Demo User",
+            customer_text="МП/ОЗ какая масса?",
+            inbound_event_id="tg-mpoz-price-refine-1",
+            outbound_event_id="tg-mpoz-price-refine-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpoz-price-refine",
+            external_client_id="telegram-user:mpoz-price-refine",
+            customer_name="Demo User",
+            customer_text="который 194р стоит",
+            inbound_event_id="tg-mpoz-price-refine-2",
+            outbound_event_id="tg-mpoz-price-refine-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        last_bot = session.query(Message).order_by(Message.id.desc()).first()
+
+    assert "МП/ОЗ" in reply.text
+    assert "194р" not in (last_bot.payload["product_lookup_result"]["display_query"] or "")
+    assert last_bot.payload["product_lookup_result"]["display_query"] == "МП/ОЗ"
 
 
 def test_assistant_service_writes_llm_debug_payload(isolated_app_env, monkeypatch, tmp_path) -> None:

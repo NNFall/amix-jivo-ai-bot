@@ -179,6 +179,10 @@ class AssistantService:
 
         recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
         article_candidates = self._sort_queries_by_text_order(extract_article_candidates(customer_text), customer_text)
+        if not article_candidates:
+            named_product_query = self._extract_named_product_query(customer_text)
+            if named_product_query:
+                article_candidates = [named_product_query]
         history_article_candidates = self._extract_recent_lookup_article_candidates(recent_messages)
         pending_lookup = self._find_latest_pending_product_lookup(recent_messages)
         if self._looks_like_price_refinement(customer_text, article_candidates):
@@ -788,6 +792,12 @@ class AssistantService:
             customer_text=customer_text,
             backend_actions=backend_actions,
         )
+        if self._reply_mentions_unknown_product_codes(reply_text, product_lookup_result):
+            reply_text = self._build_programmatic_lookup_fallback(
+                product_lookup_result,
+                customer_text=customer_text,
+                backend_actions=backend_actions,
+            )
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
@@ -1060,6 +1070,26 @@ class AssistantService:
             ("передаю" in text and ("менеджер" in text or "специалист" in text))
             or ("подключится к диалогу" in text and ("менеджер" in text or "специалист" in text))
         )
+
+    @staticmethod
+    def _reply_mentions_unknown_product_codes(reply_text: str | None, product_lookup_result: dict) -> bool:
+        if not reply_text:
+            return False
+
+        allowed_codes = {
+            str(match.get("code")).strip()
+            for container in AssistantService._iter_lookup_result_containers(product_lookup_result)
+            for match in (container.get("exact_matches") or []) + (container.get("similar_matches") or [])
+            if match.get("code")
+        }
+        if not allowed_codes:
+            return False
+
+        mentioned_codes = {
+            match.group(1)
+            for match in re.finditer(r"\b[Кк]од(?:\s+товара)?\s+(\d{3,8})\b", reply_text)
+        }
+        return any(code not in allowed_codes for code in mentioned_codes)
 
     @staticmethod
     def _company_reply_violates_facts(reply_text: str) -> bool:
@@ -1922,6 +1952,84 @@ class AssistantService:
         return any(keyword in text for keyword in keywords)
 
     @staticmethod
+    def _extract_named_product_query(customer_text: str) -> str | None:
+        text = customer_text.strip()
+        if not text:
+            return None
+
+        lowered = text.lower()
+        if not (
+            AssistantService._is_price_stock_request(text)
+            or AssistantService._is_weight_request(text)
+            or any(keyword in lowered for keyword in ("товар", "позици", "артикул"))
+        ):
+            return None
+
+        tokens = re.findall(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9\-_/\.]*", text)
+        if not tokens:
+            return None
+
+        stopwords = {
+            "А",
+            "И",
+            "ИЛИ",
+            "ОН",
+            "ОНА",
+            "ОНО",
+            "ОНИ",
+            "У",
+            "НЕГО",
+            "НЕЕ",
+            "НЕЁ",
+            "ЭТОТ",
+            "ЭТА",
+            "ЭТО",
+            "КОТОРЫЙ",
+            "КОТОРАЯ",
+            "КАКАЯ",
+            "КАКОЙ",
+            "СКОЛЬКО",
+            "ВЕС",
+            "ВЕСИТ",
+            "МАССА",
+            "МАССУ",
+            "ЦЕНА",
+            "ЦЕНУ",
+            "СТОИТ",
+            "НАЛИЧИЕ",
+            "ЕСТЬ",
+            "ШТ",
+            "РУБ",
+        }
+        marker_tokens = {"МП", "ОЗ", "ЦК"}
+
+        normalized_tokens = [normalize_article(token) for token in tokens]
+        start_index = None
+        for index, normalized in enumerate(normalized_tokens):
+            if normalized in marker_tokens or normalized in {"МПОЗ", "МПЦК"}:
+                start_index = index
+                break
+        if start_index is None:
+            return None
+
+        phrase_tokens: list[str] = []
+        for raw_token, normalized in zip(tokens[start_index:], normalized_tokens[start_index:]):
+            if not normalized or normalized in stopwords:
+                break
+            if any(character.isdigit() for character in normalized):
+                break
+            if len(normalized) > 12:
+                break
+            phrase_tokens.append(raw_token)
+            if len(phrase_tokens) >= 4:
+                break
+
+        if len(phrase_tokens) < 2:
+            return None
+
+        return " ".join(phrase_tokens)
+
+    @staticmethod
     def _is_stock_only_request(customer_text: str) -> bool:
         text = customer_text.lower()
         has_stock_intent = any(keyword in text for keyword in ("налич", "остат", "есть"))
@@ -1988,6 +2096,7 @@ class AssistantService:
             return False
         stripped = re.sub(r"\s+", " ", text).strip()
         is_short_number = bool(re.fullmatch(r"\d+(?:[,.]\d{1,2})?", stripped))
+        is_short_price = bool(re.fullmatch(r"\d+(?:[,.]\d{1,2})?\s*(?:р|руб|рублей|₽)\.?", stripped))
         if not (
             "цен" in text
             or "руб" in text
@@ -1999,9 +2108,13 @@ class AssistantService:
             or "по " in text
             or "за " in text
             or is_short_number
+            or is_short_price
         ):
             return False
-        return bool(article_candidates) and all(candidate.isdigit() for candidate in article_candidates)
+        return is_short_price or (
+            bool(article_candidates)
+            and all(AssistantService._normalize_refinement_value(candidate).isdigit() for candidate in article_candidates)
+        )
 
     @staticmethod
     def _looks_like_explicit_history_article_followup(customer_text: str) -> bool:
