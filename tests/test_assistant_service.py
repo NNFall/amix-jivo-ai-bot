@@ -663,6 +663,74 @@ def test_assistant_service_uses_backend_prelookup_for_article_query(isolated_app
     assert reply.text == "По базе нашел варианты и цену."
 
 
+def test_assistant_service_can_disable_backend_prelookup_for_article_query(isolated_app_env, monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_BACKEND_PRELOOKUP_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("4"),
+                unit="pcs",
+                retail_price=Decimal("120"),
+                corporate_price=Decimal("100"),
+                raw_payload={},
+            )
+        )
+
+    calls: list[dict] = []
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("tools"):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        call_id="call_search_ab123",
+                        arguments={
+                            "queries": ["AB-123"],
+                            "intent": "price",
+                            "use_dialog_context": False,
+                        },
+                    )
+                ],
+            )
+        return LLMTurnResult(text="AB-123 costs 120 rub.", tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:no-backend-prelookup",
+            external_client_id="telegram-user:no-backend-prelookup",
+            customer_name="Demo User",
+            customer_text="What is the price for AB-123?",
+            inbound_event_id="tg-no-backend-prelookup",
+            outbound_event_id="tg-no-backend-prelookup:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+
+    assert reply.text == "AB-123 costs 120 rub."
+    assert len(calls) == 2
+    assert calls[0]["tool_choice"] == "auto"
+    assert calls[0]["tools"]
+    sources = [message.payload.get("source") for message in messages]
+    assert "llm_tool_call" in sources
+    assert "tool_result" in sources
+    assert "llm_tool_search" in sources
+    assert not any(str(source).startswith("backend_prelookup") for source in sources if source)
+
+
 def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

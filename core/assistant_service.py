@@ -64,6 +64,7 @@ class AssistantService:
         self.debug_llm_payloads = settings.assistant_debug_llm_payloads
         self.debug_llm_payloads_path = Path(settings.assistant_debug_llm_payloads_path)
         self.show_corporate_price = settings.show_corporate_price
+        self.backend_prelookup_enabled = settings.assistant_backend_prelookup_enabled
         self.deterministic_company_faq_enabled = settings.assistant_deterministic_company_faq_enabled
 
     def handle_client_message(
@@ -185,7 +186,7 @@ class AssistantService:
                 article_candidates = [named_product_query]
         history_article_candidates = self._extract_recent_lookup_article_candidates(recent_messages)
         pending_lookup = self._find_latest_pending_product_lookup(recent_messages)
-        if self._looks_like_price_refinement(customer_text, article_candidates):
+        if self.backend_prelookup_enabled and self._looks_like_price_refinement(customer_text, article_candidates):
             if pending_lookup:
                 pending_refinement = self._build_followup_refinement_context(customer_text, pending_lookup)
                 if pending_refinement.get("matched_exact_count") != 1:
@@ -209,7 +210,7 @@ class AssistantService:
                     is_turn_current=is_turn_current,
                 )
         contextual_followup_queries = self._resolve_contextual_product_followup_queries(customer_text, recent_messages)
-        if contextual_followup_queries:
+        if self.backend_prelookup_enabled and contextual_followup_queries:
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=contextual_followup_queries,
@@ -234,7 +235,7 @@ class AssistantService:
             and self._looks_like_explicit_history_article_followup(customer_text)
         ):
             article_candidates = self._select_history_candidates_for_followup(customer_text, history_article_candidates)
-        if self._is_explicit_manager_request(customer_text) and article_candidates:
+        if self.backend_prelookup_enabled and self._is_explicit_manager_request(customer_text) and article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=article_candidates,
@@ -267,7 +268,12 @@ class AssistantService:
 
         handoff_decision = self.handoff_service.evaluate(customer_text)
 
-        if handoff_decision.should_handoff and handoff_decision.reason == "order_request" and article_candidates:
+        if (
+            self.backend_prelookup_enabled
+            and handoff_decision.should_handoff
+            and handoff_decision.reason == "order_request"
+            and article_candidates
+        ):
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=article_candidates,
@@ -295,7 +301,12 @@ class AssistantService:
         ):
             article_candidates = history_article_candidates
 
-        if handoff_decision.should_handoff and handoff_decision.reason == "complex_technical_question" and article_candidates:
+        if (
+            self.backend_prelookup_enabled
+            and handoff_decision.should_handoff
+            and handoff_decision.reason == "complex_technical_question"
+            and article_candidates
+        ):
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=article_candidates,
@@ -346,7 +357,7 @@ class AssistantService:
                 is_turn_current=is_turn_current,
             )
 
-        if article_candidates:
+        if self.backend_prelookup_enabled and article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=article_candidates,

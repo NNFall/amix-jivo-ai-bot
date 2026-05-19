@@ -1,5 +1,22 @@
 # OPERATIONS
 
+## 2026-05-20 - Switchable LLM-first product search
+
+- По запросу пользователя временно отключается автоматический backend-prelookup, чтобы проверить режим, где модель сама решает, когда вызывать `search_products`.
+- Добавлена настройка `ASSISTANT_BACKEND_PRELOOKUP_ENABLED`.
+- При значении `false` backend больше не выполняет заранее товарный поиск по:
+  - явным артикулам в текущем сообщении;
+  - уточнениям по цене;
+  - контекстным follow-up вроде "по второму";
+  - order/technical/manager prelookup веткам.
+- Backend в этом режиме только исполняет `search_products`, если LLM сама вернула tool call, и сохраняет историю как `assistant_tool_call` + `tool`.
+- Дефолт оставлен `true`, чтобы без изменения `.env` старый режим не поменялся.
+- Добавлен регрессионный тест на отключенный prelookup для артикульного вопроса.
+- Проверки:
+  - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`;
+  - `python -m pytest -q` -> `107 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## 2026-05-16 - Iteration 16
 
 - Получена внешняя спецификация по целевой архитектуре (backend-first поиск + 2 tools) и принята как базовый ориентир доработки.
