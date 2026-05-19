@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     kie_retry_max_attempts: int = 4
     kie_retry_total_timeout_seconds: int = 120
     kie_enable_web_search: bool = False
+    google_ai_api_key: str | None = None
+    google_ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    google_ai_model: str = "gemini-3-flash-preview"
+    google_ai_reasoning_effort: str = "low"
+    google_ai_temperature: float = 0.35
+    google_ai_top_p: float = 1.0
+    google_ai_stream: bool = False
+    google_ai_http_connect_timeout_seconds: int = 10
+    google_ai_http_read_timeout_seconds: int = 180
+    google_ai_retry_max_attempts: int = 4
+    google_ai_retry_total_timeout_seconds: int = 120
     assistant_debug_lookup_logs: bool = True
     assistant_debug_llm_payloads: bool = True
     assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"

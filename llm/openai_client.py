@@ -16,6 +16,8 @@ from llm.tools import trim_text
 
 logger = logging.getLogger(__name__)
 
+GOOGLE_AI_PROVIDERS = {"google", "google_ai", "google_ai_studio", "gemini"}
+
 
 @dataclass(slots=True)
 class ToolCall:
@@ -50,6 +52,17 @@ class OpenAIService:
         self.kie_retry_max_attempts = settings.kie_retry_max_attempts
         self.kie_retry_total_timeout_seconds = settings.kie_retry_total_timeout_seconds
         self.kie_enable_web_search = settings.kie_enable_web_search
+        self.google_ai_api_key = settings.google_ai_api_key
+        self.google_ai_base_url = settings.google_ai_base_url.rstrip("/")
+        self.google_ai_model = settings.google_ai_model
+        self.google_ai_reasoning_effort = settings.google_ai_reasoning_effort
+        self.google_ai_temperature = settings.google_ai_temperature
+        self.google_ai_top_p = settings.google_ai_top_p
+        self.google_ai_stream = settings.google_ai_stream
+        self.google_ai_http_connect_timeout_seconds = settings.google_ai_http_connect_timeout_seconds
+        self.google_ai_http_read_timeout_seconds = settings.google_ai_http_read_timeout_seconds
+        self.google_ai_retry_max_attempts = settings.google_ai_retry_max_attempts
+        self.google_ai_retry_total_timeout_seconds = settings.google_ai_retry_total_timeout_seconds
 
         self.enabled = self._is_enabled()
         self.client = None
@@ -79,11 +92,15 @@ class OpenAIService:
 
         if self.provider == "kie":
             return self._run_via_kie(messages=messages, tools=tools, tool_choice=tool_choice)
+        if self.provider in GOOGLE_AI_PROVIDERS:
+            return self._run_via_google_ai_studio(messages=messages, tools=tools, tool_choice=tool_choice)
         return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
         if self.provider == "kie":
             return bool(self.kie_api_key)
+        if self.provider in GOOGLE_AI_PROVIDERS:
+            return bool(self.google_ai_api_key)
         return bool(self.openai_api_key)
 
     def _run_via_openai(
@@ -136,37 +153,112 @@ class OpenAIService:
             return LLMTurnResult(text=None, tool_calls=[])
 
         url = f"{self.kie_api_base_url}{self.kie_chat_model_path}"
+        return self._run_via_openai_compatible_http(
+            provider_name="KIE",
+            url=url,
+            api_key=self.kie_api_key,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            model=None,
+            reasoning_effort=self.kie_reasoning_effort,
+            temperature=self.kie_temperature,
+            top_p=self.kie_top_p,
+            stream=self.kie_stream,
+            parallel_tool_calls=self.kie_parallel_tool_calls,
+            connect_timeout_seconds=self.kie_http_connect_timeout_seconds,
+            read_timeout_seconds=self.kie_http_read_timeout_seconds,
+            retry_max_attempts=self.kie_retry_max_attempts,
+            retry_total_timeout_seconds=self.kie_retry_total_timeout_seconds,
+            enable_web_search=self.kie_enable_web_search,
+        )
+
+    def _run_via_google_ai_studio(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice: str,
+    ) -> LLMTurnResult:
+        if not self.google_ai_api_key:
+            return LLMTurnResult(text=None, tool_calls=[])
+
+        url = f"{self.google_ai_base_url}/chat/completions"
+        return self._run_via_openai_compatible_http(
+            provider_name="Google AI Studio",
+            url=url,
+            api_key=self.google_ai_api_key,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            model=self.google_ai_model,
+            reasoning_effort=self.google_ai_reasoning_effort,
+            temperature=self.google_ai_temperature,
+            top_p=self.google_ai_top_p,
+            stream=self.google_ai_stream,
+            parallel_tool_calls=None,
+            connect_timeout_seconds=self.google_ai_http_connect_timeout_seconds,
+            read_timeout_seconds=self.google_ai_http_read_timeout_seconds,
+            retry_max_attempts=self.google_ai_retry_max_attempts,
+            retry_total_timeout_seconds=self.google_ai_retry_total_timeout_seconds,
+            enable_web_search=False,
+        )
+
+    def _run_via_openai_compatible_http(
+        self,
+        *,
+        provider_name: str,
+        url: str,
+        api_key: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice: str,
+        model: str | None,
+        reasoning_effort: str,
+        temperature: float,
+        top_p: float,
+        stream: bool,
+        parallel_tool_calls: bool | None,
+        connect_timeout_seconds: int,
+        read_timeout_seconds: int,
+        retry_max_attempts: int,
+        retry_total_timeout_seconds: int,
+        enable_web_search: bool,
+    ) -> LLMTurnResult:
         payload_messages = [self._format_kie_message(msg) for msg in messages]
         payload: dict[str, Any] = {
             "messages": payload_messages,
-            "reasoning_effort": self.kie_reasoning_effort,
-            "temperature": self.kie_temperature,
-            "top_p": self.kie_top_p,
-            "parallel_tool_calls": self.kie_parallel_tool_calls,
-            "stream": self.kie_stream,
+            "reasoning_effort": reasoning_effort,
+            "temperature": temperature,
+            "top_p": top_p,
+            "stream": stream,
         }
+        if model:
+            payload["model"] = model
+        if parallel_tool_calls is not None:
+            payload["parallel_tool_calls"] = parallel_tool_calls
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
-        if self.kie_enable_web_search:
+        if enable_web_search:
             payload.setdefault("tools", [])
             payload["tools"] = [*payload["tools"], {"type": "web_search"}]
 
         headers = {
-            "Authorization": f"Bearer {self.kie_api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
         started_at = time.monotonic()
         last_error_type = "provider_error"
         last_retryable = True
-        for attempt in range(1, max(1, self.kie_retry_max_attempts) + 1):
+        for attempt in range(1, max(1, retry_max_attempts) + 1):
             try:
                 timeout = httpx.Timeout(
-                    connect=self.kie_http_connect_timeout_seconds,
-                    read=self.kie_http_read_timeout_seconds,
-                    write=self.kie_http_connect_timeout_seconds,
-                    pool=self.kie_http_connect_timeout_seconds,
+                    connect=connect_timeout_seconds,
+                    read=read_timeout_seconds,
+                    write=connect_timeout_seconds,
+                    pool=connect_timeout_seconds,
                 )
                 with httpx.Client(timeout=timeout) as client:
                     response = client.post(url, headers=headers, json=payload)
@@ -176,28 +268,46 @@ class OpenAIService:
                 status_code = exc.response.status_code
                 last_error_type = "rate_limit_or_quota" if status_code == 429 else f"http_{status_code}"
                 last_retryable = status_code in {429, 500, 502, 503, 504}
-                logger.warning("KIE request failed with HTTP %s on attempt %s", status_code, attempt)
-                if self._should_retry_kie(started_at, attempt, last_retryable):
+                logger.warning("%s request failed with HTTP %s on attempt %s", provider_name, status_code, attempt)
+                if self._should_retry_provider(
+                    started_at=started_at,
+                    attempt=attempt,
+                    retryable=last_retryable,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_total_timeout_seconds=retry_total_timeout_seconds,
+                ):
                     self._sleep_before_retry(attempt)
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
             except (httpx.TimeoutException, httpx.NetworkError) as exc:  # pragma: no cover - external API failure path
                 last_error_type = "timeout" if isinstance(exc, httpx.TimeoutException) else "network_error"
                 last_retryable = True
-                logger.warning("KIE %s on attempt %s: %s", last_error_type, attempt, exc)
-                if self._should_retry_kie(started_at, attempt, last_retryable):
+                logger.warning("%s %s on attempt %s: %s", provider_name, last_error_type, attempt, exc)
+                if self._should_retry_provider(
+                    started_at=started_at,
+                    attempt=attempt,
+                    retryable=last_retryable,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_total_timeout_seconds=retry_total_timeout_seconds,
+                ):
                     self._sleep_before_retry(attempt)
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=True)
             except Exception:  # pragma: no cover - external API failure path
-                logger.exception("KIE request failed")
+                logger.exception("%s request failed", provider_name)
                 return LLMTurnResult(text=None, tool_calls=[], error_type="provider_error", retryable=True)
 
             provider_error = self._extract_provider_error(data)
             if provider_error is not None:
                 last_error_type, last_retryable = provider_error
-                logger.warning("KIE provider returned %s on attempt %s", last_error_type, attempt)
-                if self._should_retry_kie(started_at, attempt, last_retryable):
+                logger.warning("%s provider returned %s on attempt %s", provider_name, last_error_type, attempt)
+                if self._should_retry_provider(
+                    started_at=started_at,
+                    attempt=attempt,
+                    retryable=last_retryable,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_total_timeout_seconds=retry_total_timeout_seconds,
+                ):
                     self._sleep_before_retry(attempt)
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
@@ -207,8 +317,14 @@ class OpenAIService:
             if not text and not tool_calls:
                 last_error_type = "empty_response"
                 last_retryable = True
-                logger.warning("KIE provider returned empty response on attempt %s", attempt)
-                if self._should_retry_kie(started_at, attempt, last_retryable):
+                logger.warning("%s provider returned empty response on attempt %s", provider_name, attempt)
+                if self._should_retry_provider(
+                    started_at=started_at,
+                    attempt=attempt,
+                    retryable=last_retryable,
+                    retry_max_attempts=retry_max_attempts,
+                    retry_total_timeout_seconds=retry_total_timeout_seconds,
+                ):
                     self._sleep_before_retry(attempt)
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
@@ -217,11 +333,28 @@ class OpenAIService:
         return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
 
     def _should_retry_kie(self, started_at: float, attempt: int, retryable: bool) -> bool:
+        return self._should_retry_provider(
+            started_at=started_at,
+            attempt=attempt,
+            retryable=retryable,
+            retry_max_attempts=self.kie_retry_max_attempts,
+            retry_total_timeout_seconds=self.kie_retry_total_timeout_seconds,
+        )
+
+    @staticmethod
+    def _should_retry_provider(
+        *,
+        started_at: float,
+        attempt: int,
+        retryable: bool,
+        retry_max_attempts: int,
+        retry_total_timeout_seconds: int,
+    ) -> bool:
         if not retryable:
             return False
-        if attempt >= max(1, self.kie_retry_max_attempts):
+        if attempt >= max(1, retry_max_attempts):
             return False
-        return (time.monotonic() - started_at) < self.kie_retry_total_timeout_seconds
+        return (time.monotonic() - started_at) < retry_total_timeout_seconds
 
     @staticmethod
     def _sleep_before_retry(attempt: int) -> None:

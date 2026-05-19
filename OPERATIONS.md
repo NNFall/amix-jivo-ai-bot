@@ -1412,6 +1412,26 @@
   - серверный `.venv/bin/python -m pytest -q` -> `85 passed`;
   - `amix-telegram-demo.service` перезапущен;
   - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState` -> `active/running`.
+
+## Итерация 41 - direct Google AI Studio provider
+
+- По официальной документации Google проверен OpenAI-compatible endpoint Gemini API:
+  - base URL: `https://generativelanguage.googleapis.com/v1beta/openai/`;
+  - chat endpoint: `/chat/completions`;
+  - авторизация: `Authorization: Bearer GEMINI_API_KEY`.
+- Проверено ограничение по моделям:
+  - `gemini-3-pro-preview` выключен;
+  - актуальная Pro-ветка настраивается через `GOOGLE_AI_MODEL`;
+  - для Free tier Pro-модель по pricing-докам недоступна, поэтому runtime-модель должна оставаться конфигурируемой.
+- Внесены локальные изменения:
+  - добавлен provider `google_ai_studio` в `llm/openai_client.py`;
+  - Kie-ветка не удалена, осталась переключаемой через `LLM_PROVIDER=kie`;
+  - добавлены `GOOGLE_AI_*` настройки в `settings.py` и `.env.example`;
+  - обновлены README и тесты provider payload.
+- Проверки:
+  - `python -m pytest tests\test_llm_client.py -q` -> `6 passed`;
+  - `python -m pytest -q` -> `90 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

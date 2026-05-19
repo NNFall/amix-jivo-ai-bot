@@ -20,6 +20,7 @@ def isolated_app_env(monkeypatch, tmp_path) -> Iterator[None]:
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("KIE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_AI_API_KEY", raising=False)
     get_settings.cache_clear()
 
     engine = create_engine(

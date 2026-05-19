@@ -103,6 +103,51 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["json"]["messages"][2]["role"] == "user"
 
 
+def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-google-key")
+    monkeypatch.setenv("GOOGLE_AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
+    monkeypatch.setenv("GOOGLE_AI_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("GOOGLE_AI_REASONING_EFFORT", "low")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    service = OpenAIService(get_settings())
+    turn = service.run_messages(
+        messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "test"},
+        ],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_products",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        tool_choice="auto",
+    )
+
+    assert turn.text and "KIE" in turn.text
+    assert collector["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    assert collector["headers"]["Authorization"] == "Bearer test-google-key"
+    assert collector["json"]["model"] == "gemini-3-flash-preview"
+    assert collector["json"]["reasoning_effort"] == "low"
+    assert collector["json"]["temperature"] == 0.35
+    assert collector["json"]["top_p"] == 1.0
+    assert collector["json"]["stream"] is False
+    assert collector["json"]["tool_choice"] == "auto"
+    assert collector["json"]["tools"][0]["function"]["name"] == "search_products"
+    assert "parallel_tool_calls" not in collector["json"]
+    assert "max_completion_tokens" not in collector["json"]
+    assert "stream_options" not in collector["json"]
+
+
 def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
     messages = build_product_facts_messages(
         transcript="Клиент: тест",

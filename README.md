@@ -40,12 +40,14 @@ python main.py
 
 ## Переменные окружения
 
-- `LLM_PROVIDER`: `openai` или `kie`.
+- `LLM_PROVIDER`: `openai`, `kie` или `google_ai_studio`.
 - `JIVO_WEBHOOK_TOKEN`: токен в URL входящего webhook.
 - `JIVO_BOT_API_URL`: исходящий endpoint Jivo Bot API для отправки сообщений и `INVITE_AGENT`.
 - `OPENAI_API_KEY`: ключ OpenAI API.
 - `KIE_API_KEY`: ключ KIE API для модели через KIE.
 - `KIE_CHAT_MODEL_PATH`: путь chat completions endpoint, по умолчанию `/gemini-3-pro/v1/chat/completions`.
+- `GOOGLE_AI_API_KEY`: ключ Google AI Studio/Gemini API для прямого подключения без KIE.
+- `GOOGLE_AI_MODEL`: модель Gemini для прямого Google API, по умолчанию `gemini-3-flash-preview`.
 - `DATABASE_URL`: SQLite-путь или другой SQLAlchemy-compatible DSN.
 
 ## Полезные команды
@@ -61,7 +63,7 @@ python scripts\run_telegram_demo.py
 
 Для демонстрационной версии без Jivo можно запустить Telegram-бота long polling:
 
-- заполнить `.env` минимум полями `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL`;
+- заполнить `.env` минимум полями `TELEGRAM_BOT_TOKEN`, `DATABASE_URL` и ключом выбранного LLM-провайдера (`OPENAI_API_KEY`, `KIE_API_KEY` или `GOOGLE_AI_API_KEY`);
 - при необходимости заранее импортировать XML в базу;
 - запустить `python scripts\run_telegram_demo.py`.
 
