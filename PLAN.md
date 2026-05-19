@@ -799,3 +799,8 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `python -m pytest tests\test_llm_client.py -q` -> `7 passed`;
   - `python -m pytest -q` -> `91 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- VPS:
+  - `.env` дополнен audit-настройками;
+  - `.venv/bin/python -m pytest -q` -> `91 passed`;
+  - smoke direct Google request записал retryable `503` attempt и последующий successful attempt;
+  - `scripts/show_llm_audit.py` используется для просмотра последних записей.

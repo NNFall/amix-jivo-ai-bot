@@ -1464,6 +1464,12 @@
   - `python -m pytest tests\test_llm_client.py -q` -> `7 passed`;
   - `python -m pytest -q` -> `91 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `93ea79c`;
+  - серверный `.env` дополнен `LLM_AUDIT_LOG_ENABLED=true`, `LLM_AUDIT_LOG_PATH=data/logs/llm_audit_recent.json`, `LLM_AUDIT_LOG_MAX_ENTRIES=100`, `LLM_COST_USD_TO_RUB=100`;
+  - серверный `.venv/bin/python -m pytest -q` -> `91 passed`;
+  - smoke direct Google request записал audit: первый provider attempt получил retryable `503`, следующий attempt завершился успешно с текстом `OK`;
+  - исправлен запуск `scripts/show_llm_audit.py` из папки проекта через добавление project root в `sys.path`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:
