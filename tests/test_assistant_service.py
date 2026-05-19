@@ -1623,6 +1623,17 @@ def test_assistant_service_sanitizes_link_or_photo_request() -> None:
     assert "код товара с сайта или цену в карточке" in text
 
 
+def test_assistant_service_sanitizes_internal_search_and_database_phrasing() -> None:
+    text = AssistantService._sanitize_customer_reply(  # noqa: SLF001
+        "Для проверки наличия товаров мне нужно воспользоваться поиском.\n"
+        "В нашей базе данных по артикулу есть 2 шт."
+    )
+
+    assert "воспользоваться поиском" not in text
+    assert "базе данных" not in text
+    assert "в текущих данных" in text
+
+
 def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
     lookup = {
         "status": "exact_found",
@@ -1649,6 +1660,78 @@ def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
     assert match["retail_price_display"] is None
     assert match["corporate_price"] is None
     assert match["corporate_price_display"] is None
+
+
+def test_assistant_service_searches_explicit_digitless_slash_article_instead_of_previous_active_product(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="26141",
+                    article="1108035",
+                    normalized_article=normalize_article("1108035"),
+                    free_stock=Decimal("2"),
+                    unit="компл",
+                    retail_price=Decimal("50820"),
+                    weight=None,
+                    raw_payload={},
+                ),
+                Product(
+                    code="27817",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("33"),
+                    unit="шт",
+                    retail_price=Decimal("1299"),
+                    weight=Decimal("1.760"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="27818",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("219"),
+                    unit="шт",
+                    retail_price=Decimal("1150"),
+                    weight=Decimal("2.160"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpoz-weight",
+            external_client_id="telegram-user:mpoz-weight",
+            customer_name="Demo User",
+            customer_text="26141 какая цена",
+            inbound_event_id="tg-mpoz-weight-1",
+            outbound_event_id="tg-mpoz-weight-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:mpoz-weight",
+            external_client_id="telegram-user:mpoz-weight",
+            customer_name="Demo User",
+            customer_text="МП/ОЗ у него какая масса?",
+            inbound_event_id="tg-mpoz-weight-2",
+            outbound_event_id="tg-mpoz-weight-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "МП/ОЗ" in reply.text
+    assert "1.76 кг" in reply.text
+    assert "2.16 кг" in reply.text
+    assert "1108035" not in reply.text
 
 
 def test_assistant_service_writes_llm_debug_payload(isolated_app_env, monkeypatch, tmp_path) -> None:

@@ -1207,6 +1207,19 @@ class AssistantService:
         text = re.sub(r"\b[Вв] наличии:\s*", "В наличии ", text)
         text = re.sub(r"\b[Аа]ртикул:\s*", "Артикул ", text)
         text = re.sub(r"\b[Кк]од:\s*", "Код ", text)
+        text = re.sub(
+            r"\b[Дд]ля проверки наличия товаров мне нужно воспользоваться поиском\.?\s*",
+            "",
+            text,
+        )
+        text = re.sub(
+            r"\b[Дд]ля проверки(?: товара| товаров| информации)? мне нужно воспользоваться поиском\.?\s*",
+            "",
+            text,
+        )
+        text = re.sub(r"\b[Вв] нашей базе данных\b", "в текущих данных", text)
+        text = re.sub(r"\b[Вв] базе данных\b", "в текущих данных", text)
+        text = re.sub(r"\b[Пп]о базе данных\b", "по текущим данным", text)
         cleaned_lines = []
         for line in text.splitlines():
             stripped = line.strip()
@@ -1566,6 +1579,8 @@ class AssistantService:
                 match.get("corporate_price"),
             ),
             "unit": match.get("unit"),
+            "weight": match.get("weight"),
+            "volume": match.get("volume"),
             "discount_status": "unknown",
         }
 
@@ -1921,6 +1936,8 @@ class AssistantService:
             return "price"
         if "остат" in text or "в наличии" in text or "налич" in text:
             return "stock"
+        if "вес" in text or "масс" in text:
+            return "product_info"
         if "сравн" in text:
             return "compare"
         return "product_info"
@@ -2236,6 +2253,7 @@ class AssistantService:
                 article = item.get("article") or query
                 stock_text = AssistantService._format_quantity(item.get("stock"), item.get("unit"))
                 retail_price = AssistantService._format_price_text(item.get("retail_price_display"), item.get("retail_price"))
+                weight_text = AssistantService._format_measure_text(item.get("weight"), "кг")
                 corporate_price = (
                     AssistantService._format_price_text(item.get("corporate_price_display"), item.get("corporate_price"))
                     if show_corporate_price
@@ -2246,6 +2264,12 @@ class AssistantService:
                     parts = [AssistantService._finish_sentence(f"По коду {code} нашёл артикул {article}")]
                 else:
                     parts = [AssistantService._finish_sentence(f"Да, нашёл {article}")]
+                if AssistantService._is_weight_request(customer_text):
+                    if weight_text:
+                        parts.append(f"Вес {weight_text}.")
+                    else:
+                        parts.append("Вес в текущих данных не указан.")
+                    return " ".join(parts)
                 parts.append(f"Сейчас в наличии {stock_text}.")
                 if stock_only_request:
                     parts.append("По цене тоже подсказать?")
@@ -2258,6 +2282,18 @@ class AssistantService:
                 return " ".join(parts)
 
             display_query = AssistantService._display_query_for_matches(query, exact)
+            if AssistantService._is_weight_request(customer_text):
+                variants = []
+                for match in exact[:5]:
+                    weight_text = AssistantService._format_measure_text(match.get("weight"), "кг")
+                    if not weight_text:
+                        continue
+                    variants.append(
+                        f"код {match.get('code') or '-'} — вес {weight_text}, "
+                        f"остаток {AssistantService._format_quantity(match.get('stock'), match.get('unit'))}"
+                    )
+                if variants:
+                    return f"По {display_query} есть несколько позиций, вес отличается: {'; '.join(variants)}. Если нужен конкретный вариант, уточните код товара."
             if "дешев" in customer_text.lower():
                 priced_matches = [
                     match for match in exact if AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
@@ -2325,6 +2361,18 @@ class AssistantService:
         number = AssistantService._format_number(value) or "0"
         unit_text = str(unit or "шт").strip().rstrip(".") or "шт"
         return f"{number} {unit_text}"
+
+    @staticmethod
+    def _format_measure_text(value: Any, unit: str) -> str | None:
+        number = AssistantService._format_number(value)
+        if not number:
+            return None
+        return f"{number} {unit}"
+
+    @staticmethod
+    def _is_weight_request(customer_text: str) -> bool:
+        text = customer_text.lower()
+        return "вес" in text or "масс" in text
 
     @staticmethod
     def _finish_sentence(text: str) -> str:

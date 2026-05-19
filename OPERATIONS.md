@@ -1217,6 +1217,23 @@
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 47 - исправление `МП/ОЗ` и вопросов по весу
+
+- Изучены live-логи Telegram и SQLite на VPS по диалогу 2026-05-20:
+  - ответы были реальными вызовами `gemini-3.1-flash-lite`, а не чистыми системными шаблонами;
+  - audit latency: наличие около 1.8 сек, адрес около 6.0 сек, mixed lookup около 2.1 сек, цена `26141` около 1.65 сек, `МП/ОЗ` около 3.1 сек;
+  - на `МП/ОЗ у него какая масса?` backend отправил в поиск `1108035`, а не `МП/ОЗ`;
+  - причина: extractor не считал артикулом значение без цифр, даже если это явный слэш-формат.
+- Внесено локально:
+  - `products/article_utils.py`: добавлен безопасный разбор коротких digitless slash-артикулов;
+  - `core/assistant_service.py`: compact memory теперь сохраняет `weight`/`volume`;
+  - `core/assistant_service.py`: fallback на вопросы по весу выводит вес по одной или нескольким точным позициям;
+  - `core/assistant_service.py`: sanitizer убирает внутреннюю фразу "воспользоваться поиском" и заменяет "база данных" на "текущие данные";
+  - добавлены регрессионные тесты на `МП/ОЗ`, неправильную привязку к предыдущему `1108035` и sanitizer.
+- Проверки:
+  - `PYTHONPATH=. python -m pytest tests/test_article_utils.py tests/test_assistant_service.py -q` -> `60 passed`;
+  - `PYTHONPATH=. python -m pytest -q` -> `101 passed`.
+
 ## Итерация 43 - LLM-first FAQ и порядок товарных уточнений
 
 - По Telegram-проверке обнаружено:

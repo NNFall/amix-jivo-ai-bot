@@ -94,13 +94,28 @@ def build_normalized_article_variants(article: str) -> list[str]:
     return variants
 
 
+def _looks_like_digitless_slash_article(raw_value: str) -> bool:
+    if "/" not in raw_value:
+        return False
+
+    parts = [normalize_article(part) for part in raw_value.split("/")]
+    parts = [part for part in parts if part]
+    if len(parts) < 2:
+        return False
+    if any(part in ARTICLE_JOIN_STOPWORDS for part in parts):
+        return False
+
+    return all(1 <= len(part) <= 6 and re.fullmatch(r"[A-ZА-Я]+", part) for part in parts)
+
+
 def extract_article_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
     tokens = ARTICLE_TOKEN_RE.findall(text)
 
     def _push(raw_value: str) -> None:
-        if not any(character.isdigit() for character in raw_value):
+        has_digit = any(character.isdigit() for character in raw_value)
+        if not has_digit and not _looks_like_digitless_slash_article(raw_value):
             return
 
         normalized = normalize_article(raw_value)

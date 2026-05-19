@@ -28,6 +28,11 @@ def test_extract_article_candidates_handles_cyrillic_oz() -> None:
     assert extract_article_candidates(text) == ["ОЗ700"]
 
 
+def test_extract_article_candidates_handles_digitless_slash_article() -> None:
+    text = "МП/ОЗ у него какая масса?"
+    assert extract_article_candidates(text) == ["МПОЗ"]
+
+
 def test_extract_article_candidates_combines_short_prefix_with_numeric_token() -> None:
     text = "МП 28ск"
     candidates = extract_article_candidates(text)
