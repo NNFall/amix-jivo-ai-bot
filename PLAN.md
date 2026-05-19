@@ -80,7 +80,7 @@
 
 ## Update 2026-05-19 (Switch Default To Gemini 3.1 Flash Lite + Safer Consulting Prompt)
 
-- Status: completed locally, pending VPS deploy.
+- Status: completed and deployed.
 - Done:
   - Changed default direct Google model to `gemini-3.1-flash-lite`.
   - Updated prompt with general consulting rules:
@@ -92,8 +92,13 @@
   - `python -m pytest tests\test_assistant_service.py tests\test_dialog_regression.py -q` -> `50 passed`.
   - `python -m pytest -q` -> `98 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- VPS:
+  - commit `2a31de6` deployed to `/root/amix`;
+  - server `.env` set to `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`;
+  - server `.venv/bin/python -m pytest -q` -> `98 passed`;
+  - `amix-telegram-demo.service` -> `active/running/enabled`.
 - Next:
-  - Deploy to VPS and set server `.env` `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`.
+  - Verify live Telegram behavior on the next user test message.
 
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 

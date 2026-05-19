@@ -1328,6 +1328,15 @@
   - `python -m pytest tests\test_assistant_service.py tests\test_dialog_regression.py -q` -> `50 passed`;
   - `python -m pytest -q` -> `98 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `2a31de6`;
+  - message: `Use Gemini Flash Lite and tighten consulting prompt`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `2a31de6`;
+  - серверный `.env` обновлён: `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`;
+  - серверный `.venv/bin/python -m pytest -q` -> `98 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running/enabled`.
 
 ## Итерация 39 - real handoff action guard
 
