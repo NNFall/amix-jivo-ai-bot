@@ -10,12 +10,14 @@
   - контекстным follow-up вроде "по второму";
   - order/technical/manager prelookup веткам.
 - Backend в этом режиме только исполняет `search_products`, если LLM сама вернула tool call, и сохраняет историю как `assistant_tool_call` + `tool`.
+- Для LLM-first stock-only сценария исправлен порядок применения политики: tool-result, который видит модель, теперь уже очищен от цен, корпоративных цен, веса и объёма.
+- Добавлен guard: если модель всё равно пишет цену или вес в ответе на вопрос только про наличие, ответ заменяется безопасным программным fallback по остатку.
 - Дефолт оставлен `true`, чтобы без изменения `.env` старый режим не поменялся.
 - Добавлен регрессионный тест на отключенный prelookup для артикульного вопроса.
 - Тестовая фикстура явно выставляет `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=true`, чтобы серверный `.env=false` не ломал тесты старого дефолтного сценария.
 - Проверки:
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`;
-  - `python -m pytest -q` -> `107 passed`;
+  - `python -m pytest -q` -> `108 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
 ## 2026-05-16 - Iteration 16

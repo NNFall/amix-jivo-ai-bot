@@ -620,6 +620,10 @@ class AssistantService:
                 reason=str(call.arguments.get("intent") or call.arguments.get("reason") or "unknown"),
                 customer_text=customer_text,
             )
+            llm_lookup_result = self._build_tool_visible_product_lookup_result(
+                lookup_result,
+                customer_text=customer_text,
+            )
             tool_result_message = OpenAIService.build_tool_result_message(
                 tool_call_id=call.call_id,
                 name="search_products",
@@ -627,7 +631,7 @@ class AssistantService:
                     "tool_name": "search_products",
                     "status": "ok",
                     "request": call.arguments,
-                    "result": self._build_llm_product_lookup_result(lookup_result, customer_text=customer_text),
+                    "result": self._build_llm_product_lookup_result(llm_lookup_result, customer_text=customer_text),
                 },
             )
             self._append_tool_result_message(
@@ -809,6 +813,12 @@ class AssistantService:
                 customer_text=customer_text,
                 backend_actions=backend_actions,
             )
+        if stock_only_request and self._stock_only_reply_leaks_extra_facts(reply_text):
+            reply_text = self._build_programmatic_lookup_fallback(
+                product_lookup_result,
+                customer_text=customer_text,
+                backend_actions=backend_actions,
+            )
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
@@ -895,7 +905,42 @@ class AssistantService:
                     match["retail_price_display"] = None
                     match["corporate_price"] = None
                     match["corporate_price_display"] = None
+                    match["weight"] = None
+                    match["volume"] = None
         return payload
+
+    def _build_tool_visible_product_lookup_result(self, product_lookup_result: dict, *, customer_text: str) -> dict:
+        corporate_price_requested = self._is_corporate_price_request(customer_text)
+        payload = self._apply_response_policy(
+            product_lookup_result,
+            show_corporate_price=self.show_corporate_price and corporate_price_requested,
+        )
+        return self._apply_stock_only_policy(payload, self._is_stock_only_request(customer_text))
+
+    @staticmethod
+    def _stock_only_reply_leaks_extra_facts(reply_text: str | None) -> bool:
+        if not reply_text:
+            return False
+        text = reply_text.lower()
+        return any(
+            marker in text
+            for marker in (
+                "руб",
+                "₽",
+                "рознич",
+                "корпоратив",
+                "цена",
+                "цене",
+                "стоим",
+                "вес",
+                " кг",
+                "rub",
+                "price",
+                "cost",
+                "weight",
+                " kg",
+            )
+        )
 
     @staticmethod
     def _apply_followup_refinement(product_lookup_result: dict, refinement_context: dict) -> dict:

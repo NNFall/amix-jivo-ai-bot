@@ -731,6 +731,76 @@ def test_assistant_service_can_disable_backend_prelookup_for_article_query(isola
     assert not any(str(source).startswith("backend_prelookup") for source in sources if source)
 
 
+def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_request(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ASSISTANT_BACKEND_PRELOOKUP_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("4"),
+                unit="pcs",
+                retail_price=Decimal("120"),
+                corporate_price=Decimal("100"),
+                weight=Decimal("0.500"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        if kwargs.get("tools"):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        call_id="call_stock_ab123",
+                        arguments={
+                            "queries": ["AB-123"],
+                            "intent": "stock",
+                            "use_dialog_context": False,
+                        },
+                    )
+                ],
+            )
+        captured["final_messages"] = kwargs["messages"]
+        return LLMTurnResult(text="AB-123 costs 120 rub. Weight is 0.500 kg.", tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-only-tool-result",
+            external_client_id="telegram-user:stock-only-tool-result",
+            customer_name="Demo User",
+            customer_text="\u0415\u0441\u0442\u044c AB-123?",
+            inbound_event_id="tg-stock-only-tool-result",
+            outbound_event_id="tg-stock-only-tool-result:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
+
+    tool_content = tool_message.payload["content"]
+    assert "120" not in tool_content
+    assert "100" not in tool_content
+    assert "0.500" not in tool_content
+    assert all("120" not in str(message.get("content")) for message in captured["final_messages"])
+    assert "120 rub" not in reply.text
+    assert "4 pcs" in reply.text
+
+
 def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

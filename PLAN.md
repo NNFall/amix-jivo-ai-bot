@@ -8,10 +8,12 @@
   - Default stays `true` so existing production behavior is unchanged unless the flag is explicitly disabled.
   - When disabled, backend no longer performs automatic product prelookup for article, price-refinement, contextual follow-up, order, manager or technical prelookup branches.
   - Product facts are fetched only when the LLM calls `search_products`; backend then executes exactly that tool call and stores `assistant_tool_call` + `tool` history.
+  - Hardened LLM-first stock-only flow: tool results visible to the model hide price, corporate price, weight and volume when the customer asks only for availability/stock.
+  - Added a guard that replaces a stock-only LLM reply with deterministic stock fallback if the model still mentions price or weight.
   - Added regression coverage proving an article query goes through LLM tool-call flow when backend prelookup is disabled.
 - Checks:
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_can_disable_backend_prelookup_for_article_query tests\test_assistant_service.py::test_assistant_service_uses_backend_prelookup_for_article_query -q` -> `2 passed`.
-  - `python -m pytest -q` -> `107 passed`.
+  - `python -m pytest -q` -> `108 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - Next:
   - Commit, push, deploy to VPS and set `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false` there for live Telegram testing.
