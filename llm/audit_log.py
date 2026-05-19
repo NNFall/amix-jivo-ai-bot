@@ -14,7 +14,10 @@ _AUDIT_LOCK = threading.Lock()
 
 GOOGLE_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
     # Official Google Gemini API pricing is USD per 1M tokens.
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "gemini-3.1-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-3.1-flash-lite-preview": {"input": 0.10, "output": 0.40},
     "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
 }
 
