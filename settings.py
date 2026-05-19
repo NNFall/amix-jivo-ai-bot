@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     kie_enable_web_search: bool = False
     google_ai_api_key: str | None = None
     google_ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    google_ai_model: str = "gemini-3-flash-preview"
+    google_ai_model: str = "gemini-3.1-flash-lite"
     google_ai_reasoning_effort: str = "low"
     google_ai_temperature: float = 0.35
     google_ai_top_p: float = 1.0

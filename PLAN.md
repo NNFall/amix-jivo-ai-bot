@@ -78,6 +78,23 @@
 - Next:
   - Keep `gemini-3.1-flash-lite` as the practical default unless a new guarded comparison shows Pro quality is materially better for AMIX.
 
+## Update 2026-05-19 (Switch Default To Gemini 3.1 Flash Lite + Safer Consulting Prompt)
+
+- Status: completed locally, pending VPS deploy.
+- Done:
+  - Changed default direct Google model to `gemini-3.1-flash-lite`.
+  - Updated prompt with general consulting rules:
+    no pushy sales wording, no order/offering language without explicit purchase intent, no technical recommendations from article/name/common knowledge.
+  - Added backend guard for technical handoff answers:
+    keep checked article names, but remove model-inferred technical explanations when structured data has no characteristics.
+  - Updated README and `.env.example`.
+- Checks:
+  - `python -m pytest tests\test_assistant_service.py tests\test_dialog_regression.py -q` -> `50 passed`.
+  - `python -m pytest -q` -> `98 passed`.
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Deploy to VPS and set server `.env` `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`.
+
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
 - Status: completed and deployed

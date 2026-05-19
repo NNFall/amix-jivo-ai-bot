@@ -1313,6 +1313,22 @@
   - `/root/amix/data/logs/model_compare_2026-05-19-combined.md`;
   - `/root/amix/data/logs/model_compare_2026-05-19-combined.json`.
 
+## Итерация 47 - switch default model and safer consulting prompt
+
+- По запросу пользователя выбрана модель `gemini-3.1-flash-lite` как практический default.
+- Внесено:
+  - `settings.py`: default `google_ai_model = "gemini-3.1-flash-lite"`;
+  - `.env.example` и README обновлены под новую модель;
+  - prompt дополнен общими правилами консультанта первой линии:
+    не дожимать к покупке, не предлагать оформление без явного запроса, не давать технические рекомендации без данных;
+  - prompt не содержит частного запрета под один кейс, вместо этого добавлено общее правило:
+    не выводить назначение, совместимость, сторону установки, материал, размеры, монтаж или смысл обозначений из артикула/названия/общих знаний;
+  - backend guard для `complex_technical_question` теперь заменяет модельные технические догадки безопасным текстом, но сохраняет проверенные артикулы.
+- Проверки:
+  - `python -m pytest tests\test_assistant_service.py tests\test_dialog_regression.py -q` -> `50 passed`;
+  - `python -m pytest -q` -> `98 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## Итерация 39 - real handoff action guard
 
 - По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.

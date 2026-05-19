@@ -685,7 +685,7 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
         )
 
     assert reply.handoff_reason == "complex_technical_question"
-    assert "Для точного подбора нужны параметры" in reply.text
+    assert "не могу безопасно подобрать" in reply.text
     assert "подключится к диалогу" in reply.text
 
 
@@ -945,11 +945,63 @@ def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_
             outbound_event_id="tg-10:bot",
             payload={"platform": "telegram"},
             handoff_mode="demo",
+    )
+
+    assert reply.handoff_reason == "complex_technical_question"
+    assert "не могу безопасно подобрать" in reply.text
+    assert "подключится к диалогу" in reply.text
+
+
+def test_complex_product_handoff_discards_llm_technical_guess(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="769",
+                    article="14.023л.",
+                    normalized_article="14023Л",
+                    free_stock=Decimal("253"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article="14023ПР",
+                    free_stock=Decimal("220"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Эти товары отличаются стороной установки и являются зеркальными.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:technical-guard",
+            external_client_id="telegram-user:technical-guard",
+            customer_name="Demo User",
+            customer_text="чем 14.023л отличается от 14.023пр?",
+            inbound_event_id="tg-technical-guard",
+            outbound_event_id="tg-technical-guard:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
         )
 
     assert reply.handoff_reason == "complex_technical_question"
-    assert "Для точного подбора нужны параметры" in reply.text
-    assert "подключится к диалогу" in reply.text
+    assert "стороной установки" not in reply.text
+    assert "зеркаль" not in reply.text.lower()
+    assert "Технических характеристик" in reply.text
+    assert "Передаю вопрос менеджеру" in reply.text
 
 
 def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(isolated_app_env) -> None:

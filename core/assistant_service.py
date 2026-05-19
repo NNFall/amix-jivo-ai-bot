@@ -1114,16 +1114,40 @@ class AssistantService:
             return reply_text
 
         if handoff_reason == "order_request":
-            return f"{reply_text} Передаю заказ менеджеру. Он подключится к диалогу и поможет оформить."
+            return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и поможет с оформлением."
         if handoff_reason == "corporate_price_request":
             return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и уточнит условия по цене."
         if handoff_reason == "complex_technical_question":
-            return (
-                f"{reply_text} По текущим данным могу сравнить только данные из базы: код, артикул, цену, "
-                "остаток, единицу измерения, вес и объём. Технического описания отличий в базе нет. "
-                "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
-            )
+            return AssistantService._safe_technical_handoff_text(reply_text)
         return f"{reply_text} Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
+
+    @staticmethod
+    def _safe_technical_handoff_text(reply_text: str) -> str:
+        articles = AssistantService._extract_article_mentions(reply_text)
+        checked_text = f"Проверил позиции: {', '.join(articles)}. " if articles else ""
+        safe_text = (
+            f"{checked_text}По текущим данным могу сравнить только то, что есть в карточках: код, артикул, цену, "
+            "остаток, единицу измерения, вес и объём. Технических характеристик для подбора или сравнения "
+            "в текущих данных нет. Технического описания отличий нет. Передаю вопрос менеджеру. "
+            "Он подключится к диалогу и поможет вам."
+        )
+        text_lower = reply_text.lower()
+        if "по текущим данным" in text_lower and "техничес" in text_lower and "переда" in text_lower:
+            return reply_text
+        return safe_text
+
+    @staticmethod
+    def _extract_article_mentions(text: str) -> list[str]:
+        matches = re.findall(r"\b\d{1,4}(?:\.\d{1,4})+(?:[A-Za-zА-Яа-я]+\.?)?", text)
+        result: list[str] = []
+        seen: set[str] = set()
+        for match in matches:
+            key = match.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(match)
+        return result[:5]
 
     @staticmethod
     def _ensure_refinement_code_text(reply_text: str, product_lookup_result: dict) -> str:
@@ -1147,6 +1171,36 @@ class AssistantService:
         text = re.sub(r"\b[Сс]вяжется с вами\b", "подключится к диалогу", text)
         text = re.sub(r"\bссылку или фото\b", "код товара с сайта или цену в карточке", text, flags=re.IGNORECASE)
         text = re.sub(r"\bссылку/фото\b", "код товара с сайта или цену в карточке", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"\b[Дд]обавить (?:его|её|товар)?\s*в заказ\??",
+            "Подсказать ещё что-нибудь по этому товару?",
+            text,
+        )
+        text = re.sub(
+            r"\b[Дд]обавить какой-нибудь из них в заказ\??",
+            "Подсказать ещё что-нибудь по этим вариантам?",
+            text,
+        )
+        text = re.sub(
+            r"\b[Пп]омочь вам с оформлением заказа\??",
+            "Подсказать ещё что-нибудь по товару?",
+            text,
+        )
+        text = re.sub(
+            r"\b[Пп]ерейдем к оформлению заказа\??",
+            "Подсказать ещё что-нибудь по товару?",
+            text,
+        )
+        text = re.sub(
+            r"\b[Пп]одсказать вам цены или помочь с оформлением заказа\??",
+            "По цене тоже подсказать?",
+            text,
+        )
+        text = re.sub(
+            r"\b[Ее]сли товар вам нужен, рекомендую не откладывать оформление заказа\.[ ]*",
+            "",
+            text,
+        )
         text = re.sub(r"\b([Кк]од(?:у|ом)?)(\d+)\b", r"\1 \2", text)
         text = re.sub(r"\b[Рр]озничная цена:\s*", "Розничная цена ", text)
         text = re.sub(r"\b[Кк]орпоративная цена:\s*", "корпоративная цена ", text)
@@ -2349,8 +2403,8 @@ class AssistantService:
     def _resolve_handoff_text(handoff_mode: str, reason: str | None = None) -> str:
         if reason == "complex_technical_question":
             return (
-                "Для точного подбора нужны параметры: размеры, нагрузка и тип установки. "
-                "Передаю вопрос менеджеру. Он подключится к диалогу и поможет подобрать вариант."
+                "По текущим данным я не могу безопасно подобрать товар или технически сравнить варианты. "
+                "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
             )
         if handoff_mode == "demo":
             return TELEGRAM_DEMO_HANDOFF_TEXT

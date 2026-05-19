@@ -47,7 +47,7 @@ python main.py
 - `KIE_API_KEY`: ключ KIE API для модели через KIE.
 - `KIE_CHAT_MODEL_PATH`: путь chat completions endpoint, по умолчанию `/gemini-3-pro/v1/chat/completions`.
 - `GOOGLE_AI_API_KEY`: ключ Google AI Studio/Gemini API для прямого подключения без KIE.
-- `GOOGLE_AI_MODEL`: модель Gemini для прямого Google API, по умолчанию `gemini-3-flash-preview`.
+- `GOOGLE_AI_MODEL`: модель Gemini для прямого Google API, по умолчанию `gemini-3.1-flash-lite`.
 - `LLM_AUDIT_LOG_ENABLED`: включает ротационный аудит реальных provider-запросов.
 - `LLM_AUDIT_LOG_PATH`: JSON-файл последних LLM-запросов, по умолчанию `data/logs/llm_audit_recent.json`.
 - `LLM_AUDIT_LOG_MAX_ENTRIES`: сколько последних provider-запросов хранить, по умолчанию `100`.
