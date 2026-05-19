@@ -1260,6 +1260,15 @@
   - `python -m pytest tests\test_assistant_service.py -q` -> `46 passed`;
   - `python -m pytest -q` -> `97 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `66f03ca`;
+  - message: `Throttle Google AI Studio requests`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `66f03ca`;
+  - серверный `.env` дополнен `GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS=13` и `GOOGLE_AI_RATE_LIMIT_RETRY_DELAY_SECONDS=65`;
+  - серверный `.venv/bin/python -m pytest -q` -> `97 passed`;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running/enabled`.
 
 ## Итерация 39 - real handoff action guard
 

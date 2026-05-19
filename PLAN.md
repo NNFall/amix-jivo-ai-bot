@@ -21,7 +21,7 @@
 
 ## Update 2026-05-19 (Google Free-Tier Rate Limit Throttle)
 
-- Status: completed locally, pending VPS deploy
+- Status: completed and deployed
 - Done:
   - Inspected server LLM audit log: recent entries contained `12` success, `7` HTTP 503, `6` HTTP 429 and `5` old HTTP 400 before the Google tool-history fix.
   - Added Google provider throttling via `GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS`; default is `13` seconds for a 5 RPM free-tier project.
@@ -33,8 +33,13 @@
   - `python -m pytest tests\test_assistant_service.py -q` -> `46 passed`.
   - `python -m pytest -q` -> `97 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- VPS:
+  - commit `66f03ca` deployed to `/root/amix`;
+  - server `.env` updated with `GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS=13` and `GOOGLE_AI_RATE_LIMIT_RETRY_DELAY_SECONDS=65`;
+  - server `.venv/bin/python -m pytest -q` -> `97 passed`;
+  - `amix-telegram-demo.service` -> `active/running/enabled`.
 - Next:
-  - Commit, push, deploy to VPS and set `.env` throttle values.
+  - Observe live Telegram usage: answers on Free tier may queue behind the 13-second Google throttle, but 429 loops should stop.
 
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
