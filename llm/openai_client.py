@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
@@ -39,6 +40,9 @@ class LLMTurnResult:
 
 
 class OpenAIService:
+    _provider_rate_limit_lock = threading.Lock()
+    _provider_last_request_at: dict[str, float] = {}
+
     def __init__(self, settings) -> None:
         self.provider = settings.llm_provider.lower()
         self.model = settings.openai_model
@@ -67,6 +71,8 @@ class OpenAIService:
         self.google_ai_http_read_timeout_seconds = settings.google_ai_http_read_timeout_seconds
         self.google_ai_retry_max_attempts = settings.google_ai_retry_max_attempts
         self.google_ai_retry_total_timeout_seconds = settings.google_ai_retry_total_timeout_seconds
+        self.google_ai_min_request_interval_seconds = settings.google_ai_min_request_interval_seconds
+        self.google_ai_rate_limit_retry_delay_seconds = settings.google_ai_rate_limit_retry_delay_seconds
         self.audit_logger = LLMAuditLogger(
             enabled=settings.llm_audit_log_enabled,
             path=settings.llm_audit_log_path,
@@ -182,6 +188,8 @@ class OpenAIService:
             retry_max_attempts=self.kie_retry_max_attempts,
             retry_total_timeout_seconds=self.kie_retry_total_timeout_seconds,
             enable_web_search=self.kie_enable_web_search,
+            min_request_interval_seconds=0.0,
+            rate_limit_retry_delay_seconds=0.0,
         )
 
     def _run_via_google_ai_studio(
@@ -213,6 +221,8 @@ class OpenAIService:
             retry_max_attempts=self.google_ai_retry_max_attempts,
             retry_total_timeout_seconds=self.google_ai_retry_total_timeout_seconds,
             enable_web_search=False,
+            min_request_interval_seconds=self.google_ai_min_request_interval_seconds,
+            rate_limit_retry_delay_seconds=self.google_ai_rate_limit_retry_delay_seconds,
         )
 
     def _run_via_openai_compatible_http(
@@ -235,6 +245,8 @@ class OpenAIService:
         retry_max_attempts: int,
         retry_total_timeout_seconds: int,
         enable_web_search: bool,
+        min_request_interval_seconds: float = 0.0,
+        rate_limit_retry_delay_seconds: float = 0.0,
     ) -> LLMTurnResult:
         payload_messages = [self._format_kie_message(msg) for msg in messages]
         payload: dict[str, Any] = {
@@ -264,6 +276,10 @@ class OpenAIService:
         last_error_type = "provider_error"
         last_retryable = True
         for attempt in range(1, max(1, retry_max_attempts) + 1):
+            self._throttle_provider_request(
+                provider_key=f"{provider_name}:{model or url}",
+                min_interval_seconds=min_request_interval_seconds,
+            )
             attempt_started_at = time.monotonic()
             http_status: int | None = None
             data: dict[str, Any] | None = None
@@ -309,7 +325,11 @@ class OpenAIService:
                     retry_max_attempts=retry_max_attempts,
                     retry_total_timeout_seconds=retry_total_timeout_seconds,
                 ):
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_provider_retry(
+                        attempt=attempt,
+                        error_type=last_error_type,
+                        rate_limit_retry_delay_seconds=rate_limit_retry_delay_seconds,
+                    )
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
             except (httpx.TimeoutException, httpx.NetworkError) as exc:  # pragma: no cover - external API failure path
@@ -339,7 +359,11 @@ class OpenAIService:
                     retry_max_attempts=retry_max_attempts,
                     retry_total_timeout_seconds=retry_total_timeout_seconds,
                 ):
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_provider_retry(
+                        attempt=attempt,
+                        error_type=last_error_type,
+                        rate_limit_retry_delay_seconds=rate_limit_retry_delay_seconds,
+                    )
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=True)
             except Exception:  # pragma: no cover - external API failure path
@@ -387,7 +411,11 @@ class OpenAIService:
                     retry_max_attempts=retry_max_attempts,
                     retry_total_timeout_seconds=retry_total_timeout_seconds,
                 ):
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_provider_retry(
+                        attempt=attempt,
+                        error_type=last_error_type,
+                        rate_limit_retry_delay_seconds=rate_limit_retry_delay_seconds,
+                    )
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
 
@@ -419,7 +447,11 @@ class OpenAIService:
                     retry_max_attempts=retry_max_attempts,
                     retry_total_timeout_seconds=retry_total_timeout_seconds,
                 ):
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_provider_retry(
+                        attempt=attempt,
+                        error_type=last_error_type,
+                        rate_limit_retry_delay_seconds=rate_limit_retry_delay_seconds,
+                    )
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
             usage = extract_usage_stats(data)
@@ -486,6 +518,34 @@ class OpenAIService:
     def _sleep_before_retry(attempt: int) -> None:
         delay = min(40.0, 2.0 * (2 ** (attempt - 1))) + random.uniform(0, 2)
         time.sleep(delay)
+
+    @classmethod
+    def _throttle_provider_request(cls, *, provider_key: str, min_interval_seconds: float) -> None:
+        if min_interval_seconds <= 0:
+            return
+
+        with cls._provider_rate_limit_lock:
+            now = time.monotonic()
+            last_request_at = cls._provider_last_request_at.get(provider_key)
+            if last_request_at is not None:
+                wait_seconds = min_interval_seconds - (now - last_request_at)
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+                    now = time.monotonic()
+            cls._provider_last_request_at[provider_key] = now
+
+    @staticmethod
+    def _sleep_before_provider_retry(
+        *,
+        attempt: int,
+        error_type: str | None,
+        rate_limit_retry_delay_seconds: float,
+    ) -> None:
+        if error_type == "rate_limit_or_quota" and rate_limit_retry_delay_seconds > 0:
+            time.sleep(rate_limit_retry_delay_seconds + random.uniform(0, 2))
+            return
+
+        OpenAIService._sleep_before_retry(attempt)
 
     @staticmethod
     def _latency_ms(started_at: float) -> int:

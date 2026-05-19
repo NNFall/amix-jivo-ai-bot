@@ -1238,6 +1238,29 @@
   - `python -m pytest -q` -> `95 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 44 - Google free-tier throttling
+
+- По серверному `data/logs/llm_audit_recent.json` проверены последние LLM-вызовы:
+  - всего в audit было 30 entries;
+  - HTTP 200: 12;
+  - HTTP 503: 7;
+  - HTTP 429/rate limit: 6;
+  - HTTP 400: 5 старых ошибок до фикса Google tool-history.
+- Вывод:
+  - retry уже был, но для Free tier он слишком короткий: повторы через несколько секунд попадали в то же минутное окно и снова получали 429;
+  - нужен throttle до запроса, а не только retry после ошибки.
+- Внесено:
+  - `GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS=13` по умолчанию;
+  - `GOOGLE_AI_RATE_LIMIT_RETRY_DELAY_SECONDS=65` по умолчанию;
+  - Google provider теперь выдерживает минимальную паузу между запросами в рамках процесса;
+  - после `rate_limit_or_quota` retry ждёт длинную паузу, а не стандартные 2/4/8 секунд;
+  - KIE поведение не изменялось.
+- Тесты:
+  - `python -m pytest tests\test_llm_client.py -q` -> `9 passed`;
+  - `python -m pytest tests\test_assistant_service.py -q` -> `46 passed`;
+  - `python -m pytest -q` -> `97 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## Итерация 39 - real handoff action guard
 
 - По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.

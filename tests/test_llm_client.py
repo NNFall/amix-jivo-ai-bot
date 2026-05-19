@@ -195,6 +195,43 @@ def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, 
     assert entry["cost"]["estimated_rub"] == 0.08
 
 
+def test_provider_request_throttle_waits_between_google_calls(monkeypatch) -> None:
+    OpenAIService._provider_last_request_at.clear()
+    sleeps: list[float] = []
+    now = {"value": 100.0}
+
+    def fake_monotonic() -> float:
+        return now["value"]
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now["value"] += seconds
+
+    monkeypatch.setattr("llm.openai_client.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("llm.openai_client.time.sleep", fake_sleep)
+
+    OpenAIService._throttle_provider_request(provider_key="google:test", min_interval_seconds=13.0)
+    now["value"] += 3.0
+    OpenAIService._throttle_provider_request(provider_key="google:test", min_interval_seconds=13.0)
+
+    assert sleeps == [10.0]
+
+
+def test_rate_limit_retry_uses_long_delay(monkeypatch) -> None:
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("llm.openai_client.random.uniform", lambda start, end: 1.0)
+    monkeypatch.setattr("llm.openai_client.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    OpenAIService._sleep_before_provider_retry(
+        attempt=1,
+        error_type="rate_limit_or_quota",
+        rate_limit_retry_delay_seconds=65.0,
+    )
+
+    assert sleeps == [66.0]
+
+
 def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
     messages = build_product_facts_messages(
         transcript="Клиент: тест",

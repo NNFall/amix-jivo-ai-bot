@@ -19,6 +19,23 @@
 - Next:
   - Commit, push and deploy to VPS.
 
+## Update 2026-05-19 (Google Free-Tier Rate Limit Throttle)
+
+- Status: completed locally, pending VPS deploy
+- Done:
+  - Inspected server LLM audit log: recent entries contained `12` success, `7` HTTP 503, `6` HTTP 429 and `5` old HTTP 400 before the Google tool-history fix.
+  - Added Google provider throttling via `GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS`; default is `13` seconds for a 5 RPM free-tier project.
+  - Added long delay for 429 retries via `GOOGLE_AI_RATE_LIMIT_RETRY_DELAY_SECONDS`; default is `65` seconds, so retries do not burn attempts inside the same minute window.
+  - Kept KIE retry behavior unchanged.
+  - Added unit tests for provider throttling and long rate-limit retry delay.
+- Checks:
+  - `python -m pytest tests\test_llm_client.py -q` -> `9 passed`.
+  - `python -m pytest tests\test_assistant_service.py -q` -> `46 passed`.
+  - `python -m pytest -q` -> `97 passed`.
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Commit, push, deploy to VPS and set `.env` throttle values.
+
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
 - Status: completed and deployed
