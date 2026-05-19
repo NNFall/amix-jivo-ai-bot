@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     assistant_debug_lookup_logs: bool = True
     assistant_debug_llm_payloads: bool = True
     assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"
+    llm_audit_log_enabled: bool = True
+    llm_audit_log_path: str = "data/logs/llm_audit_recent.json"
+    llm_audit_log_max_entries: int = 100
+    llm_cost_usd_to_rub: float = 100.0
     show_corporate_price: bool = True
 
     telegram_bot_token: str | None = None

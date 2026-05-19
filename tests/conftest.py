@@ -18,6 +18,7 @@ def isolated_app_env(monkeypatch, tmp_path) -> Iterator[None]:
     monkeypatch.setenv("JIVO_BOT_API_URL", "")
     monkeypatch.setenv("TURN_DEBOUNCE_SECONDS", "0.01")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_AUDIT_LOG_ENABLED", "false")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("KIE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_AI_API_KEY", raising=False)

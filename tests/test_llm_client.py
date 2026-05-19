@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import httpx
 
@@ -8,6 +9,9 @@ from settings import get_settings
 
 
 class DummyKieResponse:
+    status_code = 200
+    text = ""
+
     def raise_for_status(self) -> None:
         return None
 
@@ -19,11 +23,19 @@ class DummyKieResponse:
                         "content": "Тестовый ответ от KIE",
                     }
                 }
-            ]
+            ],
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 100,
+                "total_tokens": 1100,
+            },
         }
 
 
 class DummyKieLimitResponse:
+    status_code = 200
+    text = ""
+
     def raise_for_status(self) -> None:
         return None
 
@@ -40,6 +52,9 @@ class DummyKieLimitResponse:
 
 
 class DummyKieFailureResponse:
+    status_code = 200
+    text = ""
+
     def raise_for_status(self) -> None:
         return None
 
@@ -146,6 +161,37 @@ def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app
     assert "parallel_tool_calls" not in collector["json"]
     assert "max_completion_tokens" not in collector["json"]
     assert "stream_options" not in collector["json"]
+
+
+def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, isolated_app_env, tmp_path) -> None:
+    collector: dict = {}
+    audit_path = tmp_path / "llm_audit_recent.json"
+
+    monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-google-key")
+    monkeypatch.setenv("GOOGLE_AI_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("LLM_AUDIT_LOG_ENABLED", "true")
+    monkeypatch.setenv("LLM_AUDIT_LOG_PATH", str(audit_path))
+    monkeypatch.setenv("LLM_AUDIT_LOG_MAX_ENTRIES", "2")
+    monkeypatch.setenv("LLM_COST_USD_TO_RUB", "100")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    service = OpenAIService(get_settings())
+    turn = service.run_messages(messages=[{"role": "user", "content": "Reply OK"}])
+
+    assert turn.usage == {"prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100}
+    assert turn.cost and turn.cost["estimated_usd"] == 0.0008
+    assert audit_path.exists()
+    data = json.loads(Path(audit_path).read_text(encoding="utf-8"))
+    entry = data["entries"][-1]
+    assert entry["provider"] == "google_ai_studio"
+    assert entry["duration_ms"] >= 0
+    assert entry["request"]["headers"]["Authorization"] == "<redacted>"
+    assert entry["request"]["json"]["model"] == "gemini-3-flash-preview"
+    assert entry["response"]["usage"]["total_tokens"] == 1100
+    assert entry["cost"]["estimated_rub"] == 0.08
 
 
 def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:

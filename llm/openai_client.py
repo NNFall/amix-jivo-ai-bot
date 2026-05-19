@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 from openai import OpenAI
 
+from llm.audit_log import LLMAuditLogger, cost_to_dict, estimate_cost, extract_usage_stats, usage_to_dict
 from llm.prompts import build_llm_messages
 from llm.tools import trim_text
 
@@ -32,6 +33,9 @@ class LLMTurnResult:
     tool_calls: list[ToolCall]
     error_type: str | None = None
     retryable: bool = False
+    usage: dict[str, Any] | None = None
+    cost: dict[str, Any] | None = None
+    latency_ms: int | None = None
 
 
 class OpenAIService:
@@ -63,6 +67,13 @@ class OpenAIService:
         self.google_ai_http_read_timeout_seconds = settings.google_ai_http_read_timeout_seconds
         self.google_ai_retry_max_attempts = settings.google_ai_retry_max_attempts
         self.google_ai_retry_total_timeout_seconds = settings.google_ai_retry_total_timeout_seconds
+        self.audit_logger = LLMAuditLogger(
+            enabled=settings.llm_audit_log_enabled,
+            path=settings.llm_audit_log_path,
+            max_entries=settings.llm_audit_log_max_entries,
+            usd_to_rub=settings.llm_cost_usd_to_rub,
+        )
+        self.llm_cost_usd_to_rub = settings.llm_cost_usd_to_rub
 
         self.enabled = self._is_enabled()
         self.client = None
@@ -253,6 +264,10 @@ class OpenAIService:
         last_error_type = "provider_error"
         last_retryable = True
         for attempt in range(1, max(1, retry_max_attempts) + 1):
+            attempt_started_at = time.monotonic()
+            http_status: int | None = None
+            data: dict[str, Any] | None = None
+            error_text: str | None = None
             try:
                 timeout = httpx.Timeout(
                     connect=connect_timeout_seconds,
@@ -262,12 +277,30 @@ class OpenAIService:
                 )
                 with httpx.Client(timeout=timeout) as client:
                     response = client.post(url, headers=headers, json=payload)
+                    http_status = response.status_code
                     response.raise_for_status()
                     data = response.json()
             except httpx.HTTPStatusError as exc:  # pragma: no cover - external API failure path
                 status_code = exc.response.status_code
+                http_status = status_code
+                error_text = exc.response.text
                 last_error_type = "rate_limit_or_quota" if status_code == 429 else f"http_{status_code}"
                 last_retryable = status_code in {429, 500, 502, 503, 504}
+                self._write_provider_audit(
+                    provider_name=provider_name,
+                    url=url,
+                    payload=payload,
+                    model=model,
+                    attempt=attempt,
+                    started_at=attempt_started_at,
+                    http_status=http_status,
+                    response_json=None,
+                    error_type=last_error_type,
+                    retryable=last_retryable,
+                    error_text=error_text,
+                    text=None,
+                    tool_calls=[],
+                )
                 logger.warning("%s request failed with HTTP %s on attempt %s", provider_name, status_code, attempt)
                 if self._should_retry_provider(
                     started_at=started_at,
@@ -282,6 +315,22 @@ class OpenAIService:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:  # pragma: no cover - external API failure path
                 last_error_type = "timeout" if isinstance(exc, httpx.TimeoutException) else "network_error"
                 last_retryable = True
+                error_text = str(exc)
+                self._write_provider_audit(
+                    provider_name=provider_name,
+                    url=url,
+                    payload=payload,
+                    model=model,
+                    attempt=attempt,
+                    started_at=attempt_started_at,
+                    http_status=http_status,
+                    response_json=None,
+                    error_type=last_error_type,
+                    retryable=last_retryable,
+                    error_text=error_text,
+                    text=None,
+                    tool_calls=[],
+                )
                 logger.warning("%s %s on attempt %s: %s", provider_name, last_error_type, attempt, exc)
                 if self._should_retry_provider(
                     started_at=started_at,
@@ -295,11 +344,41 @@ class OpenAIService:
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=True)
             except Exception:  # pragma: no cover - external API failure path
                 logger.exception("%s request failed", provider_name)
+                self._write_provider_audit(
+                    provider_name=provider_name,
+                    url=url,
+                    payload=payload,
+                    model=model,
+                    attempt=attempt,
+                    started_at=attempt_started_at,
+                    http_status=http_status,
+                    response_json=data,
+                    error_type="provider_error",
+                    retryable=True,
+                    error_text="unexpected provider exception",
+                    text=None,
+                    tool_calls=[],
+                )
                 return LLMTurnResult(text=None, tool_calls=[], error_type="provider_error", retryable=True)
 
             provider_error = self._extract_provider_error(data)
             if provider_error is not None:
                 last_error_type, last_retryable = provider_error
+                self._write_provider_audit(
+                    provider_name=provider_name,
+                    url=url,
+                    payload=payload,
+                    model=model,
+                    attempt=attempt,
+                    started_at=attempt_started_at,
+                    http_status=http_status,
+                    response_json=data,
+                    error_type=last_error_type,
+                    retryable=last_retryable,
+                    error_text=None,
+                    text=None,
+                    tool_calls=[],
+                )
                 logger.warning("%s provider returned %s on attempt %s", provider_name, last_error_type, attempt)
                 if self._should_retry_provider(
                     started_at=started_at,
@@ -317,6 +396,21 @@ class OpenAIService:
             if not text and not tool_calls:
                 last_error_type = "empty_response"
                 last_retryable = True
+                self._write_provider_audit(
+                    provider_name=provider_name,
+                    url=url,
+                    payload=payload,
+                    model=model,
+                    attempt=attempt,
+                    started_at=attempt_started_at,
+                    http_status=http_status,
+                    response_json=data,
+                    error_type=last_error_type,
+                    retryable=last_retryable,
+                    error_text=None,
+                    text=None,
+                    tool_calls=[],
+                )
                 logger.warning("%s provider returned empty response on attempt %s", provider_name, attempt)
                 if self._should_retry_provider(
                     started_at=started_at,
@@ -328,7 +422,39 @@ class OpenAIService:
                     self._sleep_before_retry(attempt)
                     continue
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
-            return LLMTurnResult(text=text, tool_calls=tool_calls)
+            usage = extract_usage_stats(data)
+            cost = estimate_cost(
+                provider=self.provider,
+                model=model,
+                usage=usage,
+                usd_to_rub=self.llm_cost_usd_to_rub,
+            )
+            latency_ms = self._latency_ms(attempt_started_at)
+            self._write_provider_audit(
+                provider_name=provider_name,
+                url=url,
+                payload=payload,
+                model=model,
+                attempt=attempt,
+                started_at=attempt_started_at,
+                http_status=http_status,
+                response_json=data,
+                error_type=None,
+                retryable=False,
+                error_text=None,
+                text=text,
+                tool_calls=tool_calls,
+                latency_ms=latency_ms,
+                usage=usage_to_dict(usage),
+                cost=cost_to_dict(cost),
+            )
+            return LLMTurnResult(
+                text=text,
+                tool_calls=tool_calls,
+                usage=usage_to_dict(usage),
+                cost=cost_to_dict(cost),
+                latency_ms=latency_ms,
+            )
 
         return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
 
@@ -360,6 +486,74 @@ class OpenAIService:
     def _sleep_before_retry(attempt: int) -> None:
         delay = min(40.0, 2.0 * (2 ** (attempt - 1))) + random.uniform(0, 2)
         time.sleep(delay)
+
+    @staticmethod
+    def _latency_ms(started_at: float) -> int:
+        return int((time.monotonic() - started_at) * 1000)
+
+    def _write_provider_audit(
+        self,
+        *,
+        provider_name: str,
+        url: str,
+        payload: dict[str, Any],
+        model: str | None,
+        attempt: int,
+        started_at: float,
+        http_status: int | None,
+        response_json: dict[str, Any] | None,
+        error_type: str | None,
+        retryable: bool,
+        error_text: str | None,
+        text: str | None,
+        tool_calls: list[ToolCall],
+        latency_ms: int | None = None,
+        usage: dict[str, Any] | None = None,
+        cost: dict[str, Any] | None = None,
+    ) -> None:
+        duration_ms = latency_ms if latency_ms is not None else self._latency_ms(started_at)
+        self.audit_logger.write(
+            {
+                "provider": self.provider,
+                "provider_name": provider_name,
+                "model": model,
+                "endpoint": url,
+                "attempt": attempt,
+                "status": "error" if error_type else "success",
+                "http_status": http_status,
+                "duration_ms": duration_ms,
+                "usage": usage or usage_to_dict(extract_usage_stats(response_json)),
+                "cost": cost
+                or cost_to_dict(
+                    estimate_cost(
+                        provider=self.provider,
+                        model=model,
+                        usage=extract_usage_stats(response_json),
+                        usd_to_rub=self.llm_cost_usd_to_rub,
+                    )
+                ),
+                "error": {
+                    "type": error_type,
+                    "retryable": retryable,
+                    "message": error_text,
+                }
+                if error_type or error_text
+                else None,
+                "summary": {
+                    "response_text_preview": (text or "")[:500],
+                    "tool_calls_count": len(tool_calls),
+                    "tool_calls": [
+                        {"name": call.name, "arguments": call.arguments, "call_id": call.call_id}
+                        for call in tool_calls
+                    ],
+                },
+                "request": {
+                    "headers": {"Authorization": "<redacted>", "Content-Type": "application/json"},
+                    "json": payload,
+                },
+                "response": response_json,
+            }
+        )
 
     def _extract_provider_error(self, data: dict) -> tuple[str, bool] | None:
         provider_status = str(data.get("status") or data.get("state") or "").strip().lower()

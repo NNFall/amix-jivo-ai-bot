@@ -786,3 +786,16 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - VPS smoke direct Google chat completion -> `error_type=None`;
   - VPS smoke tool-call -> `search_products` parsed successfully;
   - `amix-telegram-demo.service` -> `active/running`.
+
+## Обновление 2026-05-19 - LLM audit log
+
+- Статус: in progress.
+- Цель:
+  - хранить последние `LLM_AUDIT_LOG_MAX_ENTRIES` реальных LLM provider-вызовов в `data/logs/llm_audit_recent.json`;
+  - писать полный JSON запроса, raw JSON ответа, latency, usage tokens и примерную стоимость в USD/RUB;
+  - не писать API-ключи в audit-файл;
+  - дать удобный просмотр через `python scripts/show_llm_audit.py --limit 20`.
+- Локальные проверки:
+  - `python -m pytest tests\test_llm_client.py -q` -> `7 passed`;
+  - `python -m pytest -q` -> `91 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.

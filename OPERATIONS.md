@@ -1446,6 +1446,24 @@
   - smoke direct Google chat completion -> `error_type=None`, ответ получен;
   - smoke direct Google tool-call -> `search_products` tool call получен и распарсен;
   - `amix-telegram-demo.service` перезапущен и проверен: `active/running/enabled`.
+
+## Итерация 42 - LLM audit log
+
+- По запросу пользователя добавлен ротационный audit-файл LLM provider-вызовов.
+- Внесено:
+  - новый модуль `llm/audit_log.py`;
+  - настройки `LLM_AUDIT_LOG_ENABLED`, `LLM_AUDIT_LOG_PATH`, `LLM_AUDIT_LOG_MAX_ENTRIES`, `LLM_COST_USD_TO_RUB`;
+  - запись audit entry из HTTP-compatible provider flow;
+  - в audit entry сохраняются provider, model, endpoint, attempt, HTTP status, duration, полный JSON request, raw JSON response, usage tokens, cost estimate, error и tool-call summary;
+  - `Authorization` в audit-файле заменяется на `<redacted>`;
+  - скрипт просмотра `scripts/show_llm_audit.py`.
+- Цены:
+  - добавлена встроенная таблица Google paid-tier estimate для `gemini-3-flash-preview` и `gemini-3.1-pro-preview`;
+  - расчёт в рублях использует конфиг `LLM_COST_USD_TO_RUB`.
+- Проверки:
+  - `python -m pytest tests\test_llm_client.py -q` -> `7 passed`;
+  - `python -m pytest -q` -> `91 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

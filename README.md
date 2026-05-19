@@ -48,6 +48,10 @@ python main.py
 - `KIE_CHAT_MODEL_PATH`: путь chat completions endpoint, по умолчанию `/gemini-3-pro/v1/chat/completions`.
 - `GOOGLE_AI_API_KEY`: ключ Google AI Studio/Gemini API для прямого подключения без KIE.
 - `GOOGLE_AI_MODEL`: модель Gemini для прямого Google API, по умолчанию `gemini-3-flash-preview`.
+- `LLM_AUDIT_LOG_ENABLED`: включает ротационный аудит реальных provider-запросов.
+- `LLM_AUDIT_LOG_PATH`: JSON-файл последних LLM-запросов, по умолчанию `data/logs/llm_audit_recent.json`.
+- `LLM_AUDIT_LOG_MAX_ENTRIES`: сколько последних provider-запросов хранить, по умолчанию `100`.
+- `LLM_COST_USD_TO_RUB`: курс для пересчёта estimate из USD в RUB, по умолчанию `100`.
 - `DATABASE_URL`: SQLite-путь или другой SQLAlchemy-compatible DSN.
 
 ## Полезные команды
@@ -57,6 +61,7 @@ pytest
 python scripts\simulate_jivo_event.py --text "Есть артикул AB-123?"
 python scripts\import_xml.py --path data\incoming_xml\products.xml
 python scripts\run_telegram_demo.py
+python scripts\show_llm_audit.py --limit 20
 ```
 
 ## Telegram Demo
@@ -72,6 +77,8 @@ Telegram demo использует ту же SQLite-базу, историю д�
 Для тестирования в Telegram есть команда `/newchat`: она очищает контекст текущего демо-чата и позволяет начать новый диалог с нуля.
 
 LLM debug-логи пишутся в `data/logs/llm_debug.jsonl`, если `ASSISTANT_DEBUG_LLM_PAYLOADS=true`. В каждой строке JSONL видно, какие `messages` с ролями ушли в модель, какой `INTERNAL_CONTEXT_JSON` был передан, какой `product_lookup_result` использовался, какие `backend_actions` рассчитаны и какой текст вернула модель.
+
+Ротационный provider-аудит пишется в `data/logs/llm_audit_recent.json`, если `LLM_AUDIT_LOG_ENABLED=true`. Там хранятся последние `LLM_AUDIT_LOG_MAX_ENTRIES` HTTP-вызовов к LLM: полный JSON запроса, raw JSON ответа, latency, usage tokens и примерная стоимость. API-ключи в файл не пишутся.
 
 История диалога передаётся в LLM не строкой `Клиент/Бот`, а отдельными role-сообщениями `user`, `assistant` и, для tool flow, `tool`. Последнее сообщение клиента не дублируется отдельным блоком.
 
