@@ -63,6 +63,21 @@
 - Next:
   - Add a hard technical-question guard: if structured product data has no technical characteristics, final answer should not let the model infer meanings like left/right.
 
+## Update 2026-05-19 (Gemini 3.1 Pro Append)
+
+- Status: completed on VPS.
+- Done:
+  - Ran the same 10-turn dialog on `gemini-3.1-pro-preview` before adding the technical guard.
+  - Added combined report on VPS:
+    `/root/amix/data/logs/model_compare_2026-05-19-combined.md`
+    and `/root/amix/data/logs/model_compare_2026-05-19-combined.json`.
+- Result:
+  - `gemini-3.1-pro-preview`: 272.2s total, 8,040 tokens, about 5.1830 RUB.
+  - Last technical turn hit a 180s read timeout and fell back to safe fallback text.
+  - Earlier `14.023 без пр` answer still inferred right/left semantics, so Pro did not remove the hallucination risk.
+- Next:
+  - Keep `gemini-3.1-flash-lite` as the practical default unless a new guarded comparison shows Pro quality is materially better for AMIX.
+
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
 - Status: completed and deployed

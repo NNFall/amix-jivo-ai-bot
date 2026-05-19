@@ -1295,6 +1295,24 @@
   - все три модели на вопрос `чем л отличается от пр?` начали выводить технический смысл `левый/правый`, хотя в структурированных товарных данных таких характеристик нет;
   - нужен backend/prompt guard, который для технических отличий без характеристик запрещает модели делать такой вывод и сразу ведёт к безопасному ответу + handoff.
 
+## Итерация 46 - Google 3.1 Pro comparison append
+
+- По запросу пользователя отдельно прогнана `gemini-3.1-pro-preview` до фикса technical guard.
+- Команда на VPS:
+  - `.venv/bin/python scripts/compare_google_models_dialog.py --models gemini-3.1-pro-preview --output data/logs/model_compare_2026-05-19-pro.md --json-output data/logs/model_compare_2026-05-19-pro.json --min-interval 0.5 --rate-limit-delay 20 --retry-attempts 2`.
+- Результат:
+  - 10 provider attempts;
+  - один read timeout на последнем техническом вопросе, после чего сработал fallback;
+  - total time 272.2s;
+  - 8,040 токенов;
+  - ~5.1830 RUB.
+- Важное наблюдение:
+  - `gemini-3.1-pro-preview` в ходе `а 14.023 без пр есть?` тоже сделала вывод про правый/левый вариант, хотя в структурированных данных этого нет;
+  - на финальном ходе `чем л отличается от пр?` нормального модельного ответа не было из-за read timeout, поэтому нельзя считать, что Pro надёжно решает эту проблему.
+- Объединённый отчёт:
+  - `/root/amix/data/logs/model_compare_2026-05-19-combined.md`;
+  - `/root/amix/data/logs/model_compare_2026-05-19-combined.json`.
+
 ## Итерация 39 - real handoff action guard
 
 - По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.
