@@ -41,6 +41,28 @@
 - Next:
   - Observe live Telegram usage: answers on Free tier may queue behind the 13-second Google throttle, but 429 loops should stop.
 
+## Update 2026-05-19 (Google Model Dialog Comparison)
+
+- Status: completed on VPS.
+- Done:
+  - Added reusable script `scripts/compare_google_models_dialog.py`.
+  - Confirmed available server-side Google model ids through the Gemini API models endpoint:
+    `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-3.1-flash-lite`.
+  - Ran the same 10-turn AMIX dialog on VPS for all three models.
+  - Report saved on VPS:
+    `/root/amix/data/logs/model_compare_2026-05-19.md`
+    and `/root/amix/data/logs/model_compare_2026-05-19.json`.
+- Result summary:
+  - `gemini-3.1-flash-lite`: fastest and cheapest in this run, 20.0s total, 7,185 tokens, about 0.1343 RUB.
+  - `gemini-2.5-pro`: stable but much more expensive, 77.1s total, 12,247 tokens, about 8.1371 RUB.
+  - `gemini-3-flash-preview`: slowest in this run due to two HTTP 503 retries, 169.0s total, 7,394 tokens, about 0.8799 RUB.
+  - All three models hallucinated technical meaning for `л`/`пр` before saying that technical data is missing; prompt/backend guard should be tightened before relying on technical answers.
+- Checks:
+  - Local `python -m pytest -q` -> `97 passed`.
+  - VPS `python -m pytest -q` -> `97 passed`.
+- Next:
+  - Add a hard technical-question guard: if structured product data has no technical characteristics, final answer should not let the model infer meanings like left/right.
+
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
 - Status: completed and deployed

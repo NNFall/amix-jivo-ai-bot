@@ -1270,6 +1270,31 @@
   - серверный `.venv/bin/python -m pytest -q` -> `97 passed`;
   - `amix-telegram-demo.service` перезапущен и проверен: `active/running/enabled`.
 
+## Итерация 45 - Google model comparison
+
+- По запросу пользователя подготовлен repeatable-прогон одного AMIX-диалога на нескольких Google Gemini моделях.
+- Внесено:
+  - добавлен `scripts/compare_google_models_dialog.py`;
+  - добавлены pricing entries для `gemini-2.5-pro`, `gemini-3.1-flash-lite`, `gemini-3.1-flash-lite-preview`.
+- GitHub:
+  - commit: `e8937fe`;
+  - message: `Add Google model dialog comparison script`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён до `e8937fe`;
+  - серверный `.venv/bin/python -m pytest -q` -> `97 passed`;
+  - через Gemini API models endpoint подтверждены доступные model ids:
+    `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-3.1-flash-lite`;
+  - выполнен прогон:
+    `.venv/bin/python scripts/compare_google_models_dialog.py --models gemini-3-flash-preview,gemini-2.5-pro,gemini-3.1-flash-lite --output data/logs/model_compare_2026-05-19.md --json-output data/logs/model_compare_2026-05-19.json --min-interval 0.5 --rate-limit-delay 20 --retry-attempts 2`.
+- Сводка результата:
+  - `gemini-3-flash-preview`: 12 provider attempts, 2x HTTP 503, 169.0s total, 7,394 tokens, ~0.8799 RUB;
+  - `gemini-2.5-pro`: 10 provider attempts, no HTTP errors, 77.1s total, 12,247 tokens, ~8.1371 RUB;
+  - `gemini-3.1-flash-lite`: 10 provider attempts, no HTTP errors, 20.0s total, 7,185 tokens, ~0.1343 RUB.
+- Важный найденный риск:
+  - все три модели на вопрос `чем л отличается от пр?` начали выводить технический смысл `левый/правый`, хотя в структурированных товарных данных таких характеристик нет;
+  - нужен backend/prompt guard, который для технических отличий без характеристик запрещает модели делать такой вывод и сразу ведёт к безопасному ответу + handoff.
+
 ## Итерация 39 - real handoff action guard
 
 - По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.
