@@ -763,7 +763,7 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 
 ## Обновление 2026-05-19 - direct Google AI Studio provider
 
-- Статус: in progress.
+- Статус: completed and deployed.
 - Цель:
   - добавить прямой LLM-провайдер Google AI Studio/Gemini API через OpenAI-compatible `chat/completions`;
   - оставить Kie-интеграцию в коде и конфиге как быстрый fallback через `LLM_PROVIDER=kie`;
@@ -773,3 +773,16 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `gemini-3-pro-preview` по официальной документации уже выключен;
   - актуальная Pro-замена должна быть настраиваемой через `GOOGLE_AI_MODEL`;
   - если Free tier не пропускает Pro-модель, переключить runtime на доступную модель и зафиксировать результат проверки.
+- Сделано:
+  - добавлен `LLM_PROVIDER=google_ai_studio` для прямого Google AI Studio/Gemini API;
+  - Kie-интеграция оставлена в коде и `.env.example`, возврат делается через `LLM_PROVIDER=kie`;
+  - VPS `/root/amix` обновлён до commit `a434d96`;
+  - серверный `.env` переключён на `google_ai_studio`, ключ хранится только на VPS;
+  - runtime-модель на VPS: `gemini-3-flash-preview`.
+- Проверки:
+  - локально `python -m pytest -q` -> `90 passed`;
+  - локально `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`;
+  - VPS `.venv/bin/python -m pytest -q` -> `90 passed`;
+  - VPS smoke direct Google chat completion -> `error_type=None`;
+  - VPS smoke tool-call -> `search_products` parsed successfully;
+  - `amix-telegram-demo.service` -> `active/running`.

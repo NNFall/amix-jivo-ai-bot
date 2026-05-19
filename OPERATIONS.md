@@ -1432,6 +1432,20 @@
   - `python -m pytest tests\test_llm_client.py -q` -> `6 passed`;
   - `python -m pytest -q` -> `90 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit: `a434d96`;
+  - message: `Add Google AI Studio LLM provider`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `a434d96`;
+  - серверный `.env` переключён на `LLM_PROVIDER=google_ai_studio`;
+  - `GOOGLE_AI_API_KEY` добавлен только в серверный `.env`, в репозиторий не записывался;
+  - Kie-настройки оставлены в `.env`, быстрый возврат возможен через `LLM_PROVIDER=kie`;
+  - `GOOGLE_AI_MODEL=gemini-3-flash-preview`;
+  - серверный `.venv/bin/python -m pytest -q` -> `90 passed`;
+  - smoke direct Google chat completion -> `error_type=None`, ответ получен;
+  - smoke direct Google tool-call -> `search_products` tool call получен и распарсен;
+  - `amix-telegram-demo.service` перезапущен и проверен: `active/running/enabled`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:
