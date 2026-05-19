@@ -875,6 +875,56 @@ def test_assistant_service_records_tool_flow_as_role_messages(isolated_app_env) 
     )
 
 
+def test_assistant_service_converts_synthetic_tool_history_for_google_provider(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                free_stock=Decimal("220"),
+                unit="шт",
+                retail_price=Decimal("473"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.provider = "google_ai_studio"
+
+    def fake_run_messages(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return LLMTurnResult(text="Проверил, остаток 220 шт.", tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:google-tool-history",
+            external_client_id="telegram-user:google-tool-history",
+            customer_name="Demo User",
+            customer_text="14.023пр есть?",
+            inbound_event_id="tg-google-tool-history",
+            outbound_event_id="tg-google-tool-history:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        stored_roles = [message.sender_role for message in session.query(Message).order_by(Message.id.asc()).all()]
+
+    assert reply.text == "Проверил, остаток 220 шт."
+    assert "assistant_tool_call" in stored_roles
+    assert "tool" in stored_roles
+    assert not any(message.get("role") == "tool" for message in captured["messages"])
+    assert not any(message.get("tool_calls") for message in captured["messages"])
+    assert any(
+        message.get("role") == "system" and str(message.get("content", "")).startswith("TOOL_RESULTS_JSON")
+        for message in captured["messages"]
+    )
+
+
 def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

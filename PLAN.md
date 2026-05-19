@@ -11,9 +11,10 @@
   - Strengthened prompts so product answers keep `результаты_по_запросам` order and company answers use only AMIX reference facts.
   - Added a dedicated LLM rewrite flow for company FAQ answers: backend supplies safe AMIX facts, the model only reformulates them.
   - Added a guard that falls back to safe AMIX facts if the model writes about AI-bot capabilities or unsupported characteristics.
+  - Added Google-provider payload adaptation: synthetic tool history is sent as `TOOL_RESULTS_JSON` system context, not as `assistant.tool_calls`.
   - Added regression tests for company FAQ routing and contextual product follow-ups.
 - Checks:
-  - `python -m pytest -q` -> `94 passed`.
+  - `python -m pytest -q` -> `95 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - Next:
   - Commit, push and deploy to VPS.

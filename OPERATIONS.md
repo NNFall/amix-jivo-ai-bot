@@ -1233,8 +1233,9 @@
   - prompts усилены правилом отвечать в порядке `результаты_по_запросам` и не выдумывать факты о компании за пределами справки AMIX.
   - для company FAQ добавлен отдельный LLM rewrite-flow: backend передаёт безопасный `safe_answer`, модель только переформулирует;
   - добавлен guard: если LLM пишет про AI-бота, характеристики/размеры/аналоги или чужие бренды, ответ откатывается к безопасному AMIX-тексту.
+  - для `google_ai_studio` synthetic tool history конвертируется в `system TOOL_RESULTS_JSON`, чтобы Gemini не отклонял payload из-за отсутствующего `thought_signature`.
 - Тесты:
-  - `python -m pytest -q` -> `94 passed`;
+  - `python -m pytest -q` -> `95 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
 ## Итерация 39 - real handoff action guard
