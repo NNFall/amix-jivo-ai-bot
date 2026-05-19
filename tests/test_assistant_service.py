@@ -932,12 +932,48 @@ def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(i
     assert reply.handoff_reason is None
     assert "+7 (812) 372-66-07" in reply.text
     assert "market@amix.spb.ru" in reply.text
-    assert captured["messages"][-1]["content"] == "где вы находитесь и какой телефон?"
+    assert "где вы находитесь и какой телефон?" in captured["messages"][-1]["content"]
+    assert "safe_answer" in captured["messages"][-1]["content"]
 
     with session_scope() as session:
         bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
 
-    assert bot_message.payload["source"] == "llm_direct"
+    assert bot_message.payload["source"] == "llm_company_faq"
+
+
+def test_assistant_service_guards_company_self_description_from_bot_capabilities(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def unsafe_llm_call(**kwargs):
+        return LLMTurnResult(
+            text="Я интеллектуальный помощник AMIX. Подскажу характеристики, размеры, совместимость и аналоги.",
+            tool_calls=[],
+        )
+
+    service.openai_service.run_messages = unsafe_llm_call
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:company-self",
+            external_client_id="telegram-user:company-self",
+            customer_name="Demo User",
+            customer_text="вы расскажите о себе",
+            inbound_event_id="tg-company-self",
+            outbound_event_id="tg-company-self:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "AMIX - магазин и поставщик мебельной фурнитуры" in reply.text
+    assert "интеллектуальный помощник" not in reply.text.lower()
+    assert "характеристики" not in reply.text.lower()
+
+    with session_scope() as session:
+        bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
+
+    assert bot_message.payload["source"] == "backend_company_faq_guard"
 
 
 def test_assistant_service_uses_company_faq_only_when_llm_disabled(isolated_app_env) -> None:

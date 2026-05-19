@@ -1231,10 +1231,10 @@
   - добавлен resolver для `первый/второй` и фрагментов вроде `am02` по последнему product lookup;
   - compact tool result получил `порядок_запросов_клиента`;
   - prompts усилены правилом отвечать в порядке `результаты_по_запросам` и не выдумывать факты о компании за пределами справки AMIX.
-  - после серверного smoke уточнено правило для `расскажите о себе`: отвечать про AMIX, а не про возможности AI-бота, и не обещать характеристики/размеры без данных.
+  - для company FAQ добавлен отдельный LLM rewrite-flow: backend передаёт безопасный `safe_answer`, модель только переформулирует;
+  - добавлен guard: если LLM пишет про AI-бота, характеристики/размеры/аналоги или чужие бренды, ответ откатывается к безопасному AMIX-тексту.
 - Тесты:
-  - `python -m pytest tests\test_assistant_service.py -q` -> `44 passed`;
-  - `python -m pytest -q` -> `93 passed`;
+  - `python -m pytest -q` -> `94 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
 ## Итерация 39 - real handoff action guard

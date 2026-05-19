@@ -256,6 +256,23 @@ PRODUCT_FACTS_RESPONSE_PROMPT = f"""
 """.strip()
 
 
+COMPANY_FAQ_REWRITE_PROMPT = """
+Ты менеджер первой линии AMIX.
+
+Тебе передали безопасный ответ, составленный только из справки AMIX.
+Твоя задача - переформулировать его живым коротким сообщением для клиента.
+
+Жёсткие правила:
+- используй только факты из safe_answer;
+- не добавляй новые бренды, регионы, график, услуги, преимущества или обещания;
+- если клиент пишет "расскажите о себе", "кто вы" или "расскажите о вас", отвечай про компанию AMIX, а не про AI-бота;
+- не пиши "я AI", "я виртуальный помощник", "интеллектуальный помощник";
+- не обещай характеристики, размеры, фасовку, совместимость, аналоги или подбор, если этого нет в safe_answer;
+- 1-3 коротких предложения;
+- без markdown и списков.
+""".strip()
+
+
 def build_llm_messages(
     *,
     dialog_messages: list[dict[str, Any]] | None = None,
@@ -268,6 +285,22 @@ def build_llm_messages(
     messages.append(_internal_context_message(runtime_context, product_lookup_result=product_lookup_result))
     messages.extend(_resolve_dialog_messages(dialog_messages, transcript, customer_text))
     return messages
+
+
+def build_company_faq_messages(*, customer_text: str, safe_answer: str) -> list[dict[str, Any]]:
+    return [
+        {"role": "system", "content": COMPANY_FAQ_REWRITE_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "message": customer_text,
+                    "safe_answer": safe_answer,
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
 
 
 def build_product_facts_messages(

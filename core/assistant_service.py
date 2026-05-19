@@ -18,7 +18,7 @@ from database.repositories import (
     search_products_structured,
 )
 from llm.openai_client import OpenAIService, ToolCall
-from llm.prompts import build_llm_messages, build_product_facts_messages
+from llm.prompts import build_company_faq_messages, build_llm_messages, build_product_facts_messages
 from llm.tool_schemas import OPENAI_TOOLS
 from products.article_utils import extract_article_candidates, normalize_article
 from settings import get_settings
@@ -332,6 +332,15 @@ class AssistantService:
                 payload={"source": "backend_company_faq"},
             )
             return AssistantReply(text=company_answer)
+        if company_answer:
+            return self._reply_from_company_faq(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                safe_answer=company_answer,
+                outbound_event_id=outbound_event_id,
+                is_turn_current=is_turn_current,
+            )
 
         if article_candidates:
             lookup_result = self._search_products_by_queries(
@@ -472,6 +481,77 @@ class AssistantService:
             },
         )
         return AssistantReply(text=reply_text, handoff_reason=handoff_reason)
+
+    def _reply_from_company_faq(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        safe_answer: str,
+        outbound_event_id: str | None,
+        is_turn_current=None,
+    ) -> AssistantReply:
+        if self._turn_is_stale(is_turn_current):
+            return self._superseded_reply()
+
+        messages = build_company_faq_messages(customer_text=customer_text, safe_answer=safe_answer)
+        llm_request_id = self._new_llm_request_id(external_chat_id, "company_faq")
+        self._log_llm_debug_event(
+            "llm_request_started",
+            {
+                "llm_request_id": llm_request_id,
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "mode": "company_faq_rewrite",
+                "tool_choice": "none",
+                "has_tools": False,
+            },
+        )
+        self._log_llm_debug_event(
+            "llm_company_faq_request",
+            {
+                "llm_request_id": llm_request_id,
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "safe_answer": safe_answer,
+                "messages": messages,
+            },
+        )
+        turn = self.openai_service.run_messages(messages=messages)
+        self._log_llm_debug_event(
+            "llm_response_received",
+            {
+                "llm_request_id": llm_request_id,
+                "external_chat_id": external_chat_id,
+                "customer_text": customer_text,
+                "mode": "company_faq_rewrite",
+                "has_text": bool(turn.text),
+                "tool_calls_count": len(turn.tool_calls),
+                "error_type": turn.error_type,
+                "retryable": turn.retryable,
+            },
+        )
+
+        reply_text = turn.text or safe_answer
+        reply_text = self._sanitize_customer_reply(reply_text)
+        source = "llm_company_faq" if turn.text else "backend_company_faq_fallback"
+        if self._company_reply_violates_facts(reply_text):
+            reply_text = safe_answer
+            source = "backend_company_faq_guard"
+
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=reply_text,
+            outbound_event_id=outbound_event_id,
+            payload={
+                "source": source,
+                "provider_error": turn.error_type,
+                "safe_answer": safe_answer,
+            },
+        )
+        return AssistantReply(text=reply_text)
 
     def _handle_tool_calls(
         self,
@@ -982,6 +1062,25 @@ class AssistantService:
         )
 
     @staticmethod
+    def _company_reply_violates_facts(reply_text: str) -> bool:
+        text = reply_text.lower()
+        forbidden_fragments = (
+            "ai",
+            "виртуальн",
+            "интеллектуальн",
+            "характеристик",
+            "размер",
+            "фасов",
+            "совместим",
+            "аналог",
+            "подбор",
+            "деко-лайн",
+            "северо-запад",
+            "09:00",
+        )
+        return any(fragment in text for fragment in forbidden_fragments)
+
+    @staticmethod
     def _ensure_handoff_text(reply_text: str, handoff_reason: str) -> str:
         text_lower = reply_text.lower()
         if handoff_reason == "requested_quantity_exceeds_stock":
@@ -1089,15 +1188,28 @@ class AssistantService:
     @staticmethod
     def _build_company_faq_answer(customer_text: str) -> str | None:
         text = customer_text.lower()
+        wants_address = "адрес" in text or "где вы" in text or "находит" in text
+        wants_contact = any(keyword in text for keyword in ("как связ", "контакт", "телефон", "номер", "почт", "email"))
+        if wants_address and wants_contact:
+            return (
+                "Мы находимся по адресу: Санкт-Петербург, ул. Якорная, д. 15, лит. Б. "
+                "Телефон: +7 (812) 372-66-07, email: market@amix.spb.ru."
+            )
         if any(keyword in text for keyword in ("достав", "транспорт", "пвз", "самовывоз")):
             return (
                 "Да, доставляем по России: возможны транспортные компании, пункты выдачи и курьерская доставка. "
                 "Точную стоимость и условия под ваш заказ лучше уточнит менеджер."
             )
-        if any(keyword in text for keyword in ("как связ", "контакт", "телефон", "номер", "почт", "email")):
+        if wants_contact:
             return "Можно позвонить по телефону +7 (812) 372-66-07 или написать на market@amix.spb.ru."
-        if "адрес" in text or "где вы" in text or "находит" in text:
+        if wants_address:
             return "Магазин находится по адресу: Санкт-Петербург, ул. Якорная, д. 15, лит. Б."
+        if any(keyword in text for keyword in ("расскаж", "о себе", "о вас", "кто вы", "что за компания", "чем занимает")):
+            return (
+                "AMIX - магазин и поставщик мебельной фурнитуры, аксессуаров для мебели и комплектующих "
+                "для кухонь и корпусной мебели. Компания работает с мебельной фурнитурой с 2000 года; "
+                "в ассортименте более 10 000 наименований, собственные марки - AMIX, AGV, FIT."
+            )
         if any(keyword in text for keyword in ("режим", "график", "часы работы")):
             return "Режим работы: Пн-Пт 9:30-18:00, Сб 10:00-17:00."
         if "возврат" in text and "суббот" in text:

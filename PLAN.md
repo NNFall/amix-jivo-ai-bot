@@ -9,11 +9,11 @@
   - Added ordering guard for extracted product candidates so multi-product queries preserve the customer's written order.
   - Added context resolver for follow-ups like `а по второму` and `am02 который я написал` using the previous product lookup.
   - Strengthened prompts so product answers keep `результаты_по_запросам` order and company answers use only AMIX reference facts.
-  - Tightened `расскажите о себе` handling so the model answers about AMIX, not about AI-bot capabilities.
+  - Added a dedicated LLM rewrite flow for company FAQ answers: backend supplies safe AMIX facts, the model only reformulates them.
+  - Added a guard that falls back to safe AMIX facts if the model writes about AI-bot capabilities or unsupported characteristics.
   - Added regression tests for company FAQ routing and contextual product follow-ups.
 - Checks:
-  - `python -m pytest tests\test_assistant_service.py -q` -> `44 passed`.
-  - `python -m pytest -q` -> `93 passed`.
+  - `python -m pytest -q` -> `94 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - Next:
   - Commit, push and deploy to VPS.
