@@ -183,6 +183,7 @@ def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, 
 
     assert turn.usage == {"prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100}
     assert turn.cost and turn.cost["estimated_usd"] == 0.0008
+    assert turn.cost["billable_output_tokens"] == 100
     assert audit_path.exists()
     data = json.loads(Path(audit_path).read_text(encoding="utf-8"))
     entry = data["entries"][-1]

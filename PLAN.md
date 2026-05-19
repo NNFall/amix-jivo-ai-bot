@@ -803,4 +803,5 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `.env` дополнен audit-настройками;
   - `.venv/bin/python -m pytest -q` -> `91 passed`;
   - smoke direct Google request записал retryable `503` attempt и последующий successful attempt;
+  - cost estimate учитывает Gemini thinking tokens через `total_tokens - prompt_tokens`;
   - `scripts/show_llm_audit.py` используется для просмотра последних записей.

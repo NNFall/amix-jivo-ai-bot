@@ -1459,6 +1459,7 @@
   - скрипт просмотра `scripts/show_llm_audit.py`.
 - Цены:
   - добавлена встроенная таблица Google paid-tier estimate для `gemini-3-flash-preview` и `gemini-3.1-pro-preview`;
+  - для Gemini output estimate учитывает inferred thinking tokens: `max(completion_tokens, total_tokens - prompt_tokens)`;
   - расчёт в рублях использует конфиг `LLM_COST_USD_TO_RUB`.
 - Проверки:
   - `python -m pytest tests\test_llm_client.py -q` -> `7 passed`;

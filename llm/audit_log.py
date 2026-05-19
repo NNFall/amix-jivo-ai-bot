@@ -30,6 +30,8 @@ class LLMUsageStats:
 class LLMCostEstimate:
     input_usd_per_1m: float | None = None
     output_usd_per_1m: float | None = None
+    billable_input_tokens: int | None = None
+    billable_output_tokens: int | None = None
     estimated_usd: float | None = None
     estimated_rub: float | None = None
     usd_to_rub: float | None = None
@@ -131,16 +133,20 @@ def estimate_cost(
 
     prompt_tokens = usage.prompt_tokens or 0
     completion_tokens = usage.completion_tokens or 0
-    estimated_usd = (prompt_tokens * pricing["input"] + completion_tokens * pricing["output"]) / 1_000_000
+    inferred_output_tokens = max(0, (usage.total_tokens or 0) - prompt_tokens)
+    billable_output_tokens = max(completion_tokens, inferred_output_tokens)
+    estimated_usd = (prompt_tokens * pricing["input"] + billable_output_tokens * pricing["output"]) / 1_000_000
     estimated_rub = estimated_usd * usd_to_rub if usd_to_rub else None
 
     return LLMCostEstimate(
         input_usd_per_1m=pricing["input"],
         output_usd_per_1m=pricing["output"],
+        billable_input_tokens=prompt_tokens,
+        billable_output_tokens=billable_output_tokens,
         estimated_usd=round(estimated_usd, 8),
         estimated_rub=round(estimated_rub, 4) if estimated_rub is not None else None,
         usd_to_rub=usd_to_rub,
-        note="Paid-tier estimate. Free-tier requests may bill as 0 until free limits are exhausted.",
+        note="Paid-tier estimate. For Gemini, output estimate includes inferred thinking tokens from total_tokens - prompt_tokens when present.",
     )
 
 
@@ -156,6 +162,8 @@ def cost_to_dict(cost: LLMCostEstimate) -> dict[str, float | str | None]:
     return {
         "input_usd_per_1m": cost.input_usd_per_1m,
         "output_usd_per_1m": cost.output_usd_per_1m,
+        "billable_input_tokens": cost.billable_input_tokens,
+        "billable_output_tokens": cost.billable_output_tokens,
         "estimated_usd": cost.estimated_usd,
         "estimated_rub": cost.estimated_rub,
         "usd_to_rub": cost.usd_to_rub,
