@@ -1,5 +1,22 @@
 # PLAN
 
+## Update 2026-05-19 (LLM-first FAQ and Product Follow-ups)
+
+- Status: completed locally, pending VPS deploy
+- Done:
+  - Disabled scripted company FAQ replies by default when LLM is enabled.
+  - Kept deterministic company FAQ only as offline/fallback behavior via `ASSISTANT_DETERMINISTIC_COMPANY_FAQ_ENABLED`.
+  - Added ordering guard for extracted product candidates so multi-product queries preserve the customer's written order.
+  - Added context resolver for follow-ups like `а по второму` and `am02 который я написал` using the previous product lookup.
+  - Strengthened prompts so product answers keep `результаты_по_запросам` order and company answers use only AMIX reference facts.
+  - Added regression tests for company FAQ routing and contextual product follow-ups.
+- Checks:
+  - `python -m pytest tests\test_assistant_service.py -q` -> `44 passed`.
+  - `python -m pytest -q` -> `93 passed`.
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Commit, push and deploy to VPS.
+
 ## Update 2026-05-17 (Order Shortage + Pricing Policy)
 
 - Status: completed and deployed

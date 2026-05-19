@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     llm_audit_log_max_entries: int = 100
     llm_cost_usd_to_rub: float = 100.0
     show_corporate_price: bool = True
+    assistant_deterministic_company_faq_enabled: bool = False
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None

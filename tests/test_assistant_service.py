@@ -10,6 +10,7 @@ from core.assistant_service import (
 from database.db import session_scope
 from database.models import Handoff, Message, Product
 from llm.openai_client import LLMTurnResult, ToolCall
+from products.article_utils import normalize_article
 from settings import get_settings
 
 
@@ -901,14 +902,19 @@ def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_
     assert "подключится к диалогу" in reply.text
 
 
-def test_assistant_service_allows_company_contact_question_without_handoff(isolated_app_env) -> None:
+def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
+    captured: dict = {}
 
-    def fail_llm_call(**kwargs):
-        raise AssertionError("Company FAQ should be answered by backend rule")
+    def fake_llm_call(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return LLMTurnResult(
+            text="Мы находимся в Санкт-Петербурге, ул. Якорная, д. 15, лит. Б. Телефон: +7 (812) 372-66-07, почта market@amix.spb.ru.",
+            tool_calls=[],
+        )
 
-    service.openai_service.run_messages = fail_llm_call
+    service.openai_service.run_messages = fake_llm_call
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -926,16 +932,17 @@ def test_assistant_service_allows_company_contact_question_without_handoff(isola
     assert reply.handoff_reason is None
     assert "+7 (812) 372-66-07" in reply.text
     assert "market@amix.spb.ru" in reply.text
+    assert captured["messages"][-1]["content"] == "где вы находитесь и какой телефон?"
+
+    with session_scope() as session:
+        bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
+
+    assert bot_message.payload["source"] == "llm_direct"
 
 
-def test_assistant_service_answers_delivery_question_without_llm(isolated_app_env) -> None:
+def test_assistant_service_uses_company_faq_only_when_llm_disabled(isolated_app_env) -> None:
     service = AssistantService()
-    service.openai_service.enabled = True
-
-    def fail_llm_call(**kwargs):
-        raise AssertionError("Delivery FAQ should be answered by backend rule")
-
-    service.openai_service.run_messages = fail_llm_call
+    service.openai_service.enabled = False
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -952,6 +959,11 @@ def test_assistant_service_answers_delivery_question_without_llm(isolated_app_en
 
     assert "доставляем по России" in reply.text
     assert "точную стоимость" in reply.text.lower()
+
+    with session_scope() as session:
+        bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
+
+    assert bot_message.payload["source"] == "backend_company_faq"
 
 
 def test_assistant_service_mentions_code_for_code_lookup(isolated_app_env) -> None:
@@ -985,6 +997,125 @@ def test_assistant_service_mentions_code_for_code_lookup(isolated_app_env) -> No
         )
 
     assert "По коду 1364 нашёл артикул 14.025пр." in reply.text
+
+
+def test_assistant_service_resolves_second_product_followup_by_user_query_order(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article=normalize_article("14.023пр."),
+                    free_stock=Decimal("220"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="22608",
+                    article="P-AM02/B-S",
+                    normalized_article=normalize_article("P-AM02/B-S"),
+                    free_stock=Decimal("1"),
+                    unit="шт",
+                    retail_price=Decimal("1000"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(text="Проверил.", tool_calls=[])
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:query-order",
+            external_client_id="telegram-user:query-order",
+            customer_name="Demo User",
+            customer_text="нужно мне наличие узнать 14.023пр и p am02 b s",
+            inbound_event_id="tg-order-1",
+            outbound_event_id="tg-order-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:query-order",
+            external_client_id="telegram-user:query-order",
+            customer_name="Demo User",
+            customer_text="а по второму",
+            inbound_event_id="tg-order-2",
+            outbound_event_id="tg-order-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        bot_messages = session.query(Message).filter(Message.sender_role == "bot").order_by(Message.id.asc()).all()
+
+    second_lookup = bot_messages[-1].payload["product_lookup_result"]
+    assert reply.text == "Проверил."
+    assert second_lookup["exact_matches"][0]["article"] == "P-AM02/B-S"
+    assert second_lookup["exact_matches"][0]["code"] == "22608"
+
+
+def test_assistant_service_resolves_fragment_followup_from_previous_lookup(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article=normalize_article("14.023пр."),
+                    free_stock=Decimal("220"),
+                    unit="шт",
+                    retail_price=Decimal("473"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="22608",
+                    article="P-AM02/B-S",
+                    normalized_article=normalize_article("P-AM02/B-S"),
+                    free_stock=Decimal("1"),
+                    unit="шт",
+                    retail_price=Decimal("1000"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(text="Проверил.", tool_calls=[])
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:fragment-followup",
+            external_client_id="telegram-user:fragment-followup",
+            customer_name="Demo User",
+            customer_text="нужно мне наличие узнать 14.023пр и p am02 b s",
+            inbound_event_id="tg-fragment-1",
+            outbound_event_id="tg-fragment-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:fragment-followup",
+            external_client_id="telegram-user:fragment-followup",
+            customer_name="Demo User",
+            customer_text="так я про второй спрашиваю am02 который я написал",
+            inbound_event_id="tg-fragment-2",
+            outbound_event_id="tg-fragment-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        bot_messages = session.query(Message).filter(Message.sender_role == "bot").order_by(Message.id.asc()).all()
+
+    second_lookup = bot_messages[-1].payload["product_lookup_result"]
+    assert second_lookup["exact_matches"][0]["article"] == "P-AM02/B-S"
+    assert second_lookup["exact_matches"][0]["code"] == "22608"
 
 
 def test_assistant_service_uses_raw_query_for_similar_reply(isolated_app_env) -> None:

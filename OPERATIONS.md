@@ -1217,6 +1217,25 @@
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 43 - LLM-first FAQ и порядок товарных уточнений
+
+- По Telegram-проверке обнаружено:
+  - быстрые ответы на адрес/контакты шли через backend company FAQ без LLM;
+  - multi-token артикул `p am02 b s` извлекался раньше более раннего по тексту `14.023пр`, из-за чего ломалась логика `по второму`;
+  - follow-up `am02 который я написал` мог уходить в новый широкий поиск вместо использования предыдущего результата;
+  - общий ответ о компании мог добавлять факты не из справки.
+- Внесено:
+  - добавлена настройка `ASSISTANT_DETERMINISTIC_COMPANY_FAQ_ENABLED=false`;
+  - при включенной LLM компания/адрес/доставка теперь идут в LLM direct-flow, deterministic FAQ оставлен только как fallback/offline mode;
+  - article candidates сортируются по реальной позиции в сообщении клиента после извлечения;
+  - добавлен resolver для `первый/второй` и фрагментов вроде `am02` по последнему product lookup;
+  - compact tool result получил `порядок_запросов_клиента`;
+  - prompts усилены правилом отвечать в порядке `результаты_по_запросам` и не выдумывать факты о компании за пределами справки AMIX.
+- Тесты:
+  - `python -m pytest tests\test_assistant_service.py -q` -> `44 passed`;
+  - `python -m pytest -q` -> `93 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## Итерация 39 - real handoff action guard
 
 - По Telegram/Kie live payload обнаружено, что текст `Передаю вопрос менеджеру` мог быть обычным `assistant.content`, без реального `handoff_to_manager`.

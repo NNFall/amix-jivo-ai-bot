@@ -64,6 +64,7 @@ class AssistantService:
         self.debug_llm_payloads = settings.assistant_debug_llm_payloads
         self.debug_llm_payloads_path = Path(settings.assistant_debug_llm_payloads_path)
         self.show_corporate_price = settings.show_corporate_price
+        self.deterministic_company_faq_enabled = settings.assistant_deterministic_company_faq_enabled
 
     def handle_client_message(
         self,
@@ -177,7 +178,7 @@ class AssistantService:
             return self._superseded_reply()
 
         recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
-        article_candidates = extract_article_candidates(customer_text)
+        article_candidates = self._sort_queries_by_text_order(extract_article_candidates(customer_text), customer_text)
         history_article_candidates = self._extract_recent_lookup_article_candidates(recent_messages)
         pending_lookup = self._find_latest_pending_product_lookup(recent_messages)
         if self._looks_like_price_refinement(customer_text, article_candidates):
@@ -203,6 +204,26 @@ class AssistantService:
                     handoff_mode=handoff_mode,
                     is_turn_current=is_turn_current,
                 )
+        contextual_followup_queries = self._resolve_contextual_product_followup_queries(customer_text, recent_messages)
+        if contextual_followup_queries:
+            lookup_result = self._search_products_by_queries(
+                session,
+                queries=contextual_followup_queries,
+                reason=self._guess_lookup_reason(customer_text),
+                customer_text=customer_text,
+            )
+            self._log_lookup_result(stage="context_followup", payload=lookup_result)
+            return self._reply_from_product_result(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+                transcript=transcript,
+                product_lookup_result=lookup_result,
+                outbound_event_id=outbound_event_id,
+                payload_source="backend_context_followup",
+                handoff_mode=handoff_mode,
+                is_turn_current=is_turn_current,
+            )
         if (
             not article_candidates
             and history_article_candidates
@@ -302,7 +323,7 @@ class AssistantService:
             )
 
         company_answer = self._build_company_faq_answer(customer_text)
-        if company_answer:
+        if company_answer and (self.deterministic_company_faq_enabled or not self.openai_service.enabled):
             self._append_bot_message(
                 session,
                 external_chat_id=external_chat_id,
@@ -1437,11 +1458,17 @@ class AssistantService:
                 "похожие_варианты": [compact_match(match) for match in similar[:3]],
             }
 
+        per_query_results = payload.get("results") or payload.get("per_query_results") or []
         result = {
             "тип": "результат_поиска_товаров",
             "задача": task_map.get(reason, reason),
             "статус": status_map.get(payload.get("status"), payload.get("status")),
             "запрос_клиента": payload.get("display_query") or payload.get("query"),
+            "порядок_запросов_клиента": [
+                item.get("display_query") or item.get("query")
+                for item in per_query_results
+                if item.get("display_query") or item.get("query")
+            ],
             "товары": [compact_match(match) for match in (payload.get("exact_matches") or [])],
             "похожие_варианты": [
                 compact_match(match)
@@ -1449,7 +1476,6 @@ class AssistantService:
             ],
         }
 
-        per_query_results = payload.get("results") or payload.get("per_query_results") or []
         if len(per_query_results) > 1:
             result["результаты_по_запросам"] = [compact_container(item) for item in per_query_results]
 
@@ -1826,6 +1852,74 @@ class AssistantService:
             if matched:
                 return matched[:2]
         return candidates[:2]
+
+    @staticmethod
+    def _sort_queries_by_text_order(queries: list[str], customer_text: str | None) -> list[str]:
+        if not customer_text or len(queries) < 2:
+            return queries
+
+        text_lower = customer_text.lower()
+        ordered: list[tuple[int, int, str]] = []
+        for index, query in enumerate(queries):
+            display_query = AssistantService._resolve_display_query(query, customer_text)
+            position = text_lower.find(str(display_query or "").lower()) if display_query else -1
+            if position < 0:
+                position = text_lower.find(str(query).lower())
+            ordered.append((position if position >= 0 else 1_000_000 + index, index, query))
+        return [query for _, _, query in sorted(ordered)]
+
+    @staticmethod
+    def _resolve_contextual_product_followup_queries(customer_text: str, messages: list) -> list[str]:
+        lookup = AssistantService._find_latest_product_lookup(messages)
+        if not lookup:
+            return []
+
+        per_query_results = lookup.get("per_query_results") or lookup.get("results") or []
+        if not per_query_results:
+            return []
+
+        ordinal_index = AssistantService._extract_followup_ordinal_index(customer_text)
+        if ordinal_index is not None and 0 <= ordinal_index < len(per_query_results):
+            query = AssistantService._preferred_query_for_lookup_item(per_query_results[ordinal_index])
+            return [query] if query else []
+
+        normalized_fragments = [normalize_article(candidate) for candidate in extract_article_candidates(customer_text)]
+        normalized_fragments = [fragment for fragment in normalized_fragments if len(fragment) >= 3]
+        if not normalized_fragments:
+            return []
+
+        for item in per_query_results:
+            values = [
+                item.get("display_query"),
+                item.get("query"),
+                item.get("raw_backend_query"),
+            ]
+            for match in (item.get("exact_matches") or []) + (item.get("similar_matches") or []):
+                values.extend([match.get("article"), match.get("code")])
+
+            normalized_values = [normalize_article(str(value)) for value in values if value]
+            for fragment in normalized_fragments:
+                if any(fragment in value or value in fragment for value in normalized_values if value):
+                    query = AssistantService._preferred_query_for_lookup_item(item)
+                    return [query] if query else []
+        return []
+
+    @staticmethod
+    def _extract_followup_ordinal_index(customer_text: str) -> int | None:
+        text = customer_text.lower()
+        if re.search(r"\b(1|перв\w*)\b", text):
+            return 0
+        if re.search(r"\b(2|вт[оа]+р\w*)\b", text):
+            return 1
+        return None
+
+    @staticmethod
+    def _preferred_query_for_lookup_item(item: dict) -> str | None:
+        exact = item.get("exact_matches") or []
+        if len(exact) == 1:
+            match = exact[0]
+            return str(match.get("article") or match.get("code") or "").strip() or None
+        return str(item.get("display_query") or item.get("query") or item.get("raw_backend_query") or "").strip() or None
 
     def _log_lookup_result(self, *, stage: str, payload: dict[str, Any]) -> None:
         if self.debug_lookup_logs:
