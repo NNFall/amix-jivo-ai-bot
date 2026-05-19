@@ -1264,6 +1264,17 @@
 - Проверки:
   - `PYTHONPATH=. python -m pytest tests/test_assistant_service.py tests/test_article_utils.py -q` -> `65 passed`;
   - `PYTHONPATH=. python -m pytest -q` -> `106 passed`.
+- GitHub:
+  - commit: `bb5495a`;
+  - message: `Guard follow-up product lookups`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only origin master` до `bb5495a`;
+  - `.venv/bin/python -m pytest -q` -> `106 passed`;
+  - серверная база: `search_products_structured("МП ЦК белая")` -> `exact_found`, код `28834`, вес `0.538`, цена `314`, остаток `39`;
+  - серверная проверка: `_extract_named_product_query("МП ЦК белая она сколько весит")` -> `МП ЦК белая`;
+  - серверная проверка: `_looks_like_price_refinement("который 194р стоит", ["194Р"])` -> `True`;
+  - `amix-telegram-demo.service` перезапущен, статус `active/enabled`.
 
 ## Итерация 43 - LLM-first FAQ и порядок товарных уточнений
 

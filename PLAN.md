@@ -946,3 +946,8 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Проверки:
   - `PYTHONPATH=. python -m pytest tests/test_assistant_service.py tests/test_article_utils.py -q` -> `65 passed`;
   - `PYTHONPATH=. python -m pytest -q` -> `106 passed`.
+- VPS:
+  - `/root/amix` обновлён до `bb5495a`;
+  - `.venv/bin/python -m pytest -q` -> `106 passed`;
+  - `МП ЦК белая` на серверной базе находится как код `28834`, вес `0.538`;
+  - `amix-telegram-demo.service` активен.
