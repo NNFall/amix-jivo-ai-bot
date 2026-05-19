@@ -923,4 +923,10 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `PYTHONPATH=. python -m pytest tests/test_article_utils.py tests/test_assistant_service.py -q` -> `60 passed`;
   - `PYTHONPATH=. python -m pytest -q` -> `101 passed`.
 - Ближайший следующий шаг:
-  - задеплоить на VPS, проверить поиск `МП/ОЗ` на реальной базе и перезапустить Telegram demo service.
+  - live-проверка в Telegram: повторить сценарий `26141 какая цена` -> `МП/ОЗ у него какая масса?` и убедиться, что ответ строится по `МП/ОЗ`, а не по `1108035`.
+- VPS:
+  - `/root/amix` обновлён до commit `c008d45`;
+  - `.venv/bin/python -m pytest -q` -> `101 passed`;
+  - `amix-telegram-demo.service` перезапущен и активен;
+  - серверная проверка `search_products_structured("МП/ОЗ")` -> `multiple_exact`, 20 точных позиций;
+  - серверная проверка fallback по весу выводит коды и веса позиций `МП/ОЗ`.

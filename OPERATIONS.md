@@ -1233,6 +1233,20 @@
 - Проверки:
   - `PYTHONPATH=. python -m pytest tests/test_article_utils.py tests/test_assistant_service.py -q` -> `60 passed`;
   - `PYTHONPATH=. python -m pytest -q` -> `101 passed`.
+- GitHub:
+  - commit: `c008d45`;
+  - message: `Fix digitless slash article weight lookups`;
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` был чистым перед деплоем;
+  - `git pull --ff-only origin master` -> fast-forward до `c008d45`;
+  - `.venv/bin/python -m pytest -q` -> `101 passed`;
+  - `systemctl restart amix-telegram-demo.service`;
+  - `systemctl is-active amix-telegram-demo.service` -> `active`;
+  - `systemctl is-enabled amix-telegram-demo.service` -> `enabled`;
+  - проверка на серверной базе: `extract_article_candidates("МП/ОЗ у него какая масса?")` -> `["МПОЗ"]`;
+  - проверка на серверной базе: `search_products_structured("МП/ОЗ")` -> `multiple_exact`, 20 точных позиций;
+  - fallback по вопросу веса теперь выводит найденные веса по `МП/ОЗ`, а не отвечает про `1108035`.
 
 ## Итерация 43 - LLM-first FAQ и порядок товарных уточнений
 
