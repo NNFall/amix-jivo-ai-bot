@@ -21,14 +21,17 @@
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - GitHub:
   - commit `46966c3` (`Harden check-only and FAQ responses`);
+  - commit `a138f78` (`Allow polite FAQ rewrites and keep tool facts`);
+  - commit `c162b45` (`Guard check-only replies from manager offers`);
   - push: `origin/master`.
 - VPS:
-  - `/root/amix` обновлён через `git pull --ff-only` до `46966c3`;
+  - `/root/amix` обновлён через `git pull --ff-only` до `c162b45`;
   - подтверждено окружение: `LLM_PROVIDER=google_ai_studio`, `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`, `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false`;
-  - `.venv/bin/python -m pytest -q` -> `110 passed`;
+  - `.venv/bin/python -m pytest -q` -> `111 passed`;
   - `amix-telegram-demo.service` перезапущен, состояние `active/running/enabled`;
-  - smoke без Telegram-отправки: `Проверьте 14.023пр и xyz-999` -> ответ только про наличие `14.023пр.` и не найденный `xyz-999`, без цены/веса;
-  - smoke без Telegram-отправки: `а где вы находитесь` -> адрес без фразы `Будем рады видеть вас`.
+  - smoke без Telegram-отправки: `Проверьте 14.023пр и xyz-999` -> ответ только про наличие `14.023пр.` и не найденный `xyz-999`, без цены/веса и без предложения менеджера;
+  - в сохранённом tool-result для этого же smoke цена `473 руб` и вес `0.070` остались, чтобы следующие вопросы могли использовать контекст;
+  - smoke без Telegram-отправки: `а где вы находитесь` -> адрес с короткой вежливой фразой `Будем рады вас видеть`.
 
 ## 2026-05-20 - Switchable LLM-first product search
 

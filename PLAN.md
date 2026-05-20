@@ -2,7 +2,7 @@
 
 ## Update 2026-05-20 (Strict Check/FAQ Answer Guards)
 
-- Status: adjusted locally, pending deploy.
+- Status: completed and deployed.
 - Done:
   - Treat plain product check requests like `проверьте 14.023пр и xyz-999` as stock/check-only unless the customer explicitly asks for price, weight, mass, comparison, discount or order.
   - Keep full price/weight facts in LLM-visible tool history for later follow-up questions.
@@ -12,13 +12,14 @@
   - `python -m pytest -q` -> `111 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - VPS:
-  - deployed commit `46966c3`;
-  - server `.venv/bin/python -m pytest -q` -> `110 passed`;
+  - deployed commit `c162b45`;
+  - server `.venv/bin/python -m pytest -q` -> `111 passed`;
   - `amix-telegram-demo.service` -> `active/running/enabled`;
-  - smoke `Проверьте 14.023пр и xyz-999` returned only stock/not-found, without price/weight;
-  - smoke address FAQ returned the address without extra invitation text.
+  - smoke `Проверьте 14.023пр и xyz-999` returned stock/not-found without price/weight or manager offer;
+  - the stored tool-result still contains price/weight for later context;
+  - smoke address FAQ allowed a short polite ending from the model.
 - Next:
-  - Commit, deploy and re-smoke the adjusted behavior.
+  - Explain Google AI Studio log shape and keep observing LLM-first Telegram behavior.
 
 ## Update 2026-05-20 (Switchable LLM-First Product Search)
 
