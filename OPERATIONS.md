@@ -1788,6 +1788,22 @@
   - первый Google request вернул tool call `search_products`;
   - финальный Google request после `role=tool` ушёл с добавленной user-инструкцией и получил HTTP 200;
   - audit показал роли финального запроса: `system`, `user`, `assistant`, `tool`, `user`.
+
+## Итерация 53 - repair server product row 14.023пр
+
+- По live-логу пользователя модель корректно вызвала `search_products` с query `14.023пр`, но tool result вернул `не_найдено`.
+- На VPS проверена строка товара `code=770`:
+  - поля `article`, `normalized_article`, `unit` были повреждены как `14.023??.`, `14023??`, `??`;
+  - `raw_payload` сохранил исходные XML-значения.
+- Причина:
+  - повреждение появилось после ручного smoke-скрипта, который обновлял товарную строку на сервере напрямую;
+  - это не ошибка LLM и не ошибка Google tool-calling.
+- Выполнено на VPS:
+  - восстановлены `Product.article`, `Product.normalized_article`, `Product.unit` для кодов `769` и `770` прямыми Unicode-значениями;
+  - подтверждены кодпоинты `14.023пр.` (`\u043f\u0440`) и `шт` (`\u0448\u0442`);
+  - `_search_products_by_queries(["14.023пр", "xyz-999"])` теперь возвращает:
+    - `14.023пр` -> `exact_found`, code `770`, stock `220.000`, price `473 руб.`;
+    - `xyz-999` -> `not_found`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:
