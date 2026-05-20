@@ -2302,24 +2302,7 @@ class AssistantService:
             logger.info("assistant_lookup_%s payload=%s", stage, json.dumps(payload, ensure_ascii=False))
 
     def _get_provider_safe_llm_messages(self, session, external_chat_id: str) -> list[dict]:
-        messages = self.dialog_service.get_llm_messages(session, external_chat_id)
-        if self.openai_service.provider != "google_ai_studio":
-            return messages
-        return self._convert_tool_history_to_system_messages(messages)
-
-    @staticmethod
-    def _convert_tool_history_to_system_messages(messages: list[dict]) -> list[dict]:
-        converted: list[dict] = []
-        for message in messages:
-            if message.get("role") == "assistant" and message.get("tool_calls"):
-                continue
-            if message.get("role") == "tool":
-                content = str(message.get("content") or "").strip()
-                if content:
-                    converted.append({"role": "system", "content": f"TOOL_RESULTS_JSON:\n{content}"})
-                continue
-            converted.append(message)
-        return converted
+        return self.dialog_service.get_llm_messages(session, external_chat_id)
 
     @staticmethod
     def _new_llm_request_id(external_chat_id: str, mode: str) -> str:

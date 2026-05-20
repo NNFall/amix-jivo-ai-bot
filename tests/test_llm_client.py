@@ -167,6 +167,52 @@ def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app
     assert "stream_options" not in collector["json"]
 
 
+def test_google_ai_studio_payload_preserves_tool_role_history(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-google-key")
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    service = OpenAIService(get_settings())
+    service.run_messages(
+        messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "check product"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_google_history_1",
+                        "type": "function",
+                        "function": {
+                            "name": "search_products",
+                            "arguments": "{\"queries\":[\"14.023пр\"],\"intent\":\"stock\"}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_google_history_1",
+                "name": "search_products",
+                "content": "{\"status\":\"ok\",\"stock\":\"220 шт\"}",
+            },
+            {"role": "user", "content": "answer"},
+        ],
+        tools=None,
+        tool_choice="none",
+    )
+
+    messages = collector["json"]["messages"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "user"]
+    assert messages[2]["tool_calls"][0]["function"]["name"] == "search_products"
+    assert messages[3]["tool_call_id"] == "call_google_history_1"
+
+
 def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, isolated_app_env, tmp_path) -> None:
     collector: dict = {}
     audit_path = tmp_path / "llm_audit_recent.json"

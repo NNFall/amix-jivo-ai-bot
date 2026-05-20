@@ -1,5 +1,22 @@
 # PLAN
 
+## Update 2026-05-20 (Google Chronological Tool History)
+
+- Status: completed locally, pending VPS deploy.
+- Finding:
+  - Google Logs test `AMIX_LOG_SHAPE_TEST_A_TOOL_ROLE_20260520` confirmed that Google OpenAI-compatible endpoint displays chronological `assistant.tool_calls` and `functionResponse` in `contents`.
+  - Google Logs test `AMIX_LOG_SHAPE_TEST_B_MIDDLE_SYSTEM_20260520` confirmed that a middle `system` message is moved to `systemInstruction`, not kept chronologically.
+  - Direct VPS test `AMIX_LOG_SHAPE_TEST_D_TOOL_HISTORY_NO_TOOLS_20260520` confirmed completed tool history is accepted even when the final request does not pass `tools`.
+- Done:
+  - Removed Google-specific conversion of tool history to `TOOL_RESULTS_JSON` system messages.
+  - Kept system-message merge for Google, because multiple `system` messages still map to one `systemInstruction`.
+  - Added regression tests that Google-bound assistant payloads preserve `assistant.tool_calls` and `role=tool`.
+- Checks:
+  - `python -m pytest -q` -> `112 passed`.
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Deploy to VPS and verify Google Logs on a live/tool smoke turn.
+
 ## Update 2026-05-20 (Strict Check/FAQ Answer Guards)
 
 - Status: completed and deployed.

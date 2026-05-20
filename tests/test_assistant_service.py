@@ -1078,7 +1078,7 @@ def test_assistant_service_records_tool_flow_as_role_messages(isolated_app_env) 
     )
 
 
-def test_assistant_service_converts_synthetic_tool_history_for_google_provider(isolated_app_env) -> None:
+def test_assistant_service_preserves_tool_history_for_google_provider(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -1120,10 +1120,10 @@ def test_assistant_service_converts_synthetic_tool_history_for_google_provider(i
     assert reply.text == "Проверил, остаток 220 шт."
     assert "assistant_tool_call" in stored_roles
     assert "tool" in stored_roles
-    assert not any(message.get("role") == "tool" for message in captured["messages"])
-    assert not any(message.get("tool_calls") for message in captured["messages"])
-    assert any(
-        message.get("role") == "system" and str(message.get("content", "")).startswith("TOOL_RESULTS_JSON")
+    assert any(message.get("role") == "tool" for message in captured["messages"])
+    assert any(message.get("tool_calls") for message in captured["messages"])
+    assert not any(
+        str(message.get("content", "")).startswith("TOOL_RESULTS_JSON")
         for message in captured["messages"]
     )
 

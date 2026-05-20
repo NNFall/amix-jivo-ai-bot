@@ -9,6 +9,19 @@
   - `AMIX_LOG_SHAPE_TEST_C_MERGED_SYSTEM_20260520`: текущий стиль с merged `systemInstruction` сверху.
 - Все 3 запроса вернули HTTP 200, значит Google OpenAI-compatible endpoint технически принимает хронологический `assistant.tool_calls` + `role=tool` payload.
 - Цель проверки - не качество ответа, а отображение в Google Logs: нужно посмотреть, покажет ли Google UI tool-call/tool-result в `contents`, или всё равно схлопнет/спрячет их.
+- По логам пользователя:
+  - вариант `A` показал хронологический `functionCall` в `role=model` и следующий `functionResponse` в `role=user`;
+  - вариант `B` показал, что `system` посередине уезжает в `systemInstruction`;
+  - вариант `C` подтвердил текущий merged-system стиль.
+- Дополнительно с VPS отправлен `AMIX_LOG_SHAPE_TEST_D_TOOL_HISTORY_NO_TOOLS_20260520`: completed tool history без `tools` в финальном запросе тоже принят Google, HTTP 200.
+- Изменено локально:
+  - убран Google-specific перевод tool-history в `TOOL_RESULTS_JSON`;
+  - для Google теперь сохраняется хронология `assistant.tool_calls` + `role=tool`, как для остальных провайдеров;
+  - merge нескольких `system` сообщений для Google оставлен.
+- Проверки:
+  - `python -m pytest tests\test_assistant_service.py::test_assistant_service_preserves_tool_history_for_google_provider tests\test_llm_client.py::test_google_ai_studio_payload_preserves_tool_role_history -q` -> `2 passed`;
+  - `python -m pytest -q` -> `112 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
 ## 2026-05-20 - Strict check-only and FAQ guards
 
