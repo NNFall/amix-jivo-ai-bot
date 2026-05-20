@@ -1037,7 +1037,8 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Причина:
   - Google Logs подтвердили, что `assistant.tool_calls` + `role=tool` отображаются хронологически как `functionCall` и `functionResponse`;
   - `system`-сообщения с `TOOL_RESULTS_JSON` отображаются в `systemInstruction`, поэтому они хуже подходят для хронологической истории;
-  - реальный финальный запрос после tool result может заканчиваться на `role=tool`, а успешный log-shape тест имел дополнительное user-сообщение после `functionResponse`.
+  - серверный audit показал HTTP 400: Google отклоняет финальный запрос, который заканчивается на `functionResponse`, с ошибкой про отсутствующий `thought_signature` у `functionCall`;
+  - успешный log-shape тест имел дополнительное user-сообщение после `functionResponse`, и прямой серверный повтор подтвердил, что такая форма проходит HTTP 200.
 - Сделано локально:
   - для Google AI Studio добавлена неперсистентная финальная user-инструкция после последнего `role=tool`;
   - tool history остается в payload хронологически, без возврата к `TOOL_RESULTS_JSON` как основному формату;
@@ -1045,3 +1046,4 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Проверки:
   - `PYTHONPATH=. pytest tests/test_llm_client.py::test_google_ai_studio_payload_preserves_tool_role_history tests/test_llm_client.py::test_google_ai_studio_payload_appends_final_instruction_after_tool_result -q` -> `2 passed`.
   - `PYTHONPATH=. pytest -q` -> `113 passed`.
+  - VPS direct Google shape tests: `functionResponse` last -> HTTP 400, `functionResponse` + user instruction -> HTTP 200.

@@ -1761,6 +1761,11 @@
   - вариант `assistant.tool_calls` + `role=tool` отображается хронологически как `functionCall` и `functionResponse`;
   - вариант с `TOOL_RESULTS_JSON` в `system` отображается только в `systemInstruction`;
   - текущий merged-system стиль также не дает хронологического tool-события в Google UI.
+- Серверный audit последнего 400:
+  - текущий деплой был на commit `4c1c580`;
+  - последняя error-запись имела роли `["system", "user", "assistant", "tool"]`;
+  - Google вернул HTTP 400 с причиной: `Function call is missing a thought_signature in functionCall parts`;
+  - проблема воспроизводится, когда финальный запрос заканчивается на `role=tool` / `functionResponse`.
 - В `llm/openai_client.py` добавлена подготовка Google payload:
   - system-сообщения по-прежнему объединяются в один `systemInstruction`;
   - если финальный Google-запрос заканчивается на `role=tool`, добавляется неперсистентное user-сообщение с просьбой сформулировать ответ по результату функции;
@@ -1769,8 +1774,9 @@
 - Проверка:
   - `PYTHONPATH=. pytest tests/test_llm_client.py::test_google_ai_studio_payload_preserves_tool_role_history tests/test_llm_client.py::test_google_ai_studio_payload_appends_final_instruction_after_tool_result -q` -> `2 passed`.
   - `PYTHONPATH=. pytest -q` -> `113 passed`.
-- Ограничение:
-  - попытка SSH без интерактивного пароля не прошла (`Permission denied`), поэтому серверный audit с последним HTTP 400 не был вытащен в этой итерации.
+- VPS direct shape check:
+  - `assistant(functionCall) -> tool(functionResponse)` как последний turn -> HTTP 400;
+  - `assistant(functionCall) -> tool(functionResponse) -> user final instruction` -> HTTP 200.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

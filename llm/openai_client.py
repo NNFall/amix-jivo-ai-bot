@@ -258,7 +258,7 @@ class OpenAIService:
 
     @staticmethod
     def _append_google_final_instruction_after_tool_result(messages: list[dict]) -> list[dict]:
-        """Keep tool results chronological while avoiding a final functionResponse-only Gemini turn."""
+        """Keep tool results chronological and avoid Google's final functionResponse-only 400."""
         if not messages or messages[-1].get("role") != "tool":
             return messages
 
