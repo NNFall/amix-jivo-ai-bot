@@ -1,5 +1,15 @@
 # OPERATIONS
 
+## 2026-05-20 - Google log-shape diagnostics
+
+- По запросу пользователя отправлены с VPS прямые Google OpenAI-compatible запросы, без нашего provider-adapter merge, чтобы проверить, как Google AI Studio Logs отображает разные формы истории.
+- Отправлены 3 payload-варианта:
+  - `AMIX_LOG_SHAPE_TEST_A_TOOL_ROLE_20260520`: хронологическая история с `assistant.tool_calls` и следующим `role=tool`;
+  - `AMIX_LOG_SHAPE_TEST_B_MIDDLE_SYSTEM_20260520`: `TOOL_RESULTS_JSON` как отдельное `system` сообщение посередине истории;
+  - `AMIX_LOG_SHAPE_TEST_C_MERGED_SYSTEM_20260520`: текущий стиль с merged `systemInstruction` сверху.
+- Все 3 запроса вернули HTTP 200, значит Google OpenAI-compatible endpoint технически принимает хронологический `assistant.tool_calls` + `role=tool` payload.
+- Цель проверки - не качество ответа, а отображение в Google Logs: нужно посмотреть, покажет ли Google UI tool-call/tool-result в `contents`, или всё равно схлопнет/спрячет их.
+
 ## 2026-05-20 - Strict check-only and FAQ guards
 
 - По свежим Google AI Studio логам подтверждено: после merge system messages полный prompt, `INTERNAL_CONTEXT_JSON` и `TOOL_RESULTS_JSON` уже доходят до Google; проблема осталась в политике ответа модели.
