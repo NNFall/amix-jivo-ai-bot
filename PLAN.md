@@ -2,11 +2,12 @@
 
 ## Update 2026-05-20 (Strict Check/FAQ Answer Guards)
 
-- Status: completed and deployed.
+- Status: adjusted locally, pending deploy.
 - Done:
   - Treat plain product check requests like `проверьте 14.023пр и xyz-999` as stock/check-only unless the customer explicitly asks for price, weight, mass, comparison, discount or order.
-  - Keep price/weight out of LLM-visible product data and final replies for check-only requests.
-  - Guard company FAQ rewrites against extra courtesy/invitation phrases that are not present in the safe answer.
+  - Keep full price/weight facts in LLM-visible tool history for later follow-up questions.
+  - Guard only the final client-facing reply for check-only requests: if the model leaks price/weight, replace the final text with a stock/not-found fallback.
+  - Allow normal short FAQ politeness such as `Будем рады видеть вас`; still guard unsupported facts and AI-bot capability claims.
 - Checks:
   - `python -m pytest -q` -> `110 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
@@ -17,7 +18,7 @@
   - smoke `Проверьте 14.023пр и xyz-999` returned only stock/not-found, without price/weight;
   - smoke address FAQ returned the address without extra invitation text.
 - Next:
-  - Continue observing live LLM-first Telegram behavior, especially short product names like `МП/ОЗ`, where the model may still need a minimal product-search nudge.
+  - Commit, deploy and re-smoke the adjusted behavior.
 
 ## Update 2026-05-20 (Switchable LLM-First Product Search)
 
@@ -27,7 +28,7 @@
   - Default stays `true` so existing production behavior is unchanged unless the flag is explicitly disabled.
   - When disabled, backend no longer performs automatic product prelookup for article, price-refinement, contextual follow-up, order, manager or technical prelookup branches.
   - Product facts are fetched only when the LLM calls `search_products`; backend then executes exactly that tool call and stores `assistant_tool_call` + `tool` history.
-  - Hardened LLM-first stock-only flow: tool results visible to the model hide price, corporate price, weight and volume when the customer asks only for availability/stock.
+  - Hardened LLM-first stock-only flow: final client-facing stock-only replies are replaced with deterministic fallback if the model mentions price or weight.
   - Added a guard that replaces a stock-only LLM reply with deterministic stock fallback if the model still mentions price or weight.
   - Added regression coverage proving an article query goes through LLM tool-call flow when backend prelookup is disabled.
 - Checks:

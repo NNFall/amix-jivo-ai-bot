@@ -894,20 +894,7 @@ class AssistantService:
 
     @staticmethod
     def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
-        if not stock_only_request:
-            return product_lookup_result
-
-        payload = deepcopy(product_lookup_result)
-        for container in AssistantService._iter_lookup_result_containers(payload):
-            for key in ("exact_matches", "similar_matches"):
-                for match in container.get(key, []):
-                    match["retail_price"] = None
-                    match["retail_price_display"] = None
-                    match["corporate_price"] = None
-                    match["corporate_price_display"] = None
-                    match["weight"] = None
-                    match["volume"] = None
-        return payload
+        return product_lookup_result
 
     def _build_tool_visible_product_lookup_result(self, product_lookup_result: dict, *, customer_text: str) -> dict:
         corporate_price_requested = self._is_corporate_price_request(customer_text)
@@ -1163,15 +1150,6 @@ class AssistantService:
             "деко-лайн",
             "северо-запад",
             "09:00",
-            "будем рады",
-            "рады видеть",
-            "ждём вас",
-            "ждем вас",
-            "приезжайте",
-            "заезжайте",
-            "подъезжайте",
-            "приходите",
-            "всегда рады",
         )
         return any(fragment in text for fragment in forbidden_fragments)
 

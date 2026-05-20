@@ -480,7 +480,7 @@ def test_assistant_service_sends_compact_tool_result_without_similar_when_exact_
     assert "similar_matches" not in tool_message.text
     assert "1108036" not in tool_message.text
     assert "тип" in tool_message.text
-    assert "50 820" not in tool_message.text
+    assert "50 820" in tool_message.text
     raw_lookup = tool_message.payload["raw_product_lookup_result"]
     assert raw_lookup["similar_matches_count"] == 0
     assert raw_lookup["per_query_results"][0]["similar_matches_count"] == 0
@@ -731,7 +731,7 @@ def test_assistant_service_can_disable_backend_prelookup_for_article_query(isola
     assert not any(str(source).startswith("backend_prelookup") for source in sources if source)
 
 
-def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_request(
+def test_assistant_service_keeps_full_tool_result_but_guards_stock_only_reply(
     isolated_app_env,
     monkeypatch,
 ) -> None:
@@ -753,7 +753,6 @@ def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_reques
             )
         )
 
-    captured: dict = {}
     service = AssistantService()
     service.openai_service.enabled = True
 
@@ -773,7 +772,6 @@ def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_reques
                     )
                 ],
             )
-        captured["final_messages"] = kwargs["messages"]
         return LLMTurnResult(text="AB-123 costs 120 rub. Weight is 0.500 kg.", tool_calls=[])
 
     service.openai_service.run_messages = fake_run_messages
@@ -793,10 +791,8 @@ def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_reques
         tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
 
     tool_content = tool_message.payload["content"]
-    assert "120" not in tool_content
-    assert "100" not in tool_content
-    assert "0.500" not in tool_content
-    assert all("120" not in str(message.get("content")) for message in captured["final_messages"])
+    assert "120" in tool_content
+    assert "0.500" in tool_content
     assert "120 rub" not in reply.text
     assert "4 pcs" in reply.text
 
@@ -823,7 +819,6 @@ def test_assistant_service_treats_plain_product_check_as_stock_only(
             )
         )
 
-    captured: dict = {}
     service = AssistantService()
     service.openai_service.enabled = True
 
@@ -843,7 +838,6 @@ def test_assistant_service_treats_plain_product_check_as_stock_only(
                     )
                 ],
             )
-        captured["final_messages"] = kwargs["messages"]
         return LLMTurnResult(text="AB-123 costs 120 rub. Weight is 0.500 kg. ZZ-999 not found.", tool_calls=[])
 
     service.openai_service.run_messages = fake_run_messages
@@ -863,10 +857,8 @@ def test_assistant_service_treats_plain_product_check_as_stock_only(
         tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
 
     tool_content = tool_message.payload["content"]
-    assert "120" not in tool_content
-    assert "100" not in tool_content
-    assert "0.500" not in tool_content
-    assert all("120" not in str(message.get("content")) for message in captured["final_messages"])
+    assert "120" in tool_content
+    assert "0.500" in tool_content
     assert "120 rub" not in reply.text
     assert "0.500" not in reply.text
     assert "kg" not in reply.text.lower()
@@ -1254,17 +1246,17 @@ def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(i
     assert bot_message.payload["source"] == "llm_company_faq"
 
 
-def test_assistant_service_guards_company_faq_extra_invitation(isolated_app_env) -> None:
+def test_assistant_service_allows_company_faq_polite_rewrite(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
 
-    def unsafe_llm_call(**kwargs):
+    def polite_llm_call(**kwargs):
         return LLMTurnResult(
             text="Наш магазин находится в Санкт-Петербурге на улице Якорной, дом 15, литера Б. Будем рады видеть вас!",
             tool_calls=[],
         )
 
-    service.openai_service.run_messages = unsafe_llm_call
+    service.openai_service.run_messages = polite_llm_call
 
     with session_scope() as session:
         reply = service.handle_client_message(
@@ -1279,13 +1271,14 @@ def test_assistant_service_guards_company_faq_extra_invitation(isolated_app_env)
             handoff_mode="demo",
         )
 
-    assert "Будем рады" not in reply.text
-    assert "Санкт-Петербург, ул. Якорная, д. 15, лит. Б" in reply.text
+    assert "Будем рады" in reply.text
+    assert "Санкт-Петербурге" in reply.text
+    assert "Якорной" in reply.text
 
     with session_scope() as session:
         bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
 
-    assert bot_message.payload["source"] == "backend_company_faq_guard"
+    assert bot_message.payload["source"] == "llm_company_faq"
 
 
 def test_assistant_service_guards_company_self_description_from_bot_capabilities(isolated_app_env) -> None:
@@ -1903,7 +1896,7 @@ def test_assistant_service_detects_unknown_codes_in_llm_reply() -> None:
     assert not AssistantService._reply_mentions_unknown_product_codes("Код 32107: МП/ОЗ", lookup)  # noqa: SLF001
 
 
-def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
+def test_assistant_service_keeps_prices_for_stock_only_context() -> None:
     lookup = {
         "status": "exact_found",
         "exact_matches_count": 1,
@@ -1925,10 +1918,10 @@ def test_assistant_service_hides_prices_for_single_stock_only_request() -> None:
     filtered = AssistantService._apply_stock_only_policy(lookup, True)  # noqa: SLF001
 
     match = filtered["exact_matches"][0]
-    assert match["retail_price"] is None
-    assert match["retail_price_display"] is None
-    assert match["corporate_price"] is None
-    assert match["corporate_price_display"] is None
+    assert match["retail_price"] == "50820.00"
+    assert match["retail_price_display"] == "50 820 руб."
+    assert match["corporate_price"] == "24283.00"
+    assert match["corporate_price_display"] == "24 283 руб."
 
 
 def test_assistant_service_searches_explicit_digitless_slash_article_instead_of_previous_active_product(
