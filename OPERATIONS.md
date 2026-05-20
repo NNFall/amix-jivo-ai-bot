@@ -16,6 +16,16 @@
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_treats_plain_product_check_as_stock_only tests\test_assistant_service.py::test_assistant_service_guards_company_faq_extra_invitation -q` -> `2 passed`;
   - `python -m pytest -q` -> `110 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- GitHub:
+  - commit `46966c3` (`Harden check-only and FAQ responses`);
+  - push: `origin/master`.
+- VPS:
+  - `/root/amix` обновлён через `git pull --ff-only` до `46966c3`;
+  - подтверждено окружение: `LLM_PROVIDER=google_ai_studio`, `GOOGLE_AI_MODEL=gemini-3.1-flash-lite`, `ASSISTANT_BACKEND_PRELOOKUP_ENABLED=false`;
+  - `.venv/bin/python -m pytest -q` -> `110 passed`;
+  - `amix-telegram-demo.service` перезапущен, состояние `active/running/enabled`;
+  - smoke без Telegram-отправки: `Проверьте 14.023пр и xyz-999` -> ответ только про наличие `14.023пр.` и не найденный `xyz-999`, без цены/веса;
+  - smoke без Telegram-отправки: `а где вы находитесь` -> адрес без фразы `Будем рады видеть вас`.
 
 ## 2026-05-20 - Switchable LLM-first product search
 
