@@ -207,7 +207,7 @@ class OpenAIService:
             provider_name="Google AI Studio",
             url=url,
             api_key=self.google_ai_api_key,
-            messages=messages,
+            messages=self._merge_system_messages_for_google(messages),
             tools=tools,
             tool_choice=tool_choice,
             model=self.google_ai_model,
@@ -224,6 +224,28 @@ class OpenAIService:
             min_request_interval_seconds=self.google_ai_min_request_interval_seconds,
             rate_limit_retry_delay_seconds=self.google_ai_rate_limit_retry_delay_seconds,
         )
+
+    @staticmethod
+    def _merge_system_messages_for_google(messages: list[dict]) -> list[dict]:
+        """Google's OpenAI-compatible bridge maps only one systemInstruction reliably."""
+        system_parts: list[str] = []
+        non_system_messages: list[dict] = []
+        for message in messages:
+            if message.get("role") == "system":
+                content = message.get("content")
+                if content:
+                    system_parts.append(str(content))
+                continue
+            non_system_messages.append(message)
+
+        if not system_parts:
+            return messages
+
+        merged_system = {
+            "role": "system",
+            "content": "\n\n---\n\n".join(system_parts),
+        }
+        return [merged_system, *non_system_messages]
 
     def _run_via_openai_compatible_http(
         self,

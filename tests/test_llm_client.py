@@ -134,6 +134,7 @@ def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app
     turn = service.run_messages(
         messages=[
             {"role": "system", "content": "system prompt"},
+            {"role": "system", "content": "TOOL_RESULTS_JSON:\n{}"},
             {"role": "user", "content": "test"},
         ],
         tools=[
@@ -158,6 +159,9 @@ def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app
     assert collector["json"]["stream"] is False
     assert collector["json"]["tool_choice"] == "auto"
     assert collector["json"]["tools"][0]["function"]["name"] == "search_products"
+    assert [message["role"] for message in collector["json"]["messages"]] == ["system", "user"]
+    assert "system prompt" in collector["json"]["messages"][0]["content"]
+    assert "TOOL_RESULTS_JSON" in collector["json"]["messages"][0]["content"]
     assert "parallel_tool_calls" not in collector["json"]
     assert "max_completion_tokens" not in collector["json"]
     assert "stream_options" not in collector["json"]

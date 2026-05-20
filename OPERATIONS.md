@@ -31,6 +31,22 @@
   - smoke без Telegram-отправки подтвердил LLM-first flow: `client`, `assistant_tool_call`, `tool`, `bot` с payload sources `llm_tool_call`, `tool_result`, `llm_tool_search`;
   - smoke на `нужно наличие 14.023пр` вернул только наличие: `220 шт`, без цены/веса.
 
+## 2026-05-20 - Google systemInstruction merge
+
+- По Google AI Studio Logs пользователя проверен turn `МП/ОЗ` в чате `telegram:7476208806`.
+- Сравнение:
+  - Google Logs показывали `systemInstruction` только как последний `TOOL_RESULTS_JSON`;
+  - `contents` в Google Logs содержали только `user/model` историю;
+  - серверный audit показывал, что OpenAI-compatible HTTP request отправлял полный первый `system` prompt, но Google bridge при native-конвертации фактически оставлял один `systemInstruction`.
+- Вывод: проблема не в том, что backend не сформировал prompt, а в нескольких `system` сообщениях для Google OpenAI-compatible endpoint.
+- Исправлено:
+  - для provider `google_ai_studio` все `system` сообщения объединяются в одно перед HTTP-запросом;
+  - в промпт добавлено общее правило, что явный новый артикул/код/товар в последнем сообщении важнее старого `active_product`.
+- Проверки:
+  - `python -m pytest tests\test_llm_client.py::test_openai_service_uses_google_ai_studio_provider -q` -> `1 passed`;
+  - `python -m pytest -q` -> `108 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## 2026-05-16 - Iteration 16
 
 - Получена внешняя спецификация по целевой архитектуре (backend-first поиск + 2 tools) и принята как базовый ориентир доработки.

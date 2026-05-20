@@ -24,6 +24,23 @@
 - Next:
   - Test live Telegram wording with the LLM-first product search mode enabled.
 
+## Update 2026-05-20 (Google System Message Merge)
+
+- Status: completed locally, pending VPS deploy.
+- Finding:
+  - Google AI Studio logs showed only the last `system` block as `systemInstruction`, usually `TOOL_RESULTS_JSON`.
+  - Server audit confirmed the OpenAI-compatible request contained the full first system prompt, but Google native logging and token counts indicated multiple `system` messages were being collapsed incorrectly by the Google bridge.
+- Done:
+  - Google provider now merges all `system` messages into one first `system` message before the HTTP request.
+  - Added a test that verifies `SYSTEM_PROMPT` and `TOOL_RESULTS_JSON` are sent together in one Google system message.
+  - Added a general prompt rule: if the latest customer message itself looks like a new article/code/product name, it is more important than old `active_product`.
+- Checks:
+  - `python -m pytest tests\test_llm_client.py::test_openai_service_uses_google_ai_studio_provider -q` -> `1 passed`.
+  - `python -m pytest -q` -> `108 passed`.
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next:
+  - Deploy and verify Google logs show a full merged `systemInstruction`.
+
 ## Update 2026-05-19 (LLM-first FAQ and Product Follow-ups)
 
 - Status: completed locally, pending VPS deploy
