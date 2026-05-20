@@ -1924,6 +1924,12 @@ def test_assistant_service_keeps_prices_for_stock_only_context() -> None:
     assert match["corporate_price_display"] == "24 283 руб."
 
 
+def test_assistant_service_treats_manager_offer_as_stock_only_leak() -> None:
+    assert AssistantService._stock_only_reply_leaks_extra_facts(  # noqa: SLF001
+        "Могу передать вопрос менеджеру, чтобы он уточнил аналоги. Подключить специалиста?"
+    )
+
+
 def test_assistant_service_searches_explicit_digitless_slash_article_instead_of_previous_active_product(
     isolated_app_env,
 ) -> None:

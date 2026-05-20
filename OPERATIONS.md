@@ -9,14 +9,15 @@
 - Изменено:
   - `core/assistant_service.py`: обычные product-check фразы `проверь`, `посмотр`, `уточн`, `узнай`, `найди` считаются stock/check-only, если нет явного запроса цены, веса, массы, размера, сравнения, скидки или заказа;
   - `core/assistant_service.py`: полный tool-result снова сохраняет цену/вес для последующих вопросов клиента;
-  - `core/assistant_service.py`: final-answer guard оставлен - если модель в check-only ответе всё равно пишет цену/вес, клиенту уходит программный fallback только по наличию/найдено-не найдено;
+  - `core/assistant_service.py`: final-answer guard оставлен - если модель в check-only ответе всё равно пишет цену/вес или начинает предлагать менеджера/аналоги/заказ без запроса, клиенту уходит программный fallback только по наличию/найдено-не найдено;
   - `core/assistant_service.py`: снят жёсткий FAQ-guard на нейтральные вежливые фразы вроде `Будем рады видеть вас`;
   - `llm/prompts.py`: prompt явно фиксирует, что `проверьте/посмотрите/уточните` по артикулу без других полей - это проверка наличия/существования, а не запрос всей карточки;
   - `llm/prompts.py`: FAQ rewrite prompt возвращён к запрету только новых фактов/обещаний, без запрета короткой вежливой переформулировки;
   - `tests/test_assistant_service.py`: обновлены регрессии для полного tool-result, check-only final guard и разрешённого FAQ polite rewrite.
 - Проверки:
   - `python -m pytest tests\test_assistant_service.py::test_assistant_service_keeps_full_tool_result_but_guards_stock_only_reply tests\test_assistant_service.py::test_assistant_service_treats_plain_product_check_as_stock_only tests\test_assistant_service.py::test_assistant_service_allows_company_faq_polite_rewrite tests\test_assistant_service.py::test_assistant_service_keeps_prices_for_stock_only_context -q` -> `4 passed`;
-  - `python -m pytest -q` -> `110 passed`;
+  - `python -m pytest tests\test_assistant_service.py::test_assistant_service_treats_plain_product_check_as_stock_only tests\test_assistant_service.py::test_assistant_service_treats_manager_offer_as_stock_only_leak -q` -> `2 passed`;
+  - `python -m pytest -q` -> `111 passed`;
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - GitHub:
   - commit `46966c3` (`Harden check-only and FAQ responses`);

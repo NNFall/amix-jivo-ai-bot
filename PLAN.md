@@ -6,10 +6,10 @@
 - Done:
   - Treat plain product check requests like `проверьте 14.023пр и xyz-999` as stock/check-only unless the customer explicitly asks for price, weight, mass, comparison, discount or order.
   - Keep full price/weight facts in LLM-visible tool history for later follow-up questions.
-  - Guard only the final client-facing reply for check-only requests: if the model leaks price/weight, replace the final text with a stock/not-found fallback.
+  - Guard only the final client-facing reply for check-only requests: if the model leaks price/weight or starts offering manager/order/analogs without request, replace the final text with a stock/not-found fallback.
   - Allow normal short FAQ politeness such as `Будем рады видеть вас`; still guard unsupported facts and AI-bot capability claims.
 - Checks:
-  - `python -m pytest -q` -> `110 passed`.
+  - `python -m pytest -q` -> `111 passed`.
   - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 - VPS:
   - deployed commit `46966c3`;
