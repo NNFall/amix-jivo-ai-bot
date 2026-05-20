@@ -19,6 +19,10 @@ from llm.tools import trim_text
 logger = logging.getLogger(__name__)
 
 GOOGLE_AI_PROVIDERS = {"google", "google_ai", "google_ai_studio", "gemini"}
+GOOGLE_TOOL_RESULT_FINAL_INSTRUCTION = (
+    "Сформулируй короткий ответ клиенту по результату функции. "
+    "Не вызывай новые функции и не добавляй факты, которых нет в истории или результате функции."
+)
 
 
 @dataclass(slots=True)
@@ -207,7 +211,7 @@ class OpenAIService:
             provider_name="Google AI Studio",
             url=url,
             api_key=self.google_ai_api_key,
-            messages=self._merge_system_messages_for_google(messages),
+            messages=self._prepare_messages_for_google(messages),
             tools=tools,
             tool_choice=tool_choice,
             model=self.google_ai_model,
@@ -224,6 +228,11 @@ class OpenAIService:
             min_request_interval_seconds=self.google_ai_min_request_interval_seconds,
             rate_limit_retry_delay_seconds=self.google_ai_rate_limit_retry_delay_seconds,
         )
+
+    @classmethod
+    def _prepare_messages_for_google(cls, messages: list[dict]) -> list[dict]:
+        prepared = cls._merge_system_messages_for_google(messages)
+        return cls._append_google_final_instruction_after_tool_result(prepared)
 
     @staticmethod
     def _merge_system_messages_for_google(messages: list[dict]) -> list[dict]:
@@ -246,6 +255,20 @@ class OpenAIService:
             "content": "\n\n---\n\n".join(system_parts),
         }
         return [merged_system, *non_system_messages]
+
+    @staticmethod
+    def _append_google_final_instruction_after_tool_result(messages: list[dict]) -> list[dict]:
+        """Keep tool results chronological while avoiding a final functionResponse-only Gemini turn."""
+        if not messages or messages[-1].get("role") != "tool":
+            return messages
+
+        return [
+            *messages,
+            {
+                "role": "user",
+                "content": GOOGLE_TOOL_RESULT_FINAL_INSTRUCTION,
+            },
+        ]
 
     def _run_via_openai_compatible_http(
         self,

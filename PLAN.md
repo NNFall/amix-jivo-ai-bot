@@ -1030,3 +1030,18 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `.venv/bin/python -m pytest -q` -> `106 passed`;
   - `МП ЦК белая` на серверной базе находится как код `28834`, вес `0.538`;
   - `amix-telegram-demo.service` активен.
+
+## Обновление 2026-05-20 - Google tool history log shape
+
+- Статус: in progress.
+- Причина:
+  - Google Logs подтвердили, что `assistant.tool_calls` + `role=tool` отображаются хронологически как `functionCall` и `functionResponse`;
+  - `system`-сообщения с `TOOL_RESULTS_JSON` отображаются в `systemInstruction`, поэтому они хуже подходят для хронологической истории;
+  - реальный финальный запрос после tool result может заканчиваться на `role=tool`, а успешный log-shape тест имел дополнительное user-сообщение после `functionResponse`.
+- Сделано локально:
+  - для Google AI Studio добавлена неперсистентная финальная user-инструкция после последнего `role=tool`;
+  - tool history остается в payload хронологически, без возврата к `TOOL_RESULTS_JSON` как основному формату;
+  - добавлен тест на payload, который заканчивается tool result.
+- Проверки:
+  - `PYTHONPATH=. pytest tests/test_llm_client.py::test_google_ai_studio_payload_preserves_tool_role_history tests/test_llm_client.py::test_google_ai_studio_payload_appends_final_instruction_after_tool_result -q` -> `2 passed`.
+  - `PYTHONPATH=. pytest -q` -> `113 passed`.
