@@ -1777,6 +1777,17 @@
 - VPS direct shape check:
   - `assistant(functionCall) -> tool(functionResponse)` как последний turn -> HTTP 400;
   - `assistant(functionCall) -> tool(functionResponse) -> user final instruction` -> HTTP 200.
+- VPS deploy:
+  - `/root/amix` обновлён `git pull --ff-only origin master` до `b46dd4e`;
+  - `.venv/bin/python -m pytest tests/test_llm_client.py::test_google_ai_studio_payload_appends_final_instruction_after_tool_result -q` -> `1 passed`;
+  - `.venv/bin/python -m pytest -q` -> `113 passed`;
+  - `systemctl restart amix-telegram-demo.service`;
+  - `systemctl show amix-telegram-demo.service -p ActiveState -p SubState` -> `active/running`.
+- VPS smoke:
+  - через `AssistantService` выполнен запрос с marker `AMIX_GOOGLE_CHRONO_SERVICE_TEST_AFTER_FIX_20260520`;
+  - первый Google request вернул tool call `search_products`;
+  - финальный Google request после `role=tool` ушёл с добавленной user-инструкцией и получил HTTP 200;
+  - audit показал роли финального запроса: `system`, `user`, `assistant`, `tool`, `user`.
 ## Итерация 32 - cleanup LLM payload после проверки Kie-логов
 
 - По Kie-логу подтверждено:

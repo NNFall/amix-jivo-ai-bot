@@ -1047,3 +1047,8 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
   - `PYTHONPATH=. pytest tests/test_llm_client.py::test_google_ai_studio_payload_preserves_tool_role_history tests/test_llm_client.py::test_google_ai_studio_payload_appends_final_instruction_after_tool_result -q` -> `2 passed`.
   - `PYTHONPATH=. pytest -q` -> `113 passed`.
   - VPS direct Google shape tests: `functionResponse` last -> HTTP 400, `functionResponse` + user instruction -> HTTP 200.
+- VPS:
+  - `/root/amix` обновлён до commit `b46dd4e`;
+  - `.venv/bin/python -m pytest -q` -> `113 passed`;
+  - `amix-telegram-demo.service` перезапущен и активен;
+  - smoke через `AssistantService` после tool call завершился HTTP 200, финальный payload содержит `assistant -> tool -> user final instruction`.
