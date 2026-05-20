@@ -1163,6 +1163,15 @@ class AssistantService:
             "деко-лайн",
             "северо-запад",
             "09:00",
+            "будем рады",
+            "рады видеть",
+            "ждём вас",
+            "ждем вас",
+            "приезжайте",
+            "заезжайте",
+            "подъезжайте",
+            "приходите",
+            "всегда рады",
         )
         return any(fragment in text for fragment in forbidden_fragments)
 
@@ -2088,10 +2097,41 @@ class AssistantService:
     @staticmethod
     def _is_stock_only_request(customer_text: str) -> bool:
         text = customer_text.lower()
-        has_stock_intent = any(keyword in text for keyword in ("налич", "остат", "есть"))
+        has_stock_intent = any(
+            keyword in text
+            for keyword in (
+                "налич",
+                "остат",
+                "есть",
+                "проверь",
+                "провер",
+                "посмотр",
+                "уточн",
+                "узнай",
+                "найди",
+            )
+        )
         has_price_intent = any(keyword in text for keyword in ("цен", "стоит", "стоим", "руб", "корп", "опт", "дешев", "дороже"))
+        has_other_fact_intent = any(
+            keyword in text
+            for keyword in (
+                "вес",
+                "масс",
+                "объем",
+                "объём",
+                "размер",
+                "характер",
+                "отлич",
+                "сравн",
+                "аналог",
+                "подбор",
+                "совмест",
+                "скид",
+                "акци",
+            )
+        )
         has_order_intent = any(keyword in text for keyword in ("заказ", "купить", "оформ"))
-        return has_stock_intent and not has_price_intent and not has_order_intent
+        return has_stock_intent and not has_price_intent and not has_other_fact_intent and not has_order_intent
 
     @staticmethod
     def _guess_lookup_reason(customer_text: str) -> str:

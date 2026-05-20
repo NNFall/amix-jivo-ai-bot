@@ -1,5 +1,22 @@
 # OPERATIONS
 
+## 2026-05-20 - Strict check-only and FAQ guards
+
+- По свежим Google AI Studio логам подтверждено: после merge system messages полный prompt, `INTERNAL_CONTEXT_JSON` и `TOOL_RESULTS_JSON` уже доходят до Google; проблема осталась в политике ответа модели.
+- Найдено:
+  - запрос `тогда проверьте 14.023пр и xyz-999` модель трактовала как общий product_info и называла цену/вес, хотя клиент просил только проверить позиции;
+  - FAQ rewrite для адреса добавлял приглашение `Будем рады видеть вас!`, которого не было в `safe_answer`.
+- Изменено:
+  - `core/assistant_service.py`: обычные product-check фразы `проверь`, `посмотр`, `уточн`, `узнай`, `найди` считаются stock/check-only, если нет явного запроса цены, веса, массы, размера, сравнения, скидки или заказа;
+  - `core/assistant_service.py`: company FAQ guard теперь отбрасывает дополнительные приглашения и маркетинговые хвосты вроде `будем рады`, `приезжайте`, `приходите`;
+  - `llm/prompts.py`: prompt явно фиксирует, что `проверьте/посмотрите/уточните` по артикулу без других полей - это проверка наличия/существования, а не запрос всей карточки;
+  - `llm/prompts.py`: FAQ rewrite prompt запрещает добавлять приглашения и пожелания сверх `safe_answer`;
+  - `tests/test_assistant_service.py`: добавлены регрессии для check-only tool flow и FAQ extra invitation guard.
+- Проверки:
+  - `python -m pytest tests\test_assistant_service.py::test_assistant_service_treats_plain_product_check_as_stock_only tests\test_assistant_service.py::test_assistant_service_guards_company_faq_extra_invitation -q` -> `2 passed`;
+  - `python -m pytest -q` -> `110 passed`;
+  - `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+
 ## 2026-05-20 - Switchable LLM-first product search
 
 - По запросу пользователя временно отключается автоматический backend-prelookup, чтобы проверить режим, где модель сама решает, когда вызывать `search_products`.

@@ -1,5 +1,15 @@
 # PLAN
 
+## Update 2026-05-20 (Strict Check/FAQ Answer Guards)
+
+- Status: in progress.
+- Scope:
+  - Treat plain product check requests like `проверьте 14.023пр и xyz-999` as stock/check-only unless the customer explicitly asks for price, weight, mass, comparison, discount or order.
+  - Keep price/weight out of LLM-visible product data and final replies for check-only requests.
+  - Guard company FAQ rewrites against extra courtesy/invitation phrases that are not present in the safe answer.
+- Next:
+  - Add tests for both regressions, run the suite, deploy to VPS and verify with a smoke dialog.
+
 ## Update 2026-05-20 (Switchable LLM-First Product Search)
 
 - Status: completed and deployed.

@@ -801,6 +801,79 @@ def test_assistant_service_hides_prices_in_llm_tool_result_for_stock_only_reques
     assert "4 pcs" in reply.text
 
 
+def test_assistant_service_treats_plain_product_check_as_stock_only(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ASSISTANT_BACKEND_PRELOOKUP_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("4"),
+                unit="pcs",
+                retail_price=Decimal("120"),
+                corporate_price=Decimal("100"),
+                weight=Decimal("0.500"),
+                raw_payload={},
+            )
+        )
+
+    captured: dict = {}
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        if kwargs.get("tools"):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        call_id="call_check_ab123",
+                        arguments={
+                            "queries": ["AB-123", "ZZ-999"],
+                            "intent": "product_info",
+                            "use_dialog_context": False,
+                        },
+                    )
+                ],
+            )
+        captured["final_messages"] = kwargs["messages"]
+        return LLMTurnResult(text="AB-123 costs 120 rub. Weight is 0.500 kg. ZZ-999 not found.", tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:plain-check-stock-only",
+            external_client_id="telegram-user:plain-check-stock-only",
+            customer_name="Demo User",
+            customer_text="Проверьте AB-123 и ZZ-999",
+            inbound_event_id="tg-plain-check-stock-only",
+            outbound_event_id="tg-plain-check-stock-only:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
+
+    tool_content = tool_message.payload["content"]
+    assert "120" not in tool_content
+    assert "100" not in tool_content
+    assert "0.500" not in tool_content
+    assert all("120" not in str(message.get("content")) for message in captured["final_messages"])
+    assert "120 rub" not in reply.text
+    assert "0.500" not in reply.text
+    assert "kg" not in reply.text.lower()
+    assert "AB-123" in reply.text
+    assert "ZZ-999" in reply.text
+
+
 def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
@@ -1179,6 +1252,40 @@ def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(i
         bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
 
     assert bot_message.payload["source"] == "llm_company_faq"
+
+
+def test_assistant_service_guards_company_faq_extra_invitation(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+
+    def unsafe_llm_call(**kwargs):
+        return LLMTurnResult(
+            text="Наш магазин находится в Санкт-Петербурге на улице Якорной, дом 15, литера Б. Будем рады видеть вас!",
+            tool_calls=[],
+        )
+
+    service.openai_service.run_messages = unsafe_llm_call
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:company-address-guard",
+            external_client_id="telegram-user:company-address-guard",
+            customer_name="Demo User",
+            customer_text="а где вы находитесь",
+            inbound_event_id="tg-company-address-guard",
+            outbound_event_id="tg-company-address-guard:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "Будем рады" not in reply.text
+    assert "Санкт-Петербург, ул. Якорная, д. 15, лит. Б" in reply.text
+
+    with session_scope() as session:
+        bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
+
+    assert bot_message.payload["source"] == "backend_company_faq_guard"
 
 
 def test_assistant_service_guards_company_self_description_from_bot_capabilities(isolated_app_env) -> None:
