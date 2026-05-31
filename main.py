@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from api.admin import router as admin_router
 from api.health import router as health_router
 from api.jivo_webhook import router as jivo_router
 from database.db import create_db_and_tables
@@ -28,6 +29,7 @@ async def lifespan(_: FastAPI):
 def create_application() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    app.include_router(admin_router)
     app.include_router(health_router)
     app.include_router(jivo_router)
     return app

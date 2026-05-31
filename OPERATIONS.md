@@ -1320,6 +1320,33 @@
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 54 - минимальная админ-страница для XML базы товаров
+
+- По пользовательскому решению выбран светлый минимальный вариант интерфейса:
+  - без отдельного дашборда, логов, таблиц, вкладок и бокового меню;
+  - ограниченная ширина контента, чтобы страница не растягивалась на весь экран при малом количестве информации;
+  - основные действия: скачать текущую базу и загрузить новый XML.
+- Перед реализацией добавлены тесты `tests/test_admin_panel.py`:
+  - `/admin` требует Basic Auth;
+  - `/admin` показывает краткий статус, количество товаров и кнопки XML;
+  - `/admin/products.xml` экспортирует текущие товары как XML;
+  - `/admin/products/import` принимает XML и запускает существующий импорт.
+- Красная стадия:
+  - `python -m pytest tests/test_admin_panel.py -q` -> 4 failures на `404`, потому что admin endpoints ещё не были подключены.
+- Реализация:
+  - добавлен `api/admin.py`;
+  - `main.py` подключает `admin_router`;
+  - `settings.py` и `.env.example` получили `ADMIN_USERNAME` и `ADMIN_PASSWORD`;
+  - `requirements.txt` получил `python-multipart` для загрузки файлов через FastAPI;
+  - XML-загрузка сохраняет файл в `data/incoming_xml/` и вызывает `ProductXmlImporter`;
+  - XML-скачивание отдаёт экспорт из текущей таблицы `products`.
+- Проверки:
+  - `python -m pytest tests/test_admin_panel.py -q` -> `4 passed`;
+  - `python -m pytest -q` -> `117 passed`.
+- Замечание:
+  - перед деплоем на VPS нужно задать сильный `ADMIN_PASSWORD` в серверном `.env`;
+  - сгенерированные XML-файлы и загруженные файлы остаются в `data/`, эта папка уже исключена из Git.
+
 ## Итерация 47 - исправление `МП/ОЗ` и вопросов по весу
 
 - Изучены live-логи Telegram и SQLite на VPS по диалогу 2026-05-20:

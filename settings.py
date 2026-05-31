@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    admin_username: str = "admin"
+    admin_password: str = "change-me"
 
     database_url: str = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
     history_limit: int = 20
