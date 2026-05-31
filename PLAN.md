@@ -1090,7 +1090,7 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 
 ## Обновление 2026-05-31 - cookie login для админки
 
-- Статус: completed locally.
+- Статус: deployed on VPS.
 - Цель:
   - убрать встроенное браузерное окно Basic Auth;
   - сделать отдельную страницу `/admin/login` с вводом пароля;
@@ -1105,6 +1105,9 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Проверки:
   - `python -m pytest tests/test_admin_panel.py -q` -> `6 passed`;
   - `python -m pytest -q` -> `119 passed`;
-  - локально через Playwright сняты и проверены скриншоты `/admin/login` и `/admin`.
+  - локально через Playwright сняты и проверены скриншоты `/admin/login` и `/admin`;
+  - на VPS `.venv/bin/python -m pytest tests/test_admin_panel.py -q` -> `6 passed`;
+  - снаружи проверено: `/admin` без cookie редиректит на `/admin/login`, после ввода пароля cookie открывает админку.
 - Следующий шаг:
-  - задеплоить на VPS и проверить `/admin` снаружи после cookie-login.
+  - отдать пользователю ссылку и пароль отдельным каналом;
+  - после появления домена и HTTPS перевести доступ с прямого `:8010` на нормальный URL.

@@ -1320,6 +1320,31 @@
   - `python -m pytest -q` -> `74 passed`;
   - `python scripts/run_dialog_regression_eval.py --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
 
+## Итерация 57 - деплой cookie-login админки на VPS
+
+- Локально реализована отдельная страница `/admin/login` вместо браузерного Basic Auth:
+  - `/admin` без cookie возвращает `303` на `/admin/login`;
+  - после успешного ввода пароля выставляется `HttpOnly` cookie `amix_admin_session` на 30 дней;
+  - неверный пароль показывает ошибку на странице без заголовка `WWW-Authenticate`.
+- В админке обновлён блок загрузки XML:
+  - нативный системный input скрыт;
+  - добавлена зона выбора/перетаскивания файла с текстом `Выберите файл или перенесите сюда`;
+  - выбранное имя файла отображается под зоной.
+- Проверки локально:
+  - `python -m pytest -q` -> `119 passed`;
+  - выполнен браузерный screenshot live-страницы через Playwright CLI, визуально проверена мобильная версия `/admin`.
+- VPS:
+  - `/root/amix` обновлён до commit `c6b9eae`;
+  - `systemctl restart amix-api.service`;
+  - `systemctl status amix-api.service` -> `active (running)`, Uvicorn слушает `0.0.0.0:8010`;
+  - `.venv/bin/python -m pytest tests/test_admin_panel.py -q` -> `6 passed`.
+- HTTP smoke на VPS:
+  - `GET /admin` без cookie -> `303 /admin/login`, `WWW-Authenticate` отсутствует;
+  - `GET /admin/login` -> `200`, форма пароля присутствует;
+  - `POST /admin/login` с неверным паролем -> `200`, cookie не выставляется;
+  - `POST /admin/login` с корректным паролем -> `303 /admin`, cookie выставляется;
+  - `GET /admin` с cookie -> `200`, есть кнопка скачивания XML и форма импорта XML.
+
 ## Итерация 54 - минимальная админ-страница для XML базы товаров
 
 - По пользовательскому решению выбран светлый минимальный вариант интерфейса:
