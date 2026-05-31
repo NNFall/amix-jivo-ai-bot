@@ -1369,6 +1369,34 @@
   - `http://186.246.18.100:8010/admin` с Basic Auth -> `200 text/html`;
   - HTML содержит `AMIX`, ссылку `/admin/products.xml` и форму `/admin/products/import`.
 
+## Итерация 56 - отдельная login-страница и cookie для админки
+
+- Причина:
+  - встроенный браузерный prompt Basic Auth неудобен и выглядит системно;
+  - пользователь хочет отдельную страницу ввода пароля и сохранение входа на устройстве через cookie;
+  - нативная кнопка выбора файла в upload форме выглядит слишком системно.
+- Красная стадия:
+  - обновлены тесты `tests/test_admin_panel.py`;
+  - `python -m pytest tests/test_admin_panel.py -q` -> 6 failures:
+    - `/admin` возвращал `401`, а не редирект на `/admin/login`;
+    - `/admin/login` отсутствовал;
+    - после POST login cookie не устанавливалась;
+    - download/upload всё ещё требовали Basic Auth.
+- Реализация:
+  - `api/admin.py` больше не использует `HTTPBasic`;
+  - добавлен `/admin/login` GET/POST;
+  - добавлен signed HttpOnly cookie `amix_admin_session` на 30 дней;
+  - добавлен `/admin/logout`;
+  - `/admin`, `/admin/products.xml`, `/admin/products/import` защищены cookie-сессией;
+  - upload input спрятан внутри кастомной dropzone с текстом "Выберите файл или перенесите сюда";
+  - добавлен небольшой JS только для отображения выбранного имени файла.
+- Проверки:
+  - `python -m pytest tests/test_admin_panel.py -q` -> `6 passed`;
+  - `python -m pytest -q` -> `119 passed`;
+  - локально запущен `uvicorn main:app --host 127.0.0.1 --port 8020`;
+  - через Playwright сняты скриншоты `/admin/login` и `/admin` с cookie storage;
+  - визуально проверено, что login-форма отдельная, а upload-зона не показывает нативную системную кнопку.
+
 ## Итерация 47 - исправление `МП/ОЗ` и вопросов по весу
 
 - Изучены live-логи Telegram и SQLite на VPS по диалогу 2026-05-20:

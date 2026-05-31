@@ -9,20 +9,31 @@ from settings import get_settings
 
 
 def build_client(monkeypatch) -> TestClient:
-    monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "secret")
     get_settings.cache_clear()
     return TestClient(create_application())
 
 
-def test_admin_page_requires_basic_auth(isolated_app_env, monkeypatch) -> None:
+def test_admin_page_redirects_to_login_without_session(isolated_app_env, monkeypatch) -> None:
     with build_client(monkeypatch) as client:
-        response = client.get("/admin")
+        response = client.get("/admin", follow_redirects=False)
 
-    assert response.status_code == 401
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/login"
 
 
-def test_admin_page_shows_product_status_and_xml_actions(isolated_app_env, monkeypatch) -> None:
+def test_admin_login_page_shows_password_form(isolated_app_env, monkeypatch) -> None:
+    with build_client(monkeypatch) as client:
+        response = client.get("/admin/login")
+
+    assert response.status_code == 200
+    assert "Вход в панель" in response.text
+    assert 'name="password"' in response.text
+    assert "Войти" in response.text
+    assert "WWW-Authenticate" not in response.headers
+
+
+def test_admin_login_sets_cookie_and_allows_page_access(isolated_app_env, monkeypatch) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -49,17 +60,37 @@ def test_admin_page_shows_product_status_and_xml_actions(isolated_app_env, monke
         )
 
     with build_client(monkeypatch) as client:
-        response = client.get("/admin", auth=("admin", "secret"))
+        login_response = client.post(
+            "/admin/login",
+            data={"password": "secret"},
+            follow_redirects=False,
+        )
+        page_response = client.get("/admin")
+
+    assert login_response.status_code == 303
+    assert login_response.headers["location"] == "/admin"
+    assert "amix_admin_session" in login_response.headers["set-cookie"]
+    assert page_response.status_code == 200
+    assert "AMIX AI бот" in page_response.text
+    assert "Товаров в базе" in page_response.text
+    assert "Скачать текущую базу" in page_response.text
+    assert "Выберите файл или перенесите сюда" in page_response.text
+
+
+def test_admin_login_rejects_wrong_password_without_browser_basic_prompt(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    with build_client(monkeypatch) as client:
+        response = client.post("/admin/login", data={"password": "wrong"})
 
     assert response.status_code == 200
-    assert "AMIX AI бот" in response.text
-    assert "Товаров в базе" in response.text
-    assert "1" in response.text
-    assert "Скачать текущую базу" in response.text
-    assert "Загрузить XML" in response.text
+    assert "Неверный пароль" in response.text
+    assert "amix_admin_session" not in response.headers.get("set-cookie", "")
+    assert "WWW-Authenticate" not in response.headers
 
 
-def test_admin_downloads_current_products_as_xml(isolated_app_env, monkeypatch) -> None:
+def test_admin_downloads_current_products_as_xml_after_login(isolated_app_env, monkeypatch) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -76,7 +107,8 @@ def test_admin_downloads_current_products_as_xml(isolated_app_env, monkeypatch) 
         )
 
     with build_client(monkeypatch) as client:
-        response = client.get("/admin/products.xml", auth=("admin", "secret"))
+        client.post("/admin/login", data={"password": "secret"})
+        response = client.get("/admin/products.xml")
 
     assert response.status_code == 200
     assert "application/xml" in response.headers["content-type"]
@@ -85,7 +117,7 @@ def test_admin_downloads_current_products_as_xml(isolated_app_env, monkeypatch) 
     assert "<СвободныйОстаток>220.000</СвободныйОстаток>" in response.text
 
 
-def test_admin_uploads_xml_and_imports_products(isolated_app_env, monkeypatch) -> None:
+def test_admin_uploads_xml_and_imports_products_after_login(isolated_app_env, monkeypatch) -> None:
     xml_payload = """<?xml version="1.0" encoding="utf-8"?>
 <root>
   <record>
@@ -99,9 +131,9 @@ def test_admin_uploads_xml_and_imports_products(isolated_app_env, monkeypatch) -
 """
 
     with build_client(monkeypatch) as client:
+        client.post("/admin/login", data={"password": "secret"})
         response = client.post(
             "/admin/products/import",
-            auth=("admin", "secret"),
             files={"file": ("products.xml", xml_payload.encode("utf-8"), "application/xml")},
             follow_redirects=False,
         )

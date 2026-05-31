@@ -1,14 +1,16 @@
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from html import escape
+import base64
+import hashlib
+import hmac
 from pathlib import Path
 import re
 import secrets
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import func, select
 
 from database.db import session_scope
@@ -18,19 +20,60 @@ from settings import BASE_DIR, get_settings
 
 
 router = APIRouter(tags=["admin"])
-security = HTTPBasic()
+
+ADMIN_COOKIE_NAME = "amix_admin_session"
+ADMIN_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+ADMIN_SESSION_VALUE = "admin"
 
 
-def require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> None:
-    settings = get_settings()
-    username_ok = secrets.compare_digest(credentials.username, settings.admin_username)
-    password_ok = secrets.compare_digest(credentials.password, settings.admin_password)
-    if not username_ok or not password_ok:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin credentials",
-            headers={"WWW-Authenticate": "Basic"},
+def require_admin(request: Request) -> None:
+    if _is_admin_authenticated(request):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_303_SEE_OTHER,
+        detail="Admin login required",
+        headers={"Location": "/admin/login"},
+    )
+
+
+@router.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(request: Request, next: str = "/admin") -> HTMLResponse:
+    if _is_admin_authenticated(request):
+        return HTMLResponse(
+            status_code=status.HTTP_303_SEE_OTHER,
+            headers={"Location": _safe_admin_path(next)},
         )
+    return HTMLResponse(_render_login_page(next_path=_safe_admin_path(next)))
+
+
+@router.post("/admin/login")
+def admin_login_submit(
+    password: str = Form(...),
+    next: str = Form("/admin"),
+) -> Response:
+    settings = get_settings()
+    if not secrets.compare_digest(password, settings.admin_password):
+        return HTMLResponse(
+            _render_login_page(next_path=_safe_admin_path(next), error="Неверный пароль"),
+            status_code=status.HTTP_200_OK,
+        )
+
+    response = RedirectResponse(_safe_admin_path(next), status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(
+        ADMIN_COOKIE_NAME,
+        _build_session_cookie_value(),
+        max_age=ADMIN_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@router.post("/admin/logout")
+def admin_logout() -> RedirectResponse:
+    response = RedirectResponse("/admin/login", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie(ADMIN_COOKIE_NAME)
+    return response
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -78,6 +121,31 @@ async def import_products_xml(
         return RedirectResponse("/admin?error=import_failed", status_code=status.HTTP_303_SEE_OTHER)
 
     return RedirectResponse("/admin?import_status=ok", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _is_admin_authenticated(request: Request) -> bool:
+    cookie_value = request.cookies.get(ADMIN_COOKIE_NAME)
+    if not cookie_value:
+        return False
+    expected = _build_session_cookie_value()
+    return secrets.compare_digest(cookie_value, expected)
+
+
+def _build_session_cookie_value() -> str:
+    settings = get_settings()
+    signature = hmac.new(
+        settings.admin_password.encode("utf-8"),
+        ADMIN_SESSION_VALUE.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    token = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return f"{ADMIN_SESSION_VALUE}.{token}"
+
+
+def _safe_admin_path(value: str) -> str:
+    if value.startswith("/admin") and not value.startswith("//"):
+        return value
+    return "/admin"
 
 
 def _load_admin_stats() -> dict[str, str]:
@@ -165,6 +233,133 @@ def _build_flash_message(import_status: str | None, error: str | None) -> str:
     return ""
 
 
+def _render_login_page(*, next_path: str, error: str | None = None) -> str:
+    error_html = f'<div class="login-error">{escape(error)}</div>' if error else ""
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход в панель AMIX</title>
+  <style>
+    :root {{
+      --page: #f3f4f6;
+      --surface: #fbfbfa;
+      --text: #1d232b;
+      --muted: #657080;
+      --line: #d8dde5;
+      --blue: #2563eb;
+      --blue-dark: #1d4ed8;
+      --red: #b42318;
+      --red-bg: #fff0ed;
+      --shadow: 0 24px 70px rgba(31, 41, 55, 0.08);
+    }}
+
+    * {{ box-sizing: border-box; }}
+
+    body {{
+      margin: 0;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 22px;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 32rem),
+        var(--page);
+      color: var(--text);
+      font-family: "Manrope", "Aptos", "Segoe UI", sans-serif;
+    }}
+
+    .login {{
+      width: min(100%, 430px);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 30px;
+      box-shadow: var(--shadow);
+      padding: clamp(24px, 6vw, 36px);
+    }}
+
+    h1 {{
+      margin: 0;
+      font-size: clamp(28px, 8vw, 42px);
+      line-height: 0.96;
+      letter-spacing: -0.045em;
+    }}
+
+    p {{
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 14px 0 24px;
+    }}
+
+    label {{
+      display: block;
+      font-size: 14px;
+      font-weight: 720;
+      margin-bottom: 8px;
+    }}
+
+    input {{
+      width: 100%;
+      min-height: 52px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #fdfdfc;
+      color: var(--text);
+      font-size: 17px;
+      padding: 0 15px;
+      outline: none;
+    }}
+
+    input:focus {{
+      border-color: rgba(37, 99, 235, 0.72);
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    }}
+
+    button {{
+      width: 100%;
+      min-height: 52px;
+      margin-top: 14px;
+      border: 0;
+      border-radius: 16px;
+      background: var(--blue);
+      color: #f8fafc;
+      font-weight: 760;
+      font-size: 15px;
+      cursor: pointer;
+      transition: transform 160ms ease, background 160ms ease;
+    }}
+
+    button:hover {{ background: var(--blue-dark); }}
+    button:active {{ transform: translateY(1px) scale(0.99); }}
+
+    .login-error {{
+      border-radius: 16px;
+      border: 1px solid rgba(180, 35, 24, 0.18);
+      background: var(--red-bg);
+      color: var(--red);
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      font-weight: 650;
+    }}
+  </style>
+</head>
+<body>
+  <main class="login">
+    <h1>Вход в панель</h1>
+    <p>Введите пароль администратора, чтобы открыть управление базой товаров AMIX.</p>
+    {error_html}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="next" value="{escape(next_path)}">
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+      <button type="submit">Войти</button>
+    </form>
+  </main>
+</body>
+</html>"""
+
+
 def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
     return f"""<!doctype html>
 <html lang="ru">
@@ -233,6 +428,14 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       line-height: 1.55;
     }}
 
+    .status-area {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }}
+
     .status-pill {{
       display: inline-flex;
       align-items: center;
@@ -245,6 +448,26 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       padding: 10px 14px;
       font-weight: 700;
       font-size: 14px;
+    }}
+
+    .logout-form {{
+      margin: 0;
+    }}
+
+    .logout-button {{
+      border: 1px solid var(--line);
+      background: rgba(251, 251, 250, 0.78);
+      color: var(--muted);
+      border-radius: 999px;
+      min-height: 39px;
+      padding: 0 13px;
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform 160ms ease, background 160ms ease;
+    }}
+
+    .logout-button:hover {{
+      background: #e7ebf1;
     }}
 
     .status-dot {{
@@ -377,7 +600,8 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       transition: transform 160ms ease, background 160ms ease;
     }}
 
-    .button:active {{
+    .button:active,
+    .logout-button:active {{
       transform: translateY(1px) scale(0.99);
     }}
 
@@ -399,15 +623,48 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       background: #dfe5ee;
     }}
 
-    input[type="file"] {{
-      display: block;
+    .dropzone {{
+      position: relative;
+      display: grid;
+      place-items: center;
       width: 100%;
+      min-height: 120px;
       margin-bottom: 12px;
-      border-radius: 16px;
-      border: 1px dashed #b8c0cc;
+      border-radius: 20px;
+      border: 1px dashed #aeb8c6;
       background: #fdfdfc;
-      padding: 16px;
+      padding: 20px;
       color: var(--muted);
+      text-align: center;
+      overflow: hidden;
+    }}
+
+    .dropzone input[type="file"] {{
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }}
+
+    .dropzone strong {{
+      display: block;
+      color: var(--text);
+      font-size: 16px;
+      margin-bottom: 5px;
+    }}
+
+    .dropzone span {{
+      font-size: 13px;
+    }}
+
+    .selected-file {{
+      display: block;
+      min-height: 19px;
+      margin: -2px 0 12px;
+      color: var(--muted);
+      font-size: 13px;
     }}
 
     .flash {{
@@ -447,9 +704,10 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
         display: block;
       }}
 
-      .status-pill,
+      .status-area,
       .xml-status {{
         margin-top: 18px;
+        justify-content: flex-start;
       }}
 
       .xml-status {{
@@ -470,7 +728,12 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
         <h1 id="page-title">AMIX AI бот</h1>
         <div class="subtitle">Минимальная панель для проверки состояния сервиса и обновления товарной базы из XML.</div>
       </div>
-      <div class="status-pill"><span class="status-dot"></span>{escape(stats["service_status"])}</div>
+      <div class="status-area">
+        <div class="status-pill"><span class="status-dot"></span>{escape(stats["service_status"])}</div>
+        <form class="logout-form" method="post" action="/admin/logout">
+          <button class="logout-button" type="submit">Выйти</button>
+        </form>
+      </div>
     </section>
 
     {flash_message}
@@ -513,7 +776,14 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
           <div class="action-title">Новая выгрузка</div>
           <p class="action-note">Файл XML из 1С. Обработка запускается сразу после загрузки.</p>
           <form method="post" action="/admin/products/import" enctype="multipart/form-data">
-            <input name="file" type="file" accept=".xml,application/xml,text/xml" aria-label="Выберите XML-файл" required>
+            <label class="dropzone">
+              <input id="xml-file" name="file" type="file" accept=".xml,application/xml,text/xml" required>
+              <span>
+                <strong>Выберите файл или перенесите сюда</strong>
+                <span>Подходит свежая XML-выгрузка из 1С</span>
+              </span>
+            </label>
+            <span class="selected-file" id="selected-file">Файл ещё не выбран</span>
             <button class="button button-primary" type="submit">Загрузить XML</button>
           </form>
         </article>
@@ -522,5 +792,12 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
 
     <p class="footnote">Последняя проверка: только что. Админ-доступ защищён паролем.</p>
   </main>
+  <script>
+    const fileInput = document.getElementById("xml-file");
+    const selectedFile = document.getElementById("selected-file");
+    fileInput?.addEventListener("change", () => {{
+      selectedFile.textContent = fileInput.files?.[0]?.name || "Файл ещё не выбран";
+    }});
+  </script>
 </body>
 </html>"""
