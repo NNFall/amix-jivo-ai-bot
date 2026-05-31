@@ -1347,6 +1347,28 @@
   - перед деплоем на VPS нужно задать сильный `ADMIN_PASSWORD` в серверном `.env`;
   - сгенерированные XML-файлы и загруженные файлы остаются в `data/`, эта папка уже исключена из Git.
 
+## Итерация 55 - деплой админ-страницы на VPS
+
+- На VPS в `/root/amix/.env` задан `ADMIN_USERNAME=admin` и пользовательский `ADMIN_PASSWORD` без записи секрета в Git.
+- `/root/amix` обновлён до commit `3eb1b8d`.
+- Установлена новая зависимость `python-multipart`.
+- Проверки на VPS:
+  - `.venv/bin/python -m pytest tests/test_admin_panel.py -q` -> `4 passed`;
+  - `.venv/bin/python -m pytest -q` -> `117 passed`.
+- Обнаружено:
+  - существующий порт `8000` занят чужим Docker-контейнером `crystalstone`;
+  - `amix-telegram-demo.service` запускает Telegram polling script, а не FastAPI HTTP app.
+- Решение:
+  - создан отдельный systemd-сервис `amix-api.service`;
+  - `amix-api.service` запускает `uvicorn main:app --host 0.0.0.0 --port 8010`;
+  - сервис включён в автозапуск и перезапущен.
+- Проверки HTTP:
+  - `http://127.0.0.1:8010/admin` без авторизации -> `401 Basic`;
+  - `http://127.0.0.1:8010/admin` с Basic Auth -> `200 text/html`;
+  - `http://186.246.18.100:8010/admin` без авторизации -> `401 Basic`;
+  - `http://186.246.18.100:8010/admin` с Basic Auth -> `200 text/html`;
+  - HTML содержит `AMIX`, ссылку `/admin/products.xml` и форму `/admin/products/import`.
+
 ## Итерация 47 - исправление `МП/ОЗ` и вопросов по весу
 
 - Изучены live-логи Telegram и SQLite на VPS по диалогу 2026-05-20:
