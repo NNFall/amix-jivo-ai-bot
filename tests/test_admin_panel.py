@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 from database.db import session_scope
 from database.models import Product, ProductImport
 from main import create_application
+from products.remote_xml_importer import RemoteXmlImportResult
+from products.xml_importer import XmlImportResult
 from settings import get_settings
 
 
@@ -144,3 +146,50 @@ def test_admin_uploads_xml_and_imports_products_after_login(isolated_app_env, mo
 
     assert product.article == "P-AM02/B-S"
     assert str(product.free_stock) == "7.000"
+
+
+def test_admin_runs_remote_xml_import_after_login(isolated_app_env, monkeypatch, tmp_path) -> None:
+    class FakeRemoteImporter:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        @classmethod
+        def from_settings(cls, settings):
+            assert settings.products_xml_remote_url == "https://example.test/prices.xml"
+            return cls()
+
+        def download_and_import(self) -> RemoteXmlImportResult:
+            with session_scope() as session:
+                session.add(
+                    Product(
+                        code="770",
+                        article="14.023пр.",
+                        normalized_article="14023ПР",
+                        free_stock=220,
+                        unit="шт",
+                        retail_price=473,
+                        raw_payload={},
+                    )
+                )
+            return RemoteXmlImportResult(
+                status="completed",
+                source_url="https://example.test/prices.xml",
+                saved_path=tmp_path / "remote.xml",
+                downloaded_bytes=123,
+                import_result=XmlImportResult(status="completed", processed=1, created=1),
+            )
+
+    monkeypatch.setenv("PRODUCTS_XML_REMOTE_URL", "https://example.test/prices.xml")
+    monkeypatch.setattr("api.admin.ProductRemoteXmlImporter", FakeRemoteImporter)
+
+    with build_client(monkeypatch) as client:
+        client.post("/admin/login", data={"password": "secret"})
+        response = client.post("/admin/products/import-remote", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin?import_status=remote_ok"
+
+    with session_scope() as session:
+        product = session.query(Product).filter(Product.code == "770").one()
+
+    assert product.article == "14.023пр."

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from html import escape
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -15,6 +16,7 @@ from sqlalchemy import func, select
 
 from database.db import session_scope
 from database.models import Chat, Product, ProductImport
+from products.remote_xml_importer import ProductRemoteXmlImporter
 from products.xml_importer import ProductXmlImporter
 from settings import BASE_DIR, get_settings
 
@@ -123,6 +125,17 @@ async def import_products_xml(
     return RedirectResponse("/admin?import_status=ok", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/admin/products/import-remote")
+async def import_products_remote(_: None = Depends(require_admin)) -> RedirectResponse:
+    settings = get_settings()
+    importer = ProductRemoteXmlImporter.from_settings(settings)
+    result = await asyncio.to_thread(importer.download_and_import)
+    if result.status != "completed":
+        return RedirectResponse("/admin?error=remote_import_failed", status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse("/admin?import_status=remote_ok", status_code=status.HTTP_303_SEE_OTHER)
+
+
 def _is_admin_authenticated(request: Request) -> bool:
     cookie_value = request.cookies.get(ADMIN_COOKIE_NAME)
     if not cookie_value:
@@ -149,6 +162,7 @@ def _safe_admin_path(value: str) -> str:
 
 
 def _load_admin_stats() -> dict[str, str]:
+    settings = get_settings()
     today_start = datetime.combine(datetime.now(UTC).date(), time.min, tzinfo=UTC)
     with session_scope() as session:
         product_count = session.scalar(select(func.count(Product.id))) or 0
@@ -168,6 +182,9 @@ def _load_admin_stats() -> dict[str, str]:
         "chats_today": _format_int(chats_today),
         "latest_import": _format_datetime(latest_import.finished_at if latest_import else None),
         "xml_status": "актуальна" if latest_import else "ещё не загружена",
+        "remote_url": settings.products_xml_remote_url,
+        "auto_import_status": "включено" if settings.products_xml_auto_import_enabled else "выключено",
+        "auto_import_interval": _format_interval(settings.products_xml_auto_import_interval_seconds),
     }
 
 
@@ -211,6 +228,11 @@ def _format_datetime(value: datetime | None) -> str:
     return value.strftime("%d.%m.%Y %H:%M")
 
 
+def _format_interval(seconds: int) -> str:
+    minutes = max(1, round(seconds / 60))
+    return f"{minutes} мин"
+
+
 def _build_upload_filename(filename: str) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(filename).name).strip("._")
     if not safe_name:
@@ -222,11 +244,14 @@ def _build_upload_filename(filename: str) -> str:
 def _build_flash_message(import_status: str | None, error: str | None) -> str:
     if import_status == "ok":
         return '<div class="flash flash-success">XML загружен, база товаров обновлена.</div>'
+    if import_status == "remote_ok":
+        return '<div class="flash flash-success">XML скачан по ссылке, база товаров обновлена.</div>'
 
     errors = {
         "empty_filename": "Не удалось определить имя файла.",
         "not_xml": "Загрузите файл в формате XML.",
         "import_failed": "Импорт не завершился. Проверьте XML-файл.",
+        "remote_import_failed": "Не удалось скачать или импортировать XML по ссылке.",
     }
     if error:
         return f'<div class="flash flash-error">{escape(errors.get(error, "Не удалось загрузить файл."))}</div>'
@@ -623,6 +648,20 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       background: #dfe5ee;
     }}
 
+    .remote-source {{
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      margin-bottom: 14px;
+    }}
+
+    .action-divider {{
+      height: 1px;
+      background: var(--line);
+      margin: 18px 0;
+    }}
+
     .dropzone {{
       position: relative;
       display: grid;
@@ -774,7 +813,15 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
 
         <article class="action-card">
           <div class="action-title">Новая выгрузка</div>
-          <p class="action-note">Файл XML из 1С. Обработка запускается сразу после загрузки.</p>
+          <p class="action-note">Основной источник теперь постоянная ссылка. Ручная загрузка остаётся запасным вариантом.</p>
+          <div class="remote-source">
+            Автообновление: {escape(stats["auto_import_status"])} · интервал {escape(stats["auto_import_interval"])}<br>
+            Источник: {escape(stats["remote_url"])}
+          </div>
+          <form method="post" action="/admin/products/import-remote">
+            <button class="button button-primary" type="submit">Обновить по ссылке</button>
+          </form>
+          <div class="action-divider"></div>
           <form method="post" action="/admin/products/import" enctype="multipart/form-data">
             <label class="dropzone">
               <input id="xml-file" name="file" type="file" accept=".xml,application/xml,text/xml" required>

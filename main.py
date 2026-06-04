@@ -8,6 +8,8 @@ from api.admin import router as admin_router
 from api.health import router as health_router
 from api.jivo_webhook import router as jivo_router
 from database.db import create_db_and_tables
+from products.remote_xml_importer import ProductRemoteXmlImporter
+from products.remote_xml_scheduler import ProductsXmlAutoImportRunner
 from settings import get_settings
 
 
@@ -20,10 +22,26 @@ def configure_logging() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     configure_logging()
     create_db_and_tables()
-    yield
+    settings = get_settings()
+    auto_import_runner = None
+    if settings.products_xml_auto_import_enabled:
+        remote_importer = ProductRemoteXmlImporter.from_settings(settings)
+        auto_import_runner = ProductsXmlAutoImportRunner(
+            import_once=remote_importer.download_and_import,
+            interval_seconds=settings.products_xml_auto_import_interval_seconds,
+            run_on_startup=settings.products_xml_auto_import_run_on_startup,
+        )
+        await auto_import_runner.start()
+        app.state.products_xml_auto_import_runner = auto_import_runner
+
+    try:
+        yield
+    finally:
+        if auto_import_runner is not None:
+            await auto_import_runner.stop()
 
 
 def create_application() -> FastAPI:

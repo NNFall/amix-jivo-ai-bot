@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     admin_username: str = "admin"
     admin_password: str = "change-me"
+    products_xml_remote_url: str = "https://amix-tk.ru/files/1C/prices.xml"
+    products_xml_auto_import_enabled: bool = False
+    products_xml_auto_import_interval_seconds: int = 1800
+    products_xml_auto_import_run_on_startup: bool = True
+    products_xml_download_timeout_seconds: int = 60
 
     database_url: str = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
     history_limit: int = 20
