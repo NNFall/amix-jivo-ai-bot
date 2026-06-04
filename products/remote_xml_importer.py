@@ -36,7 +36,7 @@ class ProductRemoteXmlImporter:
         self.timeout_seconds = timeout_seconds
         self.incoming_dir = incoming_dir or BASE_DIR / "data" / "incoming_xml"
         self.fetcher = fetcher or _fetch_xml
-        self.xml_importer = xml_importer or ProductXmlImporter()
+        self.xml_importer = xml_importer or ProductXmlImporter(delete_missing=True)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "ProductRemoteXmlImporter":

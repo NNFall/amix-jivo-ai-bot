@@ -3,7 +3,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from xml.etree import ElementTree
 
+from sqlalchemy import delete
+
 from database.db import session_scope
+from database.models import Product
 from database.repositories import create_product_import, finish_product_import, upsert_product
 from products.article_utils import normalize_article
 
@@ -38,6 +41,7 @@ class XmlImportResult:
     processed: int = 0
     created: int = 0
     updated: int = 0
+    deleted: int = 0
     skipped: int = 0
     errors: int = 0
     error_text: str | None = None
@@ -62,6 +66,9 @@ def _to_decimal(value: str | None) -> Decimal | None:
 
 
 class ProductXmlImporter:
+    def __init__(self, *, delete_missing: bool = False) -> None:
+        self.delete_missing = delete_missing
+
     def import_file(self, xml_path: str | Path) -> XmlImportResult:
         source_path = Path(xml_path)
         result = XmlImportResult(status="completed")
@@ -92,6 +99,7 @@ class ProductXmlImporter:
                 return result
 
             try:
+                seen_product_ids: set[int] = set()
                 for record in self._iter_candidate_records(root):
                     try:
                         article = self._pick(record, "article")
@@ -102,7 +110,7 @@ class ProductXmlImporter:
                             result.skipped += 1
                             continue
 
-                        _, created = upsert_product(
+                        product, created = upsert_product(
                             session,
                             code=code,
                             article=article or normalized_article,
@@ -115,6 +123,7 @@ class ProductXmlImporter:
                             free_stock=_to_decimal(self._pick(record, "free_stock")),
                             raw_payload=record,
                         )
+                        seen_product_ids.add(product.id)
                     except Exception:
                         result.errors += 1
                         continue
@@ -124,6 +133,9 @@ class ProductXmlImporter:
                         result.created += 1
                     else:
                         result.updated += 1
+
+                if self.delete_missing and result.errors == 0 and seen_product_ids:
+                    result.deleted = self._delete_missing_products(session, seen_product_ids)
             except Exception as exc:
                 result.status = "failed"
                 result.errors += 1
@@ -140,6 +152,15 @@ class ProductXmlImporter:
             )
 
         return result
+
+    @staticmethod
+    def _delete_missing_products(session, seen_product_ids: set[int]) -> int:
+        deleted_count = (
+            session.execute(delete(Product).where(Product.id.not_in(seen_product_ids))).rowcount
+            or 0
+        )
+        session.flush()
+        return int(deleted_count)
 
     def _iter_candidate_records(self, root):
         for element in root.iter():

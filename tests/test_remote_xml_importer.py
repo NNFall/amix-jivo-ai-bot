@@ -78,6 +78,50 @@ def test_remote_xml_importer_reports_download_error(
         assert session.query(ProductImport).count() == 0
 
 
+def test_remote_xml_importer_removes_products_missing_from_latest_feed(
+    isolated_app_env,
+    tmp_path: Path,
+) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="OLD",
+                article="OLD-ARTICLE",
+                normalized_article="OLDARTICLE",
+                free_stock=1,
+                raw_payload={},
+            )
+        )
+
+    xml_payload = """<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <record>
+    <Код>770</Код>
+    <Артикул>14.023пр.</Артикул>
+    <СвободныйОстаток>220.00</СвободныйОстаток>
+  </record>
+</root>
+"""
+
+    importer = ProductRemoteXmlImporter(
+        url="https://example.test/prices.xml",
+        timeout_seconds=12,
+        incoming_dir=tmp_path,
+        fetcher=lambda url, timeout_seconds: xml_payload.encode("utf-8"),
+    )
+
+    result = importer.download_and_import()
+
+    assert result.status == "completed"
+    assert result.import_result is not None
+    assert result.import_result.deleted == 1
+
+    with session_scope() as session:
+        products = session.query(Product).order_by(Product.code.asc()).all()
+
+    assert [product.code for product in products] == ["770"]
+
+
 def test_auto_import_runner_runs_once_on_startup_and_stops() -> None:
     asyncio.run(_run_auto_import_runner_once())
 
