@@ -1345,6 +1345,46 @@
   - `POST /admin/login` с корректным паролем -> `303 /admin`, cookie выставляется;
   - `GET /admin` с cookie -> `200`, есть кнопка скачивания XML и форма импорта XML.
 
+## Итерация 58 - автообновление товарной базы по URL 1С
+
+- Получена постоянная ссылка на актуальный XML: `https://amix-tk.ru/files/1C/prices.xml`.
+- Проверка ссылки:
+  - HTTP `200`;
+  - `content-type=application/xml`;
+  - размер ответа `3251586` байт;
+  - файл начинается как UTF-8 XML из 1С.
+- Реализовано:
+  - `products/remote_xml_importer.py`: скачивание XML по URL, сохранение в `data/incoming_xml/`, запуск существующего `ProductXmlImporter`;
+  - `products/remote_xml_scheduler.py`: фоновый asyncio runner для периодического импорта;
+  - настройки `PRODUCTS_XML_REMOTE_URL`, `PRODUCTS_XML_AUTO_IMPORT_ENABLED`, `PRODUCTS_XML_AUTO_IMPORT_INTERVAL_SECONDS`, `PRODUCTS_XML_AUTO_IMPORT_RUN_ON_STARTUP`, `PRODUCTS_XML_DOWNLOAD_TIMEOUT_SECONDS`;
+  - FastAPI lifespan запускает автоимпорт, если включён флаг;
+  - `/admin/products/import-remote` запускает ручное обновление по ссылке;
+  - админка показывает источник XML, статус автообновления и кнопку `Обновить по ссылке`.
+- Важное исправление:
+  - первый remote import на VPS показал `processed=6931`, но `product_count=7146`;
+  - причина: старый importer делал только upsert и не удалял товары, отсутствующие в свежем XML;
+  - добавлен full-sync режим `ProductXmlImporter(delete_missing=True)` только для remote-импорта;
+  - ручная загрузка XML осталась в старом upsert-режиме.
+- Локальные проверки:
+  - `python -m pytest tests/test_remote_xml_importer.py tests/test_admin_panel.py tests/test_app_lifespan.py -q` -> `11 passed`;
+  - `python -m pytest tests/test_remote_xml_importer.py tests/test_xml_importer.py -q` -> `10 passed`;
+  - `python -m pytest -q` -> `125 passed`;
+  - smoke с реальной ссылкой на временной SQLite: `processed=6931`, `deleted=1`, `product_count=6931`, `errors=0`, `code=770` -> `14.023пр.`, `219.000`.
+- VPS:
+  - `/root/amix/.env` дополнен remote XML настройками без секретов;
+  - `PRODUCTS_XML_AUTO_IMPORT_ENABLED=true`;
+  - `PRODUCTS_XML_AUTO_IMPORT_INTERVAL_SECONDS=1800`;
+  - `/root/amix` обновлён до commit `990150d`;
+  - `.venv/bin/python -m pytest -q` -> `125 passed`;
+  - ручной remote import: `processed=6931`, `updated=6931`, `deleted=215`, `product_count=6931`, `errors=0`;
+  - `amix-api.service` перезапущен и активен на `0.0.0.0:8010`;
+  - journal после рестарта: `GET https://amix-tk.ru/files/1C/prices.xml "HTTP/1.1 200 OK"` и `Remote products XML auto-import completed`.
+- Внешний smoke `/admin`:
+  - login по cookie работает;
+  - страница содержит кнопку `Обновить по ссылке`;
+  - страница содержит источник `https://amix-tk.ru/files/1C/prices.xml`;
+  - форма `/admin/products/import-remote` присутствует.
+
 ## Итерация 54 - минимальная админ-страница для XML базы товаров
 
 - По пользовательскому решению выбран светлый минимальный вариант интерфейса:
