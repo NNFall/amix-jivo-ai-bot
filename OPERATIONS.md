@@ -1,3 +1,31 @@
+# Iteration 59 - amix.cifresh.ru DNS and VPS reachability check
+
+- Goal: configure `amix.cifresh.ru` on the AMIX VPS with Nginx and SSL.
+- DNS:
+  - `amix.cifresh.ru` resolves to the AMIX VPS.
+- Initial reachability:
+  - The first probe timed out on SSH/HTTP/HTTPS/app ports, so configuration was paused until the VPS became reachable.
+  - A later probe confirmed SSH/HTTP/HTTPS/app ports were reachable and `/root/amix` exists on the connected VPS.
+- Nginx:
+  - Added `/etc/nginx/sites-available/amix.cifresh.ru`.
+  - Enabled it via `/etc/nginx/sites-enabled/amix.cifresh.ru`.
+  - Proxy target: local AMIX FastAPI service on port `8010`.
+  - `client_max_body_size` set to `50m`.
+  - `nginx -t` passed before reload.
+- SSL:
+  - Issued Let's Encrypt certificate for `amix.cifresh.ru` using Certbot Nginx plugin.
+  - Certbot enabled HTTPS and HTTP-to-HTTPS redirect.
+  - Certificate expiry reported by Certbot: 2026-09-13; auto-renew task is installed by Certbot.
+- Verification:
+  - Local-on-VPS Nginx check with Host `amix.cifresh.ru`:
+    - `/health` -> `200 {"status":"ok"}`.
+    - `/admin` -> `303` to `/admin/login`.
+  - External check:
+    - `http://amix.cifresh.ru/health` -> `301` to HTTPS.
+    - `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`.
+    - `https://amix.cifresh.ru/admin` -> `303` to `/admin/login`.
+    - `https://amix.cifresh.ru/admin/login` -> `200` login page.
+
 # OPERATIONS
 
 ## 2026-05-20 - Google log-shape diagnostics

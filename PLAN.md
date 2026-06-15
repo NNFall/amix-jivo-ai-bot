@@ -1,5 +1,26 @@
 # PLAN
 
+## Update 2026-06-15 (amix.cifresh.ru Nginx/SSL)
+
+- Status: completed on VPS.
+- Goal:
+  - Point `https://amix.cifresh.ru` to the existing AMIX backend on VPS.
+  - Keep the FastAPI service behind Nginx and issue a Let's Encrypt certificate.
+- Plan:
+  - Verified DNS resolves `amix.cifresh.ru` to the VPS.
+  - Inspected current VPS services, ports, Nginx config and existing app health endpoint.
+  - Added an Nginx server block for `amix.cifresh.ru` proxying to the running AMIX app.
+  - Issued/attached Let's Encrypt SSL certificate and enabled HTTPS redirect.
+  - Verified external `https://amix.cifresh.ru` health and admin endpoints.
+- Risks:
+  - Existing Nginx config must not be broken while adding the new host.
+  - SSL issuance depends on DNS propagation and port 80 reachability.
+- Checks:
+  - HTTP `http://amix.cifresh.ru/health` -> `301` to HTTPS.
+  - HTTPS `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`.
+  - HTTPS `https://amix.cifresh.ru/admin` -> `303` to `/admin/login`.
+  - HTTPS `https://amix.cifresh.ru/admin/login` -> `200` login page.
+
 ## Update 2026-05-20 (Google Chronological Tool History)
 
 - Status: completed locally, pending VPS deploy.
