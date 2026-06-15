@@ -25,6 +25,12 @@
     - `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`.
     - `https://amix.cifresh.ru/admin` -> `303` to `/admin/login`.
     - `https://amix.cifresh.ru/admin/login` -> `200` login page.
+- Jivo webhook token:
+  - Updated server `.env` with a generated `JIVO_WEBHOOK_TOKEN`; the token is intentionally not stored in repository docs.
+  - Restarted `amix-api.service`; service returned to `active/running`.
+  - Verified webhook token guard:
+    - wrong token -> `403 Invalid webhook token`;
+    - generated token with empty JSON -> token accepted, then `400` validation error for missing Jivo event fields.
 
 # OPERATIONS
 
