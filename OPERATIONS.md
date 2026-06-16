@@ -31,6 +31,16 @@
   - Verified webhook token guard:
     - wrong token -> `403 Invalid webhook token`;
     - generated token with empty JSON -> token accepted, then `400` validation error for missing Jivo event fields.
+- Jivo provider connection:
+  - Received provider id from Jivo and configured server `.env` with `JIVO_BOT_API_URL` pointing to `bot.jivosite.com`.
+  - Restarted `amix-api.service`.
+  - Verified via venv settings load:
+    - outbound Jivo URL is configured;
+    - webhook token is configured;
+    - outbound host is `bot.jivosite.com`.
+  - Public checks:
+    - `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`;
+    - incoming webhook with configured token and empty JSON -> token accepted, then `400` validation error for missing Jivo event fields.
 
 # OPERATIONS
 
