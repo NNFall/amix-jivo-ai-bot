@@ -44,6 +44,29 @@
 
 # OPERATIONS
 
+## 2026-06-16 - Live Jivo dialog log audit and SQLite lock hardening
+
+- Checked live Jivo webhook logs on VPS after provider connection.
+- Findings:
+  - Jivo sends real `CLIENT_MESSAGE` events to `https://amix.cifresh.ru/webhooks/jivo/...`.
+  - Bot replies are sent to Jivo outbound endpoint and Jivo returns `HTTP 200 OK`.
+  - Latest live chats:
+    - chat `16548`: user `тест` -> bot greeting;
+    - chat `16548`: user asked stock for code `10335` -> bot replied `25 штук`;
+    - chat `16548`: user sent a list of product codes -> bot checked availability and replied with found/not-found codes;
+    - chat `16549`: user `Добрый день` -> bot greeting;
+    - chat `16549`: user `тест это` -> bot acknowledged test;
+    - chat `16549`: user asked address -> bot returned Saint Petersburg address.
+  - During rapid/retried Jivo events, the app returned several `500` responses caused by `sqlite3.OperationalError: database is locked`.
+- Root cause:
+  - SQLite was used without explicit busy timeout and WAL mode, so concurrent webhook inserts/background processing could fail immediately under write contention.
+- Fix:
+  - Added SQLite `timeout=30` connect arg.
+  - Added SQLite connection PRAGMAs: `journal_mode=WAL` and `busy_timeout=30000`.
+- Local verification:
+  - `python -m pytest tests/test_database_db.py -q` -> `2 passed`.
+  - `python -m pytest -q` -> `127 passed`.
+
 ## 2026-05-20 - Google log-shape diagnostics
 
 - По запросу пользователя отправлены с VPS прямые Google OpenAI-compatible запросы, без нашего provider-adapter merge, чтобы проверить, как Google AI Studio Logs отображает разные формы истории.
