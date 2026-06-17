@@ -1,5 +1,23 @@
 # PLAN
 
+## Update 2026-06-17 (Stock Scraping Protection)
+
+- Status: completed locally, pending VPS deploy.
+- Goal:
+  - Stop exposing exact stock quantities for plain availability/stock requests.
+  - Ask the customer for the desired quantity if they ask how many are available without specifying quantity.
+  - If desired quantity is specified, answer only whether that quantity is available.
+  - Escalate to a manager after repeated quantity checks for the same product code in one chat.
+- Plan:
+  - Added regression tests for stock request without quantity, enough quantity, insufficient quantity, quantity follow-up, and repeated attempts.
+  - Implemented a backend guard in product-result reply flow so the rule does not rely on LLM wording.
+  - Updated prompts to align model behavior with the backend guard.
+  - Local full test suite passed.
+  - VPS deploy remains the next step.
+- Checks:
+  - `python -m pytest tests/test_assistant_service.py -q` -> `63 passed`.
+  - `python -m pytest -q` -> `132 passed`.
+
 ## Update 2026-06-15 (amix.cifresh.ru Nginx/SSL)
 
 - Status: completed on VPS.

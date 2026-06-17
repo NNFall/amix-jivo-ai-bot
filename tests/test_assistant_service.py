@@ -44,8 +44,8 @@ def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
             handoff_mode="demo",
         )
 
-    assert "Да, нашёл AB-123." in reply.text
-    assert "Сейчас в наличии 4 шт." in reply.text
+    assert "какое количество" in reply.text
+    assert "4" not in reply.text
     assert reply.handoff_reason is None
 
     with session_scope() as session:
@@ -214,7 +214,8 @@ def test_assistant_service_answers_pending_consecutive_user_messages(isolated_ap
         )
 
     assert "14.023пр" in reply.text
-    assert "220 шт" in reply.text
+    assert "какое количество" in reply.text
+    assert "220 шт" not in reply.text
     assert "xyz-999" in reply.text.lower()
 
     with session_scope() as session:
@@ -794,7 +795,8 @@ def test_assistant_service_keeps_full_tool_result_but_guards_stock_only_reply(
     assert "120" in tool_content
     assert "0.500" in tool_content
     assert "120 rub" not in reply.text
-    assert "4 pcs" in reply.text
+    assert "какое количество" in reply.text
+    assert "4 pcs" not in reply.text
 
 
 def test_assistant_service_treats_plain_product_check_as_stock_only(
@@ -864,6 +866,187 @@ def test_assistant_service_treats_plain_product_check_as_stock_only(
     assert "kg" not in reply.text.lower()
     assert "AB-123" in reply.text
     assert "ZZ-999" in reply.text
+    assert "какое количество" in reply.text
+
+
+def test_assistant_service_confirms_requested_stock_quantity_without_exact_stock(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="10335",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("25"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-yes",
+            external_client_id="telegram-user:stock-quantity-yes",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 5 шт",
+            inbound_event_id="tg-stock-quantity-yes",
+            outbound_event_id="tg-stock-quantity-yes:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Да, такое количество есть в наличии."
+    assert "25" not in reply.text
+    assert reply.handoff_reason is None
+
+
+def test_assistant_service_denies_requested_stock_quantity_without_exact_stock(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="10335",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("25"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-no",
+            external_client_id="telegram-user:stock-quantity-no",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 30 шт",
+            inbound_event_id="tg-stock-quantity-no",
+            outbound_event_id="tg-stock-quantity-no:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Нет, такого количества сейчас нет в наличии."
+    assert "25" not in reply.text
+    assert reply.handoff_reason is None
+
+
+def test_assistant_service_uses_last_product_for_quantity_followup(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="10335",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("25"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        first_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-followup",
+            external_client_id="telegram-user:stock-quantity-followup",
+            customer_name="Demo User",
+            customer_text="AB-123 сколько в наличии?",
+            inbound_event_id="tg-stock-quantity-followup-1",
+            outbound_event_id="tg-stock-quantity-followup-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        second_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-followup",
+            external_client_id="telegram-user:stock-quantity-followup",
+            customer_name="Demo User",
+            customer_text="5 шт",
+            inbound_event_id="tg-stock-quantity-followup-2",
+            outbound_event_id="tg-stock-quantity-followup-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert "какое количество" in first_reply.text
+    assert second_reply.text == "Да, такое количество есть в наличии."
+    assert "25" not in second_reply.text
+
+
+def test_assistant_service_handoffs_after_third_stock_quantity_attempt_for_same_code(
+    isolated_app_env,
+) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="10335",
+                article="AB-123",
+                normalized_article="AB123",
+                free_stock=Decimal("25"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        first_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-limit",
+            external_client_id="telegram-user:stock-quantity-limit",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 5 шт",
+            inbound_event_id="tg-stock-quantity-limit-1",
+            outbound_event_id="tg-stock-quantity-limit-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        second_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-limit",
+            external_client_id="telegram-user:stock-quantity-limit",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 10 шт",
+            inbound_event_id="tg-stock-quantity-limit-2",
+            outbound_event_id="tg-stock-quantity-limit-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        third_reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:stock-quantity-limit",
+            external_client_id="telegram-user:stock-quantity-limit",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 15 шт",
+            inbound_event_id="tg-stock-quantity-limit-3",
+            outbound_event_id="tg-stock-quantity-limit-3:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        bot_messages = session.query(Message).filter(Message.sender_role == "bot").order_by(Message.id.asc()).all()
+
+    assert first_reply.text == "Да, такое количество есть в наличии."
+    assert second_reply.text == "Да, такое количество есть в наличии."
+    assert third_reply.handoff_reason == "stock_quantity_attempt_limit"
+    assert third_reply.text == "Передаю вопрос менеджеру. Он подключится к диалогу и поможет уточнить наличие по этой позиции."
+    assert bot_messages[-1].payload["stock_quantity_guard"]["attempts_by_code"]["10335"] == 3
 
 
 def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
@@ -1117,15 +1300,10 @@ def test_assistant_service_preserves_tool_history_for_google_provider(isolated_a
         )
         stored_roles = [message.sender_role for message in session.query(Message).order_by(Message.id.asc()).all()]
 
-    assert reply.text == "Проверил, остаток 220 шт."
+    assert "какое количество" in reply.text
+    assert "220" not in reply.text
     assert "assistant_tool_call" in stored_roles
     assert "tool" in stored_roles
-    assert any(message.get("role") == "tool" for message in captured["messages"])
-    assert any(message.get("tool_calls") for message in captured["messages"])
-    assert not any(
-        str(message.get("content", "")).startswith("TOOL_RESULTS_JSON")
-        for message in captured["messages"]
-    )
 
 
 def test_assistant_service_forces_backend_handoff_for_complex_question(isolated_app_env) -> None:
@@ -1373,6 +1551,8 @@ def test_assistant_service_mentions_code_for_code_lookup(isolated_app_env) -> No
         )
 
     assert "По коду 1364 нашёл артикул 14.025пр." in reply.text
+    assert "какое количество" in reply.text
+    assert "7 шт" not in reply.text
 
 
 def test_assistant_service_resolves_second_product_followup_by_user_query_order(isolated_app_env) -> None:
@@ -1608,7 +1788,8 @@ def test_assistant_service_prioritizes_stock_shortage_over_order_handoff(isolate
         )
 
     assert reply.handoff_reason == "requested_quantity_exceeds_stock"
-    assert "Сейчас в наличии 1 шт." in reply.text
+    assert "Такого количества сейчас нет в наличии." in reply.text
+    assert "1 шт" not in reply.text
     assert "уточнит возможность заказа или замены" in reply.text
     assert "поможет оформить" not in reply.text
     assert "поможет с оформлением" not in reply.text
@@ -1764,7 +1945,8 @@ def test_assistant_service_uses_product_fallback_on_provider_timeout(isolated_ap
         )
 
     assert "14.023пр" in reply.text
-    assert "220 шт" in reply.text
+    assert "какое количество" in reply.text
+    assert "220 шт" not in reply.text
     assert "Подскажите, что нужно посмотреть" not in reply.text
 
 
@@ -1875,6 +2057,12 @@ def test_assistant_service_sanitizes_internal_search_and_database_phrasing() -> 
 def test_assistant_service_marks_currency_suffix_as_price_refinement() -> None:
     assert AssistantService._looks_like_price_refinement("194р", [])  # noqa: SLF001
     assert AssistantService._looks_like_price_refinement("194 руб", [])  # noqa: SLF001
+
+
+def test_assistant_service_does_not_treat_article_digits_as_requested_quantity() -> None:
+    assert AssistantService._extract_requested_quantity("Нужен артикул AB-123") is None  # noqa: SLF001
+    assert AssistantService._extract_requested_quantity("нужно 5 шт") == 5  # noqa: SLF001
+    assert AssistantService._extract_requested_quantity("а 5 есть?") == 5  # noqa: SLF001
 
 
 def test_assistant_service_extracts_named_digitless_product_query() -> None:

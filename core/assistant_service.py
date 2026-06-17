@@ -46,6 +46,16 @@ ARTICLE_REQUIRED_TEXT = (
     "Пришлите, пожалуйста, артикул или код товара. Тогда посмотрю цену и наличие."
 )
 
+STOCK_QUANTITY_ATTEMPT_LIMIT = 3
+STOCK_QUANTITY_REQUIRED_TEXT = (
+    "Подскажите, пожалуйста, какое количество вам нужно. Проверю, доступно ли оно."
+)
+STOCK_QUANTITY_ENOUGH_TEXT = "Да, такое количество есть в наличии."
+STOCK_QUANTITY_NOT_ENOUGH_TEXT = "Нет, такого количества сейчас нет в наличии."
+STOCK_QUANTITY_HANDOFF_TEXT = (
+    "Передаю вопрос менеджеру. Он подключится к диалогу и поможет уточнить наличие по этой позиции."
+)
+
 
 @dataclass(slots=True)
 class AssistantReply:
@@ -697,7 +707,11 @@ class AssistantService:
         stock_only_request = self._is_stock_only_request(customer_text)
         product_lookup_result = self._apply_stock_only_policy(product_lookup_result, stock_only_request)
         requested_quantity = self._extract_requested_quantity(customer_text)
-        stock_handoff_reason = self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
+        stock_handoff_reason = (
+            None
+            if stock_only_request
+            else self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
+        )
         corporate_price_handoff_reason = "corporate_price_request" if corporate_price_requested and not self.show_corporate_price else None
         handoff_reason = stock_handoff_reason or force_handoff_reason or corporate_price_handoff_reason
         backend_actions = {
@@ -723,6 +737,19 @@ class AssistantService:
             )
             include_tool_results_system = False
             prelookup_tool_persisted = True
+
+        stock_privacy_reply = self._try_stock_quantity_privacy_reply(
+            session,
+            external_chat_id=external_chat_id,
+            customer_text=customer_text,
+            product_lookup_result=product_lookup_result,
+            backend_actions=backend_actions,
+            outbound_event_id=outbound_event_id,
+            payload_source=payload_source,
+            handoff_mode=handoff_mode,
+        )
+        if stock_privacy_reply is not None:
+            return stock_privacy_reply
 
         turn = None
         if self.openai_service.enabled:
@@ -895,6 +922,208 @@ class AssistantService:
     @staticmethod
     def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
         return product_lookup_result
+
+    def _try_stock_quantity_privacy_reply(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+        product_lookup_result: dict,
+        backend_actions: dict,
+        outbound_event_id: str | None,
+        payload_source: str,
+        handoff_mode: str,
+    ) -> AssistantReply | None:
+        if not backend_actions.get("stock_only_request"):
+            return None
+        if self._extract_pending_clarification(product_lookup_result):
+            return None
+
+        matches = self._stock_privacy_exact_matches(product_lookup_result)
+        if not matches:
+            return None
+
+        product_codes = [
+            str(match.get("code") or "").strip()
+            for match in matches
+            if str(match.get("code") or "").strip()
+        ]
+        if not product_codes:
+            return None
+
+        attempts_by_code = {
+            code: self._count_stock_quantity_guard_attempts(session, external_chat_id, code) + 1
+            for code in product_codes
+        }
+        requested_quantity = backend_actions.get("requested_quantity")
+        guard_payload = {
+            "product_codes": product_codes,
+            "requested_quantity": requested_quantity,
+            "attempts_by_code": attempts_by_code,
+            "attempt_limit": STOCK_QUANTITY_ATTEMPT_LIMIT,
+        }
+
+        if any(attempt >= STOCK_QUANTITY_ATTEMPT_LIMIT for attempt in attempts_by_code.values()):
+            reason = "stock_quantity_attempt_limit"
+            guarded_actions = deepcopy(backend_actions)
+            guarded_actions.update(
+                {
+                    "handoff_to_manager_called": True,
+                    "handoff_reason": reason,
+                    "response_mode": "stock_quantity_attempt_limit",
+                }
+            )
+            self._register_handoff_action(
+                session,
+                external_chat_id=external_chat_id,
+                reason=reason,
+                handoff_mode=handoff_mode,
+                source=f"{payload_source}_stock_quantity_guard",
+            )
+            reply_text = self._sanitize_customer_reply(STOCK_QUANTITY_HANDOFF_TEXT)
+            self._append_bot_message(
+                session,
+                external_chat_id=external_chat_id,
+                text=reply_text,
+                outbound_event_id=outbound_event_id,
+                payload={
+                    "source": f"{payload_source}_stock_quantity_guard",
+                    "product_lookup_status": product_lookup_result.get("status"),
+                    "exact_matches_count": product_lookup_result.get("exact_matches_count"),
+                    "similar_matches_count": product_lookup_result.get("similar_matches_count"),
+                    "product_lookup_result": product_lookup_result,
+                    "backend_actions": guarded_actions,
+                    "handoff_reason": reason,
+                    "stock_quantity_guard": guard_payload,
+                },
+            )
+            return AssistantReply(text=reply_text, handoff_reason=reason)
+
+        per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results") or []
+        if len(per_query_results) > 1:
+            reply_text = self._build_stock_privacy_multi_query_text(per_query_results, requested_quantity)
+        elif requested_quantity is None:
+            match = matches[0]
+            article = str(match.get("article") or "").strip()
+            code = str(match.get("code") or "").strip()
+            if self._lookup_item_queried_by_code(customer_text, product_lookup_result, match) and code:
+                reply_text = (
+                    f"По коду {code} нашёл артикул {article or code}. "
+                    "Подскажите, пожалуйста, какое количество вам нужно."
+                )
+            elif article:
+                reply_text = f"По {article} подскажите, пожалуйста, какое количество вам нужно."
+            else:
+                reply_text = STOCK_QUANTITY_REQUIRED_TEXT
+        elif len(matches) == 1:
+            reply_text = (
+                STOCK_QUANTITY_ENOUGH_TEXT
+                if self._stock_covers_requested_quantity(matches[0], int(requested_quantity))
+                else STOCK_QUANTITY_NOT_ENOUGH_TEXT
+            )
+        else:
+            lines = []
+            for match in matches:
+                article = str(match.get("article") or match.get("code") or "товару").strip()
+                result_text = (
+                    "да, такое количество есть в наличии"
+                    if self._stock_covers_requested_quantity(match, int(requested_quantity))
+                    else "нет, такого количества сейчас нет в наличии"
+                )
+                lines.append(f"По {article}: {result_text}.")
+            reply_text = " ".join(lines)
+
+        guarded_actions = deepcopy(backend_actions)
+        guarded_actions["response_mode"] = (
+            "stock_quantity_request" if requested_quantity is None else "stock_quantity_check"
+        )
+        guarded_actions["stock_quantity_guarded"] = True
+
+        reply_text = self._sanitize_customer_reply(reply_text)
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=reply_text,
+            outbound_event_id=outbound_event_id,
+            payload={
+                "source": f"{payload_source}_stock_quantity_guard",
+                "product_lookup_status": product_lookup_result.get("status"),
+                "exact_matches_count": product_lookup_result.get("exact_matches_count"),
+                "similar_matches_count": product_lookup_result.get("similar_matches_count"),
+                "product_lookup_result": product_lookup_result,
+                "backend_actions": guarded_actions,
+                "handoff_reason": None,
+                "stock_quantity_guard": guard_payload,
+            },
+        )
+        return AssistantReply(text=reply_text)
+
+    @staticmethod
+    def _build_stock_privacy_multi_query_text(
+        per_query_results: list[dict],
+        requested_quantity: int | None,
+    ) -> str:
+        lines = ["Проверил."]
+        for item in per_query_results:
+            item_query = str(item.get("display_query") or item.get("query") or "запрос").strip()
+            item_exact = item.get("exact_matches") or []
+            item_similar = item.get("similar_matches") or []
+            if len(item_exact) == 1:
+                match = item_exact[0]
+                article = str(match.get("article") or item_query).strip()
+                if requested_quantity is None:
+                    lines.append(f"По {article} подскажите, пожалуйста, какое количество нужно.")
+                    continue
+                result_text = (
+                    "да, такое количество есть в наличии"
+                    if AssistantService._stock_covers_requested_quantity(match, requested_quantity)
+                    else "нет, такого количества сейчас нет в наличии"
+                )
+                lines.append(f"По {article}: {result_text}.")
+            elif len(item_exact) > 1:
+                lines.append(
+                    f"По {item_query} есть несколько вариантов. Уточните, пожалуйста, код товара с сайта или цену в карточке."
+                )
+            elif item_similar:
+                lines.append(f"По {item_query} точного совпадения не нашёл.")
+            else:
+                lines.append(f"По {item_query} в текущей базе ничего не нашёл.")
+        return " ".join(lines)
+
+    @staticmethod
+    def _stock_privacy_exact_matches(product_lookup_result: dict) -> list[dict]:
+        exact = product_lookup_result.get("exact_matches") or []
+        if not exact:
+            return []
+        articles = {str(item.get("article") or "").strip() for item in exact if item.get("article")}
+        if len(exact) > 1 and len(articles) == 1:
+            return []
+        return exact
+
+    def _count_stock_quantity_guard_attempts(
+        self,
+        session,
+        external_chat_id: str,
+        product_code: str,
+    ) -> int:
+        count = 0
+        for message in list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit):
+            guard = (message.payload or {}).get("stock_quantity_guard")
+            if not isinstance(guard, dict):
+                continue
+            codes = {str(code).strip() for code in guard.get("product_codes") or []}
+            if product_code in codes:
+                count += 1
+        return count
+
+    @staticmethod
+    def _stock_covers_requested_quantity(match: dict, requested_quantity: int) -> bool:
+        try:
+            stock_value = float(str(match.get("stock") or "0").replace(",", "."))
+        except (TypeError, ValueError):
+            return False
+        return stock_value >= requested_quantity
 
     def _build_tool_visible_product_lookup_result(self, product_lookup_result: dict, *, customer_text: str) -> dict:
         corporate_price_requested = self._is_corporate_price_request(customer_text)
@@ -2081,6 +2310,7 @@ class AssistantService:
     @staticmethod
     def _is_stock_only_request(customer_text: str) -> bool:
         text = customer_text.lower()
+        has_quantity = AssistantService._extract_requested_quantity(customer_text) is not None
         has_stock_intent = any(
             keyword in text
             for keyword in (
@@ -2094,7 +2324,7 @@ class AssistantService:
                 "узнай",
                 "найди",
             )
-        )
+        ) or has_quantity
         has_price_intent = any(keyword in text for keyword in ("цен", "стоит", "стоим", "руб", "корп", "опт", "дешев", "дороже"))
         has_other_fact_intent = any(
             keyword in text
@@ -2122,7 +2352,7 @@ class AssistantService:
         text = customer_text.lower()
         if "цен" in text or "стоит" in text or "дешев" in text or "дороже" in text:
             return "price"
-        if "остат" in text or "в наличии" in text or "налич" in text:
+        if "остат" in text or "в наличии" in text or "налич" in text or AssistantService._extract_requested_quantity(customer_text) is not None:
             return "stock"
         if "вес" in text or "масс" in text:
             return "product_info"
@@ -2258,6 +2488,13 @@ class AssistantService:
         if ordinal_index is not None and 0 <= ordinal_index < len(per_query_results):
             query = AssistantService._preferred_query_for_lookup_item(per_query_results[ordinal_index])
             return [query] if query else []
+
+        if AssistantService._extract_requested_quantity(customer_text) is not None:
+            exact = lookup.get("exact_matches") or []
+            if len(exact) == 1:
+                match = exact[0]
+                query = str(match.get("article") or match.get("code") or "").strip()
+                return [query] if query else []
 
         normalized_fragments = [normalize_article(candidate) for candidate in extract_article_candidates(customer_text)]
         normalized_fragments = [fragment for fragment in normalized_fragments if len(fragment) >= 3]
@@ -2446,6 +2683,14 @@ class AssistantService:
                     else:
                         parts.append("Вес в текущих данных не указан.")
                     return " ".join(parts)
+                if backend_actions.get("handoff_reason") in {"requested_quantity_exceeds_stock", "order_request"}:
+                    requested_quantity = backend_actions.get("requested_quantity")
+                    if requested_quantity is not None:
+                        if AssistantService._stock_covers_requested_quantity(item, int(requested_quantity)):
+                            parts.append("Такое количество есть в наличии.")
+                        else:
+                            parts.append("Такого количества сейчас нет в наличии.")
+                        return " ".join(parts)
                 parts.append(f"Сейчас в наличии {stock_text}.")
                 if stock_only_request:
                     parts.append("По цене тоже подсказать?")
@@ -2600,10 +2845,19 @@ class AssistantService:
 
     @staticmethod
     def _extract_requested_quantity(customer_text: str) -> int | None:
-        match = re.search(r"(?<![\w.])(\d+)\s*(?:шт|штук|штуки|штуку)\b", customer_text.lower())
-        if not match:
-            return None
-        return int(match.group(1))
+        text = customer_text.lower()
+        patterns = (
+            r"(?<![\w./-])(\d{1,5})(?![\w./-])\s*(?:шт|штук|штуки|штуку)\b",
+            r"(?:нужно|надо|необходимо|нужны|нужна|возьму|куплю|закажу|заказать)\s+(?:мне\s+|нам\s+|по\s+|на\s+)?(\d{1,5})(?![\w./-])",
+            r"(?:в количестве|количество)\s+(\d{1,5})(?![\w./-])",
+            r"(?<![\w./-])(\d{1,5})(?![\w./-])\s*(?:есть|хватит|доступно)\b",
+            r"\bна\s+(\d{1,5})(?![\w./-])\s*(?:хватит|есть|доступно)?",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return int(match.group(1))
+        return None
 
     @staticmethod
     def _get_stock_shortage_reason(product_lookup_result: dict, requested_quantity: int | None) -> str | None:
