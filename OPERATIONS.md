@@ -1987,6 +1987,15 @@
 - Проверки:
   - `python -m pytest tests/test_assistant_service.py -q` -> `63 passed`;
   - `python -m pytest -q` -> `132 passed`.
+- Git:
+  - создан и отправлен commit `aeec1c2 Protect stock quantities from scraping`.
+- VPS deploy:
+  - `/root/amix` обновлён `git pull --ff-only origin master` до `aeec1c2`;
+  - серверная проверка `.venv/bin/python -m pytest -q` -> `132 passed`;
+  - фактические сервисы на VPS: `amix-api.service` и `amix-telegram-demo.service`;
+  - перезапущены `amix-api.service` и `amix-telegram-demo.service`;
+  - оба сервиса проверены как `active/running`;
+  - внешний healthcheck `https://amix.cifresh.ru/health` вернул `200 {"status":"ok"}`.
 
 ## Итерация 52 - Google tool history log shape
 

@@ -2,7 +2,7 @@
 
 ## Update 2026-06-17 (Stock Scraping Protection)
 
-- Status: completed locally, pending VPS deploy.
+- Status: completed and deployed.
 - Goal:
   - Stop exposing exact stock quantities for plain availability/stock requests.
   - Ask the customer for the desired quantity if they ask how many are available without specifying quantity.
@@ -13,10 +13,16 @@
   - Implemented a backend guard in product-result reply flow so the rule does not rely on LLM wording.
   - Updated prompts to align model behavior with the backend guard.
   - Local full test suite passed.
-  - VPS deploy remains the next step.
+  - Deployed to VPS.
 - Checks:
   - `python -m pytest tests/test_assistant_service.py -q` -> `63 passed`.
   - `python -m pytest -q` -> `132 passed`.
+- VPS:
+  - deployed commit `aeec1c2`;
+  - server `.venv/bin/python -m pytest -q` -> `132 passed`;
+  - restarted `amix-api.service` and `amix-telegram-demo.service`;
+  - both services are `active/running`;
+  - `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`.
 
 ## Update 2026-06-15 (amix.cifresh.ru Nginx/SSL)
 
