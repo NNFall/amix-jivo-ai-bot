@@ -2,7 +2,7 @@
 
 ## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)
 
-- Status: completed locally, pending VPS deploy.
+- Status: completed and deployed.
 - Goal:
   - Fix the case where the bot asks the customer to clarify a product variant and also triggers manager handoff in the same turn.
   - Keep the chat active after multiple product variants are found until the customer provides product code or price.
@@ -14,6 +14,12 @@
   - `python -m pytest tests/test_assistant_service.py::test_assistant_service_does_not_handoff_when_multiple_variants_need_clarification -q` -> `1 passed`.
   - `python -m pytest tests/test_assistant_service.py -q` -> `65 passed`.
   - `python -m pytest -q` -> `133 passed`.
+- VPS:
+  - deployed commit `3d167f5`;
+  - server `.venv/bin/python -m pytest -q` -> `133 passed`;
+  - restarted `amix-api.service` and `amix-telegram-demo.service`;
+  - both services are `active/running`;
+  - `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`.
 
 ## Update 2026-06-17 (Stock Scraping Protection)
 

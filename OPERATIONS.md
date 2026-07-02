@@ -1983,6 +1983,14 @@
   - `python -m pytest tests/test_assistant_service.py::test_assistant_service_does_not_handoff_when_multiple_variants_need_clarification -q` -> `1 passed`;
   - `python -m pytest tests/test_assistant_service.py -q` -> `65 passed`;
   - `python -m pytest -q` -> `133 passed`.
+- Git:
+  - создан и отправлен commit `3d167f5 Avoid handoff while product variant is ambiguous`.
+- VPS deploy:
+  - `/root/amix` обновлён `git pull --ff-only origin master` до `3d167f5`;
+  - серверная проверка `.venv/bin/python -m pytest -q` -> `133 passed`;
+  - перезапущены `amix-api.service` и `amix-telegram-demo.service`;
+  - оба сервиса проверены как `active/running`;
+  - внешний healthcheck `https://amix.cifresh.ru/health` вернул `200 {"status":"ok"}`.
 
 ## Итерация 54 - защита точных остатков от парсинга
 
