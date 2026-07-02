@@ -170,6 +170,66 @@ def test_assistant_service_converts_text_only_handoff_to_real_action(isolated_ap
     assert messages[3].payload["backend_actions"]["handoff_to_manager_called"] is True
 
 
+def test_assistant_service_does_not_handoff_when_multiple_variants_need_clarification(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="197",
+                    article="CWJ-102",
+                    normalized_article=normalize_article("CWJ-102"),
+                    free_stock=Decimal("3"),
+                    unit="шт",
+                    retail_price=Decimal("410"),
+                    raw_payload={},
+                ),
+                Product(
+                    code="198",
+                    article="CWJ-102",
+                    normalized_article=normalize_article("CWJ-102"),
+                    free_stock=Decimal("5"),
+                    unit="шт",
+                    retail_price=Decimal("520"),
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=(
+            "По вашему запросу нашлось несколько вариантов артикула CWJ-102. "
+            "Подскажите, пожалуйста, код товара с нашего сайта или цену. "
+            "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
+        ),
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:multiple-no-handoff",
+            external_client_id="telegram-user:multiple-no-handoff",
+            customer_name="Demo User",
+            customer_text="Добрый день! Подскажите, какой цвет у этой полочки? CWJ-102 Это матовый никель?",
+            inbound_event_id="tg-multiple-no-handoff",
+            outbound_event_id="tg-multiple-no-handoff:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        handoffs = session.query(Handoff).all()
+        messages = session.query(Message).order_by(Message.id.asc()).all()
+
+    assert reply.handoff_reason is None
+    assert not handoffs
+    assert "несколько" in reply.text.lower()
+    assert "код товара" in reply.text.lower()
+    assert "Передаю" not in reply.text
+    assert messages[-1].payload["handoff_reason"] is None
+    assert messages[-1].payload["backend_actions"]["handoff_to_manager_called"] is False
+
+
 def test_assistant_service_answers_pending_consecutive_user_messages(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(

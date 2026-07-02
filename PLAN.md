@@ -1,5 +1,20 @@
 # PLAN
 
+## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)
+
+- Status: completed locally, pending VPS deploy.
+- Goal:
+  - Fix the case where the bot asks the customer to clarify a product variant and also triggers manager handoff in the same turn.
+  - Keep the chat active after multiple product variants are found until the customer provides product code or price.
+- Done:
+  - Added a regression test for a CWJ-102 style color question where multiple product variants are found and the model tries to append manager handoff.
+  - Added a backend guard: if product clarification is pending, an accidental "Передаю менеджеру" phrase is replaced with the safe code/price clarification fallback instead of creating a real handoff.
+  - Updated prompts to explicitly forbid manager handoff on unresolved multiple variants unless the customer asks for a person.
+- Checks:
+  - `python -m pytest tests/test_assistant_service.py::test_assistant_service_does_not_handoff_when_multiple_variants_need_clarification -q` -> `1 passed`.
+  - `python -m pytest tests/test_assistant_service.py -q` -> `65 passed`.
+  - `python -m pytest -q` -> `133 passed`.
+
 ## Update 2026-06-17 (Stock Scraping Protection)
 
 - Status: completed and deployed.

@@ -849,6 +849,15 @@ class AssistantService:
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
+        if not handoff_reason and self._extract_pending_clarification(product_lookup_result) and self._reply_claims_handoff(reply_text):
+            reply_text = self._sanitize_customer_reply(
+                self._build_programmatic_lookup_fallback(
+                    product_lookup_result,
+                    customer_text=customer_text,
+                    backend_actions=backend_actions,
+                )
+            )
+
         if not handoff_reason and self._reply_claims_handoff(reply_text):
             handoff_reason = "bot_uncertain"
             backend_actions["handoff_to_manager_called"] = True
