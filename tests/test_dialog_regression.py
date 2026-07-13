@@ -159,12 +159,12 @@ def test_dialog_regression_handoff_and_company_questions(isolated_app_env) -> No
     assert company_reply.handoff_reason is None
     assert "Якорная" in company_reply.text
     assert complex_reply.handoff_reason == "complex_technical_question"
-    assert order_reply.handoff_reason == "order_request"
+    assert order_reply.handoff_reason is None
 
     with session_scope() as session:
         reasons = {handoff.reason for handoff in session.query(Handoff).all()}
 
-    assert {"complex_technical_question", "order_request"} <= reasons
+    assert reasons == {"complex_technical_question"}
 
 
 def test_complex_compare_searches_both_articles_before_handoff(isolated_app_env) -> None:

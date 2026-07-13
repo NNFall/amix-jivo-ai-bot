@@ -112,6 +112,41 @@ class Handoff(Base):
     )
 
 
+class OrderDraft(Base, TimestampMixin):
+    __tablename__ = "order_drafts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(64), default="collecting", nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class LLMCall(Base):
+    __tablename__ = "llm_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int | None] = mapped_column(ForeignKey("chats.id"), nullable=True, index=True)
+    request_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), default="ok", nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    thinking_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    estimated_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    estimated_rub: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    outbound_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+
 class ProcessingError(Base):
     __tablename__ = "processing_errors"
 

@@ -1,5 +1,44 @@
 # PLAN
 
+## Update 2026-07-13 (Order Intake + Persistent LLM Usage)
+
+- Status: implementation, independent review and local verification complete; VPS deployment pending.
+- Source requirements fixed in `docs/superpowers/specs/2026-07-13-order-intake-and-llm-usage-design.md`.
+- Implementation plan: `docs/superpowers/plans/2026-07-13-order-intake-and-llm-usage.md`.
+- Scope:
+  - collect order details instead of immediately handing off;
+  - support codes/articles and free-form product descriptions;
+  - collect delivery, payment and contact details;
+  - collect the customer's desired timing without promising delivery dates;
+  - collect legal entity/IP details for bank-transfer invoices;
+  - show a final summary and require explicit confirmation before order handoff;
+  - store every LLM call's tokens, latency and estimated cost cumulatively in SQLite;
+  - keep PDF, Excel and image specification parsing out of scope.
+- Implemented:
+  - `OrderDraft` persistence and `update_order_draft` tool flow;
+  - backend confirmation guard for order handoff;
+  - safe yes/no quantity checks without exact stock exposure;
+  - cumulative `LLMCall` records and admin totals;
+  - current Gemini 3.1 Flash-Lite paid pricing;
+  - safe not-found wording for XML rows omitted at zero stock.
+- Independent review fixes:
+  - all model handoff reasons are blocked while an order draft is incomplete or unconfirmed;
+  - an order confirmation is valid only immediately after the canonical summary was persisted in chat history;
+  - LLM usage is committed before a later outbound Jivo operation can roll it back;
+  - bank-transfer intake requires a phone and includes payer type in the summary;
+  - order-intake not-found replies use the same guarded wording as normal product search;
+  - raw conversation debug logs are disabled by default.
+  - stale order turns discard hidden draft/tool/reply state while retaining usage statistics;
+  - dissatisfied customers can still reach a manager during an active order;
+  - Jivo invitation succeeds before the customer is sent a handoff promise;
+  - exact stock is redacted and guarded in order replies, unknown stock remains unknown;
+  - items can be stored before quantity is known;
+  - rotating provider audit masks contact and invoice identifiers.
+- Baseline check before changes: `python -m pytest -q` -> `133 passed`.
+- Current risk: exact invoice fields were not supplied by AMIX, so the MVP uses a conservative minimum and keeps KPP optional.
+- Verification: `python -m pytest -q` -> `161 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+- Next: commit/push and VPS deployment.
+
 ## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)
 
 - Status: completed and deployed.

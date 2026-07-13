@@ -5,19 +5,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 import json
 import os
+import re
 import tempfile
 import threading
 from typing import Any
 
 
 _AUDIT_LOCK = threading.Lock()
+_EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_INN_PATTERN = re.compile(r"(?i)(ИНН\s*[:№-]?\s*)\d{10,12}\b")
+_PHONE_PATTERN = re.compile(r"(?<!\w)\+?\d[\d\s().-]{8,}\d")
+_SENSITIVE_KEY_MARKERS = {
+    "phone": "<redacted-phone>",
+    "email": "<redacted-email>",
+    "inn": "<redacted-inn>",
+    "kpp": "<redacted-kpp>",
+    "company_name": "<redacted-company>",
+    "customer_name": "<redacted-name>",
+}
 
 GOOGLE_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
     # Official Google Gemini API pricing is USD per 1M tokens.
     "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
     "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
-    "gemini-3.1-flash-lite": {"input": 0.10, "output": 0.40},
-    "gemini-3.1-flash-lite-preview": {"input": 0.10, "output": 0.40},
+    "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50},
+    "gemini-3.1-flash-lite-preview": {"input": 0.25, "output": 1.50},
     "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
 }
 
@@ -60,6 +72,7 @@ class LLMAuditLogger:
             return
 
         now = datetime.now(UTC).isoformat()
+        entry = _redact_sensitive_data(entry)
         entry.setdefault("timestamp", now)
 
         with _AUDIT_LOCK:
@@ -101,6 +114,7 @@ class LLMAuditLogger:
                 json.dump(payload, file, ensure_ascii=False, indent=2, default=str)
                 file.write("\n")
             os.replace(temp_name, self.path)
+            os.chmod(self.path, 0o600)
         finally:
             if os.path.exists(temp_name):
                 os.unlink(temp_name)
@@ -181,3 +195,25 @@ def _to_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _redact_sensitive_data(value: Any, *, parent_key: str | None = None) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower()
+            marker = _SENSITIVE_KEY_MARKERS.get(normalized_key)
+            if marker is None and normalized_key == "name" and parent_key in {"contact", "customer", "sender"}:
+                marker = "<redacted-name>"
+            result[key] = marker if marker is not None else _redact_sensitive_data(item, parent_key=normalized_key)
+        return result
+    if isinstance(value, list):
+        return [_redact_sensitive_data(item, parent_key=parent_key) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive_data(item, parent_key=parent_key) for item in value)
+    if not isinstance(value, str):
+        return value
+
+    redacted = _EMAIL_PATTERN.sub("<redacted-email>", value)
+    redacted = _INN_PATTERN.sub(lambda match: f"{match.group(1)}<redacted-inn>", redacted)
+    return _PHONE_PATTERN.sub("<redacted-phone>", redacted)

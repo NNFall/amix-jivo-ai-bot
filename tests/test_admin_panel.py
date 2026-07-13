@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
 from database.db import session_scope
-from database.models import Product, ProductImport
+from database.models import Chat, Customer, LLMCall, Product, ProductImport
 from main import create_application
 from products.remote_xml_importer import RemoteXmlImportResult
 from products.xml_importer import XmlImportResult
@@ -75,6 +76,8 @@ def test_admin_login_sets_cookie_and_allows_page_access(isolated_app_env, monkey
     assert page_response.status_code == 200
     assert "AMIX AI бот" in page_response.text
     assert "Товаров в базе" in page_response.text
+    assert "Токенов LLM" in page_response.text
+    assert "Расход LLM" in page_response.text
     assert "Скачать текущую базу" in page_response.text
     assert "Выберите файл или перенесите сюда" in page_response.text
 
@@ -88,6 +91,41 @@ def test_admin_login_rejects_wrong_password_without_browser_basic_prompt(
 
     assert response.status_code == 200
     assert "Неверный пароль" in response.text
+
+
+def test_admin_page_shows_cumulative_llm_usage(isolated_app_env, monkeypatch) -> None:
+    with session_scope() as session:
+        customer = Customer(external_client_id="admin-stats-customer")
+        session.add(customer)
+        session.flush()
+        chat = Chat(external_chat_id="admin-stats-chat", customer_id=customer.id)
+        session.add(chat)
+        session.flush()
+        session.add(
+            LLMCall(
+                chat_id=chat.id,
+                request_id="admin-stats-call",
+                provider="google_ai_studio",
+                model="gemini-3.1-flash-lite",
+                purpose="direct",
+                status="ok",
+                prompt_tokens=1000,
+                completion_tokens=100,
+                thinking_tokens=100,
+                total_tokens=1200,
+                latency_ms=1234,
+                estimated_usd=Decimal("0.00055"),
+                estimated_rub=Decimal("0.055"),
+            )
+        )
+
+    with build_client(monkeypatch) as client:
+        client.post("/admin/login", data={"password": "secret"})
+        response = client.get("/admin")
+
+    assert "1 200" in response.text
+    assert "1 запрос" in response.text
+    assert "0.06 ₽" in response.text
     assert "amix_admin_session" not in response.headers.get("set-cookie", "")
     assert "WWW-Authenticate" not in response.headers
 

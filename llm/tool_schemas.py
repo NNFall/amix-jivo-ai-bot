@@ -2,6 +2,77 @@ OPENAI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "update_order_draft",
+            "description": (
+                "Создаёт или обновляет черновик заказа по данным из текущего сообщения клиента. "
+                "Вызывай при намерении оформить заказ и после каждого уточнения состава, количества, "
+                "получения, оплаты или контактов. Передавай только явно сообщённые клиентом данные."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "description": "Полный актуальный список позиций, если клиент назвал или изменил товары.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "identifier": {
+                                    "type": "string",
+                                    "description": "Код или артикул, только если клиент его назвал.",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Свободное описание товара, если кода или артикула нет.",
+                                },
+                                "quantity": {"type": "number", "description": "Требуемое количество."},
+                            },
+                        },
+                    },
+                    "needed_by": {
+                        "type": "string",
+                        "description": "Когда клиенту нужен заказ, в его формулировке, без обещания срока поставки.",
+                    },
+                    "fulfillment": {
+                        "type": "object",
+                        "properties": {
+                            "method": {"type": "string", "enum": ["pickup", "delivery"]},
+                            "city": {"type": "string"},
+                            "address": {"type": "string"},
+                        },
+                    },
+                    "payment": {
+                        "type": "object",
+                        "properties": {
+                            "method": {
+                                "type": "string",
+                                "enum": ["cash", "card", "online", "bank_transfer"],
+                            },
+                            "customer_type": {
+                                "type": "string",
+                                "enum": ["individual", "legal_entity", "individual_entrepreneur"],
+                            },
+                            "company_name": {"type": "string"},
+                            "inn": {"type": "string"},
+                            "kpp": {"type": "string"},
+                        },
+                    },
+                    "contact": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "phone": {"type": "string"},
+                            "email": {"type": "string"},
+                        },
+                    },
+                    "notes": {"type": "string"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_products",
             "description": (
                 "Ищет товарные факты AMIX в локальной базе данных по коду товара, артикулу "
@@ -68,7 +139,7 @@ OPENAI_TOOLS = [
             "name": "handoff_to_manager",
             "description": (
                 "Передает текущий диалог живому менеджеру AMIX через Jivo. Используется, когда "
-                "клиент просит человека, хочет оформить заказ, недоволен ответом, спрашивает "
+                "клиент просит человека, подтвердил собранный черновик заказа, недоволен ответом, спрашивает "
                 "технический подбор, совместимость, аналоги, сложные отличия, индивидуальные "
                 "скидки, акции, доставку или возврат по конкретной ситуации."
             ),

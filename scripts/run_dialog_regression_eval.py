@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import tempfile
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,7 +22,8 @@ import database.db as db_module
 from core.assistant_service import AssistantService
 from database.db import create_db_and_tables, session_scope
 from database.models import Base, Product
-from llm.openai_client import LLMTurnResult
+from database.repositories import get_order_draft
+from llm.openai_client import LLMTurnResult, ToolCall
 from products.article_utils import extract_article_candidates
 
 
@@ -103,11 +105,18 @@ def _configure_isolated_database(database_path: Path) -> None:
     Base.metadata.create_all(bind=engine)
 
 
-def _classify_action(case: dict, lookup: dict | None, reply_handoff_reason: str | None) -> str:
+def _classify_action(
+    case: dict,
+    lookup: dict | None,
+    reply_handoff_reason: str | None,
+    order_draft_exists: bool,
+) -> str:
     if reply_handoff_reason:
         if lookup is not None:
             return "product_lookup_then_handoff"
         return "handoff"
+    if order_draft_exists:
+        return "order_intake"
     if lookup is None:
         text = case["customer_text"].lower()
         if any(word in text for word in ("цена", "стоит", "наличие", "остаток")):
@@ -159,6 +168,8 @@ def _evaluate_case(case: dict, actual_action: str, lookup: dict | None, reply_te
         failures.append("handoff was not requested")
     if "no_handoff" in criteria and handoff_reason:
         failures.append("unexpected handoff")
+    if "order_draft" in criteria and actual_action != "order_intake":
+        failures.append("order draft was not created")
     has_exact = bool((lookup or {}).get("exact_matches"))
     if "точного совпадения" in reply_text_lower and "не наш" in reply_text_lower and has_exact:
         failures.append("reply says exact match was not found despite exact matches")
@@ -230,6 +241,25 @@ def _fake_llm_turn(**kwargs) -> LLMTurnResult:
     user_text = "\n".join(str(message.get("content", "")) for message in messages if message.get("role") == "user").lower()
 
     if kwargs.get("tools"):
+        if "хочу заказать" in user_text or "оформить заказ" in user_text:
+            candidates = extract_article_candidates(user_text)
+            quantity_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:шт|штук|компл)", user_text)
+            quantity = float(quantity_match.group(1).replace(",", ".")) if quantity_match else 1
+            item = {"quantity": quantity}
+            if candidates:
+                item["identifier"] = candidates[-1]
+            else:
+                item["description"] = "товар из сообщения клиента"
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="update_order_draft",
+                        arguments={"items": [item]},
+                        call_id="dialog_eval_order_draft",
+                    )
+                ],
+            )
         if "где вы" in user_text or "находитесь" in user_text:
             return LLMTurnResult(
                 text="Мы находимся в Санкт-Петербурге: ул. Якорная, д. 15, лит. Б.",
@@ -264,6 +294,7 @@ ACTION_LABELS = {
     "multi_product_lookup": "Поиск нескольких товаров",
     "product_lookup": "Поиск товара в базе",
     "product_lookup_then_handoff": "Сначала поиск товара, затем передача менеджеру",
+    "order_intake": "Сбор данных заказа без немедленной передачи менеджеру",
     "handoff": "Передача менеджеру",
 }
 
@@ -319,7 +350,8 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool,
                 payload={"source": "dialog_regression_eval", "case_id": case["id"]},
                 handoff_mode="demo",
             )
-            actual_action = _classify_action(case, lookup, reply.handoff_reason)
+            order_draft = get_order_draft(session, f"dialog-regression:{started_at.timestamp()}:{index}")
+            actual_action = _classify_action(case, lookup, reply.handoff_reason, order_draft is not None)
             status, comment = _evaluate_case(case, actual_action, lookup, reply.text, reply.handoff_reason)
             rows.append(
                 {
@@ -334,6 +366,7 @@ def run_eval(*, cases_path: Path, output_path: Path, seed: bool, isolated: bool,
                     "similar_count": ((lookup or {}).get("summary") or {}).get("total_similar_matches", (lookup or {}).get("similar_matches_count")),
                     "query_count": len((lookup or {}).get("per_query_results", [])),
                     "handoff_reason": reply.handoff_reason,
+                    "order_draft_status": order_draft.status if order_draft else None,
                     "answer": reply.text,
                     "status": status,
                     "comment": comment,
@@ -397,6 +430,8 @@ def _describe_function_calls(row: dict[str, Any]) -> list[str]:
     if row["handoff_reason"]:
         reason = HANDOFF_LABELS.get(row["handoff_reason"], row["handoff_reason"])
         calls.append(f"handoff_to_manager: {reason}")
+    if row.get("order_draft_status"):
+        calls.append(f"update_order_draft: статус {row['order_draft_status']}")
     if not calls:
         calls.append("нет")
     return calls

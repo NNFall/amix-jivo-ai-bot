@@ -1,3 +1,32 @@
+# Iteration 62 - order intake and cumulative LLM usage (2026-07-13)
+
+- Fixed source requirements in `docs/superpowers/specs/2026-07-13-order-intake-and-llm-usage-design.md` before implementation.
+- Created branch `codex/order-intake-audit` from clean commit `95e9722`.
+- Baseline: `python -m pytest -q` -> `133 passed`.
+- Added structured order drafts with items, quantities, desired timing, fulfillment, payment, contacts and bank-transfer invoice details.
+- Replaced immediate order handoff with model-driven `update_order_draft` calls and a backend guard requiring a complete draft plus explicit customer confirmation.
+- Kept direct manager requests immediate and kept PDF/Excel/photo parsing out of scope.
+- Added safe product checks that return only found state and requested-quantity availability, never exact stock.
+- Added cumulative SQLite `llm_calls` records for provider/model/purpose, tokens, inferred thinking tokens, latency and estimated USD/RUB cost.
+- Added LLM totals to the existing `/admin` page; retained the rotating raw JSON provider audit.
+- Updated Gemini 3.1 Flash-Lite paid pricing to USD 0.25/1M input and USD 1.50/1M output including thinking, based on official Google pricing reviewed on 2026-07-13.
+- Added the requested not-found wording because zero-stock products can be omitted from the XML.
+- TDD evidence: focused tests were first run failing for missing order service, immediate handoff, missing usage persistence, desired timing and not-found guard, then passed after implementation.
+- First independent review found six issues: alternative handoff-reason bypass, confirmation without a shown canonical summary, usage rollback after later failure, missing bank-transfer phone/payer type, unsafe order-flow not-found text and sensitive debug logs enabled by default.
+- Added six failing regression tests reproducing those findings; all six failed for the expected reasons before production changes.
+- Fixed the order state transition (`ready_for_confirmation` -> persisted canonical summary -> `awaiting_confirmation`) and required that summary to immediately precede explicit customer confirmation.
+- Blocked every model-originated handoff reason while an active order has not passed the confirmation invariant; direct customer requests for a manager remain immediate.
+- Made per-call LLM usage durable before later Jivo operations, required phone for bank-transfer orders, included payer type in the summary, guarded order not-found wording and disabled sensitive debug logs by default.
+- Focused first-review regressions -> `6 passed`.
+- A final independent agent review then found seven additional issues: stale order state after cancellation, blocked dissatisfaction handoff, false handoff promise on Jivo invite failure, exact-stock leakage path, quantity required too early, unknown stock treated as unavailable and unmasked order PII in provider audit.
+- Added eight focused failing tests reproducing those findings; all failed for the expected reasons before fixes.
+- Fixed conditional order-turn transactions, dissatisfaction handoff, Jivo invite/send ordering, exact-stock context/output guards, optional initial quantity, unknown-stock semantics and audit redaction/file permissions.
+- Focused second-review regressions -> `8 passed`.
+- Final local verification after all review fixes: `python -m pytest -q` -> `161 passed`; `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Earlier structural checks: `python -m compileall api core database jivo llm products scripts -q` -> passed; `git diff --check` -> passed (line-ending warnings only).
+- `ruff` was not available in the environment (`No module named ruff`).
+- Pending: commit/push and VPS deployment.
+
 # Iteration 59 - amix.cifresh.ru DNS and VPS reachability check
 
 - Goal: configure `amix.cifresh.ru` on the AMIX VPS with Nginx and SSL.

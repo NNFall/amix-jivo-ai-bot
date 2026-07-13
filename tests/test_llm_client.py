@@ -3,8 +3,10 @@ from pathlib import Path
 
 import httpx
 
+from llm.audit_log import LLMAuditLogger, LLMUsageStats, estimate_cost
 from llm.openai_client import OpenAIService
-from llm.prompts import build_product_facts_messages
+from llm.prompts import SYSTEM_PROMPT, build_product_facts_messages
+from llm.tool_schemas import OPENAI_TOOLS
 from settings import get_settings
 
 
@@ -289,6 +291,72 @@ def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, 
     assert entry["request"]["json"]["model"] == "gemini-3-flash-preview"
     assert entry["response"]["usage"]["total_tokens"] == 1100
     assert entry["cost"]["estimated_rub"] == 0.08
+
+
+def test_gemini_31_flash_lite_paid_pricing_includes_thinking_tokens() -> None:
+    cost = estimate_cost(
+        provider="google_ai_studio",
+        model="gemini-3.1-flash-lite",
+        usage=LLMUsageStats(
+            prompt_tokens=1_000_000,
+            completion_tokens=500_000,
+            total_tokens=2_000_000,
+        ),
+        usd_to_rub=100,
+    )
+
+    assert cost.billable_input_tokens == 1_000_000
+    assert cost.billable_output_tokens == 1_000_000
+    assert cost.estimated_usd == 1.75
+    assert cost.estimated_rub == 175
+
+
+def test_sensitive_unbounded_debug_logs_are_disabled_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_DEBUG_LOOKUP_LOGS", raising=False)
+    monkeypatch.delenv("ASSISTANT_DEBUG_LLM_PAYLOADS", raising=False)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.assistant_debug_lookup_logs is False
+    assert settings.assistant_debug_llm_payloads is False
+
+
+def test_order_prompt_uses_actual_ready_for_confirmation_tool_status() -> None:
+    assert "если функция вернула ready_for_confirmation" in SYSTEM_PROMPT
+
+
+def test_order_tool_allows_item_before_quantity_is_known() -> None:
+    order_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "update_order_draft")
+    item_schema = order_tool["function"]["parameters"]["properties"]["items"]["items"]
+
+    assert "quantity" not in item_schema.get("required", [])
+
+
+def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:
+    path = tmp_path / "audit.json"
+    logger = LLMAuditLogger(enabled=True, path=str(path), max_entries=10, usd_to_rub=100)
+
+    logger.write(
+        {
+            "request": {
+                "json": {
+                    "contact": {"name": "Ирина", "phone": "+7 900 111-22-33", "email": "irina@example.ru"},
+                    "payment": {"company_name": "ООО Мебель", "inn": "1234567890", "kpp": "123456789"},
+                    "message": "Позвоните +7 900 111-22-33, счёт на irina@example.ru, ИНН 1234567890",
+                }
+            }
+        }
+    )
+
+    content = path.read_text(encoding="utf-8")
+    assert "+7 900 111-22-33" not in content
+    assert "irina@example.ru" not in content
+    assert "1234567890" not in content
+    assert "ООО Мебель" not in content
+    assert "<redacted-phone>" in content
+    assert "<redacted-email>" in content
+    assert "<redacted-inn>" in content
 
 
 def test_provider_request_throttle_waits_between_google_calls(monkeypatch) -> None:

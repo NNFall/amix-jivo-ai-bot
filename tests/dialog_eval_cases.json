@@ -211,22 +211,22 @@
   {
     "id": "T-020",
     "customer_text": "Хочу заказать 10 штук 14.023пр.",
-    "expected_action": "product_lookup_then_handoff",
-    "expected_meaning": "Оформление заказа через менеджера.",
+    "expected_action": "order_intake",
+    "expected_meaning": "Начат сбор заказа без преждевременной передачи менеджеру.",
     "criteria": [
-      "handoff",
-      "order_request"
+      "order_draft",
+      "no_handoff"
     ]
   },
   {
     "id": "T-021",
     "customer_text": "Нужно 5 штук P-AM02/B-S",
-    "expected_action": "product_lookup_then_handoff",
-    "expected_meaning": "Остаток 1 меньше 5, нужен менеджер.",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Запрошенного количества нет; точный остаток не раскрывается и менеджер не вызывается автоматически.",
     "criteria": [
       "product_lookup",
       "stock_less_than_requested",
-      "handoff"
+      "no_handoff"
     ]
   },
   {
@@ -307,13 +307,11 @@
   {
     "id": "T-029",
     "customer_text": "Хочу заказать 5 штук P-AM02/B-S",
-    "expected_action": "product_lookup_then_handoff",
-    "expected_meaning": "Backend ищет товар, видит что остаток меньше запрошенного количества и передаёт менеджеру для уточнения.",
+    "expected_action": "order_intake",
+    "expected_meaning": "Начат сбор заказа; нехватка количества зафиксирована безопасно, без немедленной передачи.",
     "criteria": [
-      "product_lookup",
-      "exact_found",
-      "stock_less_than_requested",
-      "handoff",
+      "order_draft",
+      "no_handoff",
       "no_fake_price"
     ]
   },

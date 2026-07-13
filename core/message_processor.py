@@ -127,17 +127,17 @@ class MessageProcessor:
                 logger.info("Skipping Jivo send for superseded chat %s", event.chat_id)
                 return
 
-            self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
             if assistant_reply.handoff_reason:
                 try:
                     self.jivo_client.invite_agent(event=event, reason=assistant_reply.handoff_reason)
                 except Exception:
                     logger.exception(
-                        "phase=error_after_send chat_id=%s event_id=%s action=invite_agent",
+                        "phase=invite_agent_failed_before_send chat_id=%s event_id=%s action=invite_agent",
                         event.chat_id,
                         event.id,
                     )
                     raise
+            self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
 
     def _deliver_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
         if should_stop_bot_after_event(event.event):

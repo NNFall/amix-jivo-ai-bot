@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 
 from database.db import session_scope
-from database.models import Chat, Product, ProductImport
+from database.models import Chat, LLMCall, Product, ProductImport
 from products.remote_xml_importer import ProductRemoteXmlImporter
 from products.xml_importer import ProductXmlImporter
 from settings import BASE_DIR, get_settings
@@ -175,11 +175,21 @@ def _load_admin_stats() -> dict[str, str]:
             .order_by(ProductImport.finished_at.desc(), ProductImport.id.desc())
             .limit(1)
         )
+        llm_calls, llm_tokens, llm_cost_rub = session.execute(
+            select(
+                func.count(LLMCall.id),
+                func.coalesce(func.sum(LLMCall.total_tokens), 0),
+                func.coalesce(func.sum(LLMCall.estimated_rub), 0),
+            )
+        ).one()
 
     return {
         "service_status": "Бот работает",
         "product_count": _format_int(product_count),
         "chats_today": _format_int(chats_today),
+        "llm_calls_label": _format_count(llm_calls or 0, "запрос", "запроса", "запросов"),
+        "llm_tokens": _format_int(llm_tokens or 0),
+        "llm_cost_rub": f"{Decimal(llm_cost_rub or 0):.2f} ₽",
         "latest_import": _format_datetime(latest_import.finished_at if latest_import else None),
         "xml_status": "актуальна" if latest_import else "ещё не загружена",
         "remote_url": settings.products_xml_remote_url,
@@ -220,6 +230,17 @@ def _format_decimal(value: Decimal | None, *, places: int) -> str | None:
 
 def _format_int(value: int) -> str:
     return f"{value:,}".replace(",", " ")
+
+
+def _format_count(value: int, one: str, few: str, many: str) -> str:
+    number = int(value)
+    if number % 10 == 1 and number % 100 != 11:
+        suffix = one
+    elif number % 10 in {2, 3, 4} and number % 100 not in {12, 13, 14}:
+        suffix = few
+    else:
+        suffix = many
+    return f"{_format_int(number)} {suffix}"
 
 
 def _format_datetime(value: datetime | None) -> str:
@@ -505,7 +526,7 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
 
     .stats {{
       display: grid;
-      grid-template-columns: 1.05fr 1fr 0.82fr;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }}
@@ -528,6 +549,12 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       line-height: 1;
       letter-spacing: -0.035em;
       font-weight: 760;
+    }}
+
+    .stat-note {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
     }}
 
     .panel {{
@@ -789,6 +816,15 @@ def _render_admin_page(*, stats: dict[str, str], flash_message: str) -> str:
       <div class="stat">
         <div class="stat-label">Диалогов сегодня</div>
         <div class="stat-value">{escape(stats["chats_today"])}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Токенов LLM</div>
+        <div class="stat-value">{escape(stats["llm_tokens"])}</div>
+        <div class="stat-note">{escape(stats["llm_calls_label"])}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Расход LLM</div>
+        <div class="stat-value">{escape(stats["llm_cost_rub"])}</div>
       </div>
     </section>
 

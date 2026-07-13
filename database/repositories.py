@@ -2,7 +2,18 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete, or_, select
 
-from database.models import Chat, Customer, Handoff, JivoEvent, Message, ProcessingError, Product, ProductImport
+from database.models import (
+    Chat,
+    Customer,
+    Handoff,
+    JivoEvent,
+    LLMCall,
+    Message,
+    OrderDraft,
+    ProcessingError,
+    Product,
+    ProductImport,
+)
 from products.article_utils import build_normalized_article_variants, normalize_article
 
 
@@ -92,10 +103,81 @@ def reset_chat_context(session, external_chat_id: str) -> int:
 
     deleted_messages = session.execute(delete(Message).where(Message.chat_id == chat.id)).rowcount or 0
     session.execute(delete(Handoff).where(Handoff.external_chat_id == external_chat_id))
+    session.execute(delete(OrderDraft).where(OrderDraft.chat_id == chat.id))
     chat.status = "active"
     session.add(chat)
     session.flush()
     return int(deleted_messages)
+
+
+def get_order_draft(session, external_chat_id: str) -> OrderDraft | None:
+    chat = get_chat_by_external_id(session, external_chat_id)
+    if chat is None:
+        return None
+    return session.scalar(select(OrderDraft).where(OrderDraft.chat_id == chat.id))
+
+
+def upsert_order_draft(
+    session,
+    *,
+    external_chat_id: str,
+    status: str,
+    data: dict,
+    summary: str | None,
+) -> OrderDraft:
+    chat = get_chat_by_external_id(session, external_chat_id)
+    if chat is None:
+        raise ValueError(f"Chat {external_chat_id} is not registered")
+
+    draft = session.scalar(select(OrderDraft).where(OrderDraft.chat_id == chat.id))
+    if draft is None:
+        draft = OrderDraft(chat_id=chat.id)
+    draft.status = status
+    draft.data = data
+    draft.summary = summary
+    session.add(draft)
+    session.flush()
+    return draft
+
+
+def create_llm_call(
+    session,
+    *,
+    external_chat_id: str | None,
+    request_id: str,
+    provider: str,
+    model: str | None,
+    purpose: str,
+    status: str,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    thinking_tokens: int | None,
+    total_tokens: int | None,
+    latency_ms: int | None,
+    estimated_usd,
+    estimated_rub,
+    outbound_event_id: str | None,
+) -> LLMCall:
+    chat = get_chat_by_external_id(session, external_chat_id) if external_chat_id else None
+    entity = LLMCall(
+        chat_id=chat.id if chat else None,
+        request_id=request_id,
+        provider=provider,
+        model=model,
+        purpose=purpose,
+        status=status,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        thinking_tokens=thinking_tokens,
+        total_tokens=total_tokens,
+        latency_ms=latency_ms,
+        estimated_usd=estimated_usd,
+        estimated_rub=estimated_rub,
+        outbound_event_id=outbound_event_id,
+    )
+    session.add(entity)
+    session.flush()
+    return entity
 
 
 def append_message(

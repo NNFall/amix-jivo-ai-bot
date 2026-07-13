@@ -11,14 +11,6 @@ MANAGER_KEYWORDS = (
     "перезвон",
 )
 
-ORDER_HANDOFF_KEYWORDS = (
-    "оформить заказ",
-    "оформлю заказ",
-    "сделать заказ",
-    "хочу заказать",
-    "заказать товар",
-)
-
 COMPLEX_KEYWORDS = (
     "аналог",
     "совместим",
@@ -57,9 +49,6 @@ class HandoffService:
 
         if any(keyword in text for keyword in MANAGER_KEYWORDS):
             return HandoffDecision(True, "client_requested_manager")
-
-        if any(keyword in text for keyword in ORDER_HANDOFF_KEYWORDS):
-            return HandoffDecision(True, "order_request")
 
         if any(keyword in text for keyword in COMPLEX_KEYWORDS):
             return HandoffDecision(True, "complex_technical_question")
