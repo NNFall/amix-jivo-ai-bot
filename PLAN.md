@@ -36,7 +36,7 @@
   - rotating provider audit masks contact and invoice identifiers.
 - Baseline check before changes: `python -m pytest -q` -> `133 passed`.
 - Current risk: exact invoice fields were not supplied by AMIX, so the MVP uses a conservative minimum and keeps KPP optional.
-- Verification: `python -m pytest -q` -> `161 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+- Verification: `python -m pytest -q` -> `162 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
 - Next: commit/push and VPS deployment.
 
 ## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)

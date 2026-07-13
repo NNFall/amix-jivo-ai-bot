@@ -23,6 +23,11 @@
 - Fixed conditional order-turn transactions, dissatisfaction handoff, Jivo invite/send ordering, exact-stock context/output guards, optional initial quantity, unknown-stock semantics and audit redaction/file permissions.
 - Focused second-review regressions -> `8 passed`.
 - Final local verification after all review fixes: `python -m pytest -q` -> `161 passed`; `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Initial VPS deployment of `0d73c03`: server `pytest` -> `161 passed`; tables `order_drafts` and `llm_calls` created; both services restarted active; external health -> `200`.
+- First isolated live Gemini smoke was invalid because the SSH test text was corrupted by terminal encoding and was discarded with its temporary database.
+- Unicode-safe live Gemini smoke exposed a real gap: the model correctly asked for order items but returned plain text without calling `update_order_draft`, so no draft was created.
+- Added a failing regression and an order-tool retry: for an explicit order, a plain-text first response is discarded and Gemini is called again with `update_order_draft` selected as the required function.
+- Verification after the live-smoke fix: focused tests -> `2 passed`; full `python -m pytest -q` -> `162 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
 - Earlier structural checks: `python -m compileall api core database jivo llm products scripts -q` -> passed; `git diff --check` -> passed (line-ending warnings only).
 - `ruff` was not available in the environment (`No module named ruff`).
 - Pending: commit/push and VPS deployment.

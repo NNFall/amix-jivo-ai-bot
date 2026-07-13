@@ -106,7 +106,7 @@ class OpenAIService:
         *,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: str = "auto",
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> LLMTurnResult:
         if not self.enabled:
             return LLMTurnResult(text=None, tool_calls=[])
@@ -129,7 +129,7 @@ class OpenAIService:
         *,
         messages: list[dict],
         tools: list[dict] | None,
-        tool_choice: str,
+        tool_choice: str | dict[str, Any],
     ) -> LLMTurnResult:
         if self.client is None:
             return LLMTurnResult(text=None, tool_calls=[])
@@ -168,7 +168,7 @@ class OpenAIService:
         *,
         messages: list[dict],
         tools: list[dict] | None,
-        tool_choice: str,
+        tool_choice: str | dict[str, Any],
     ) -> LLMTurnResult:
         if not self.kie_api_key:
             return LLMTurnResult(text=None, tool_calls=[])
@@ -201,7 +201,7 @@ class OpenAIService:
         *,
         messages: list[dict],
         tools: list[dict] | None,
-        tool_choice: str,
+        tool_choice: str | dict[str, Any],
     ) -> LLMTurnResult:
         if not self.google_ai_api_key:
             return LLMTurnResult(text=None, tool_calls=[])
@@ -278,7 +278,7 @@ class OpenAIService:
         api_key: str,
         messages: list[dict],
         tools: list[dict] | None,
-        tool_choice: str,
+        tool_choice: str | dict[str, Any],
         model: str | None,
         reasoning_effort: str,
         temperature: float,

@@ -450,6 +450,26 @@ class AssistantService:
         if self._turn_is_stale(is_turn_current):
             return self._superseded_reply()
 
+        if order_dialog_active and not first_turn.tool_calls:
+            forced_request_id = self._new_llm_request_id(external_chat_id, "order_tool_retry")
+            forced_turn = self._run_llm_messages(
+                session,
+                external_chat_id=external_chat_id,
+                outbound_event_id=outbound_event_id,
+                request_id=forced_request_id,
+                purpose="order_tool_retry",
+                messages=messages,
+                tools=OPENAI_TOOLS,
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "update_order_draft"},
+                },
+            )
+            if self._turn_is_stale(is_turn_current):
+                return self._superseded_reply()
+            if forced_turn.tool_calls:
+                first_turn = forced_turn
+
         tool_reply = self._handle_tool_calls(
             session,
             external_chat_id=external_chat_id,
@@ -2889,7 +2909,7 @@ class AssistantService:
         purpose: str,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: str = "auto",
+        tool_choice: str | dict[str, Any] = "auto",
         commit: bool = True,
     ):
         turn = self.openai_service.run_messages(

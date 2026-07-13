@@ -2515,6 +2515,57 @@ def test_order_request_starts_intake_without_immediate_handoff(isolated_app_env)
     assert messages[1].payload["tool_calls"][0]["function"]["name"] == "update_order_draft"
 
 
+def test_explicit_order_retries_with_required_order_tool_when_model_returns_only_text(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    requests: list[dict] = []
+    turns = iter(
+        [
+            LLMTurnResult(text="Какие товары вам нужны?", tool_calls=[]),
+            LLMTurnResult(
+                text=None,
+                tool_calls=[ToolCall(name="update_order_draft", arguments={}, call_id="forced-order-update")],
+            ),
+            LLMTurnResult(
+                text="Какие товары вы хотите заказать и в каком количестве?",
+                tool_calls=[],
+            ),
+        ]
+    )
+
+    def run_messages(**kwargs):
+        requests.append(kwargs)
+        return next(turns)
+
+    service.openai_service.run_messages = run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:forced-order-tool",
+            external_client_id="telegram-user:forced-order-tool",
+            customer_name="Demo User",
+            customer_text="Мне нужно оформить заказ",
+            inbound_event_id="forced-order-tool-in",
+            outbound_event_id="forced-order-tool-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Какие товары вы хотите заказать и в каком количестве?"
+    assert requests[1]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "update_order_draft"},
+    }
+    with session_scope() as session:
+        assert session.query(OrderDraft).one().status == "collecting"
+        assert [call.purpose for call in session.query(LLMCall).order_by(LLMCall.id.asc())] == [
+            "direct",
+            "order_tool_retry",
+            "order_intake",
+        ]
+
+
 def test_complete_order_is_handed_off_only_after_explicit_confirmation(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

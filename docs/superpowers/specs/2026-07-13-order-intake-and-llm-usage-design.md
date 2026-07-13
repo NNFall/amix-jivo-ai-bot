@@ -17,6 +17,8 @@ This implementation is based on the following requests from the AMIX discussion:
 
 An order request starts an intake flow instead of an immediate manager handoff. Gemini extracts the customer's meaning and updates a structured order draft through a dedicated tool. The backend does not try to understand arbitrary product descriptions with keyword rules.
 
+If Gemini recognizes an explicit order request but answers with plain text instead of calling the tool, the service retries the model once with `update_order_draft` selected as the required function. This keeps order interpretation in the model while guaranteeing that the multi-turn draft is actually created.
+
 The draft can contain products either as codes/articles or as free-form descriptions. For every item the bot asks for a quantity. It also collects the customer's desired timing without promising a delivery date, delivery or pickup details, payment method and a contact.
 
 For payment by bank transfer, the minimum required details are:
