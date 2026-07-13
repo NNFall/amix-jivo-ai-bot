@@ -28,6 +28,11 @@
 - Unicode-safe live Gemini smoke exposed a real gap: the model correctly asked for order items but returned plain text without calling `update_order_draft`, so no draft was created.
 - Added a failing regression and an order-tool retry: for an explicit order, a plain-text first response is discarded and Gemini is called again with `update_order_draft` selected as the required function.
 - Verification after the live-smoke fix: focused tests -> `2 passed`; full `python -m pytest -q` -> `162 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
+- Deployed corrective commit `e96b7ef`; server `python -m pytest -q` -> `162 passed`; both `amix-api.service` and `amix-telegram-demo.service` -> `active`.
+- Isolated live Gemini smoke for the initial order request passed on a temporary SQLite database: roles `client, assistant_tool_call, tool, bot`; draft `collecting`; two LLM calls; zero handoffs.
+- Isolated live Gemini confirmation smoke passed with synthetic product/contact data: complete order -> canonical summary and `awaiting_confirmation`; explicit confirmation -> `handed_off`; exactly one `order_creation` handoff; three LLM calls.
+- Temporary smoke databases were removed. Production dialog data and cumulative project statistics were not polluted by the smoke tests.
+- External `https://amix.cifresh.ru/health` -> `200 {"status":"ok"}`; no warning-level service journal entries after restart.
 - Earlier structural checks: `python -m compileall api core database jivo llm products scripts -q` -> passed; `git diff --check` -> passed (line-ending warnings only).
 - `ruff` was not available in the environment (`No module named ruff`).
 - Pending: commit/push and VPS deployment.

@@ -2,7 +2,7 @@
 
 ## Update 2026-07-13 (Order Intake + Persistent LLM Usage)
 
-- Status: implementation, independent review and local verification complete; VPS deployment pending.
+- Status: completed, reviewed, verified and deployed to VPS.
 - Source requirements fixed in `docs/superpowers/specs/2026-07-13-order-intake-and-llm-usage-design.md`.
 - Implementation plan: `docs/superpowers/plans/2026-07-13-order-intake-and-llm-usage.md`.
 - Scope:
@@ -37,7 +37,8 @@
 - Baseline check before changes: `python -m pytest -q` -> `133 passed`.
 - Current risk: exact invoice fields were not supplied by AMIX, so the MVP uses a conservative minimum and keeps KPP optional.
 - Verification: `python -m pytest -q` -> `162 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
-- Next: commit/push and VPS deployment.
+- Deployment: server commit `e96b7ef`; `162 passed`; both services active; external health `200`; isolated live Gemini order collection and confirmed-handoff smokes passed.
+- Next: observe real Jivo order dialogs and adjust the list of collected invoice fields only if AMIX managers request it.
 
 ## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)
 

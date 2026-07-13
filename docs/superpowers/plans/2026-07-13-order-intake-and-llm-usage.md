@@ -73,5 +73,5 @@
 - [x] Run dialog regression evaluation.
 - [x] Run an independent agent review against the quoted requirements.
 - [x] Fix all critical or important review findings and rerun verification.
-- [ ] Commit and push the feature branch.
-- [ ] Deploy to VPS, create the new tables on startup, restart services and verify health.
+- [x] Commit and push the feature branch.
+- [x] Deploy to VPS, create the new tables on startup, restart services and verify health.
