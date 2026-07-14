@@ -1,3 +1,14 @@
+# Iteration 63 - confirmed AMIX order contact fields (2026-07-14)
+
+- Received AMIX's final clarification through Artem: collect name, phone and INN.
+- Narrowed the design so every order requires name and phone; bank transfer additionally requires only INN.
+- Kept customer type, company/IP name, KPP and email backward-compatible and optional when volunteered by the customer.
+- Added failing tests first. The old implementation failed both expected cases: it required extra bank-transfer fields and accepted email instead of phone for other orders.
+- Updated order validation, Gemini prompt, tool-field descriptions and fallback questions.
+- Focused red run: `2 failed`; focused green run: `4 passed`; order/assistant regression: `87 passed`.
+- Independent review found no defects and identified one test-coverage risk: voluntary invoice fields were not explicitly verified. Added service and tool-schema coverage for preserving those fields.
+- Final local verification after review: focused optional-field checks -> `2 passed`; full `python -m pytest -q` -> `166 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`; compile and diff checks passed.
+
 # Iteration 62 - order intake and cumulative LLM usage (2026-07-13)
 
 - Fixed source requirements in `docs/superpowers/specs/2026-07-13-order-intake-and-llm-usage-design.md` before implementation.

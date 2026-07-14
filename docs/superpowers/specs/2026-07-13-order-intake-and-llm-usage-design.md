@@ -21,15 +21,7 @@ If Gemini recognizes an explicit order request but answers with plain text inste
 
 The draft can contain products either as codes/articles or as free-form descriptions. For every item the bot asks for a quantity. It also collects the customer's desired timing without promising a delivery date, delivery or pickup details, payment method and a contact.
 
-For payment by bank transfer, the minimum required details are:
-
-- customer type: legal entity or individual entrepreneur;
-- company or individual entrepreneur name;
-- INN;
-- email for the invoice;
-- contact name and phone.
-
-KPP is stored when provided but is not required because individual entrepreneurs do not have it.
+AMIX confirmed the final minimum on 2026-07-14. Every order requires the customer's name and phone. Payment by bank transfer additionally requires INN. The bot must not require customer type, company/IP name, KPP or invoice email, but it may preserve these fields when the customer provides them voluntarily.
 
 ### Confirmation and handoff
 
@@ -84,7 +76,7 @@ The pricing table for Gemini 3.1 Flash-Lite is updated to the current standard p
 2. A customer can provide items without codes; their description is retained.
 3. A coded item is checked without exposing exact stock.
 4. Delivery, payment and contact details accumulate across messages.
-5. Bank transfer asks for company/IP details and INN; KPP is optional.
+5. Every order asks for name and phone; bank transfer additionally asks only for INN.
 6. A complete draft is summarized and waits for explicit confirmation.
 7. "Да" after the summary triggers one real handoff with the order summary.
 8. A premature order handoff tool call is blocked.

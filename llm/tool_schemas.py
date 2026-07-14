@@ -51,18 +51,31 @@ OPENAI_TOOLS = [
                             "customer_type": {
                                 "type": "string",
                                 "enum": ["individual", "legal_entity", "individual_entrepreneur"],
+                                "description": "Необязательное поле: передавай только если клиент сам назвал тип плательщика.",
                             },
-                            "company_name": {"type": "string"},
-                            "inn": {"type": "string"},
-                            "kpp": {"type": "string"},
+                            "company_name": {
+                                "type": "string",
+                                "description": "Необязательное название компании или ИП, если клиент сообщил его сам.",
+                            },
+                            "inn": {
+                                "type": "string",
+                                "description": "ИНН клиента; обязателен для оплаты по счёту.",
+                            },
+                            "kpp": {
+                                "type": "string",
+                                "description": "Необязательный КПП, только если клиент сообщил его сам.",
+                            },
                         },
                     },
                     "contact": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string"},
-                            "phone": {"type": "string"},
-                            "email": {"type": "string"},
+                            "name": {"type": "string", "description": "Имя клиента; обязательно для заказа."},
+                            "phone": {"type": "string", "description": "Телефон клиента; обязателен для заказа."},
+                            "email": {
+                                "type": "string",
+                                "description": "Необязательный email, только если клиент сообщил его сам.",
+                            },
                         },
                     },
                     "notes": {"type": "string"},

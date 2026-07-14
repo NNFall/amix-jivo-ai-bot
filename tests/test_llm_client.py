@@ -326,11 +326,25 @@ def test_order_prompt_uses_actual_ready_for_confirmation_tool_status() -> None:
     assert "если функция вернула ready_for_confirmation" in SYSTEM_PROMPT
 
 
+def test_order_prompt_uses_confirmed_contact_and_invoice_fields() -> None:
+    assert "для любого заказа собери имя и телефон" in SYSTEM_PROMPT
+    assert "для оплаты по счёту дополнительно собери только ИНН" in SYSTEM_PROMPT
+    assert "тип плательщика, название организации или ИП и email для счёта не требуй" in SYSTEM_PROMPT
+
+
 def test_order_tool_allows_item_before_quantity_is_known() -> None:
     order_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "update_order_draft")
     item_schema = order_tool["function"]["parameters"]["properties"]["items"]["items"]
 
     assert "quantity" not in item_schema.get("required", [])
+
+
+def test_order_tool_keeps_optional_invoice_fields_available() -> None:
+    order_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "update_order_draft")
+    properties = order_tool["function"]["parameters"]["properties"]
+
+    assert {"customer_type", "company_name", "inn", "kpp"} <= set(properties["payment"]["properties"])
+    assert {"name", "phone", "email"} <= set(properties["contact"]["properties"])
 
 
 def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:

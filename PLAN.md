@@ -1,5 +1,16 @@
 # PLAN
 
+## Update 2026-07-14 (Confirmed Order Contact Fields)
+
+- Status: implemented, independently reviewed and verified locally; deployment in progress.
+- AMIX confirmed that the bot must collect the customer's name and phone, plus INN for payment by bank transfer.
+- Customer type, company/IP name, KPP and invoice email are no longer required; values supplied voluntarily remain supported.
+- Final summary, explicit customer confirmation and manager handoff behavior remain unchanged.
+- Implementation plan: `docs/superpowers/plans/2026-07-14-order-contact-fields.md`.
+- Verification target: focused red/green tests, full pytest suite, dialog regression, secret scan and deployment smoke.
+- Local verification: `python -m pytest -q` -> `166 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`; compile and diff checks passed.
+- Independent review: no findings; the suggested optional-field coverage was added before the final test run.
+
 ## Update 2026-07-13 (Order Intake + Persistent LLM Usage)
 
 - Status: completed, reviewed, verified and deployed to VPS.
@@ -25,7 +36,7 @@
   - all model handoff reasons are blocked while an order draft is incomplete or unconfirmed;
   - an order confirmation is valid only immediately after the canonical summary was persisted in chat history;
   - LLM usage is committed before a later outbound Jivo operation can roll it back;
-  - bank-transfer intake requires a phone and includes payer type in the summary;
+  - bank-transfer intake requires a phone and safely includes any payer details the customer volunteered;
   - order-intake not-found replies use the same guarded wording as normal product search;
   - raw conversation debug logs are disabled by default.
   - stale order turns discard hidden draft/tool/reply state while retaining usage statistics;
@@ -35,10 +46,10 @@
   - items can be stored before quantity is known;
   - rotating provider audit masks contact and invoice identifiers.
 - Baseline check before changes: `python -m pytest -q` -> `133 passed`.
-- Current risk: exact invoice fields were not supplied by AMIX, so the MVP uses a conservative minimum and keeps KPP optional.
+- Superseded on 2026-07-14: AMIX confirmed the exact minimum as name, phone and INN for bank transfer.
 - Verification: `python -m pytest -q` -> `162 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`.
 - Deployment: server commit `e96b7ef`; `162 passed`; both services active; external health `200`; isolated live Gemini order collection and confirmed-handoff smokes passed.
-- Next: observe real Jivo order dialogs and adjust the list of collected invoice fields only if AMIX managers request it.
+- Next: observe real Jivo order dialogs and adjust the confirmed minimum only if AMIX managers request it.
 
 ## Update 2026-07-02 (Prevent Premature Handoff On Ambiguous Product)
 

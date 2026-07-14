@@ -42,44 +42,62 @@ def test_order_draft_accepts_free_form_item_and_waits_for_confirmation(isolated_
     assert draft.status == "ready_for_confirmation"
 
 
-def test_bank_transfer_draft_requires_invoice_details_but_not_kpp_for_ip(isolated_app_env) -> None:
+def test_bank_transfer_requires_only_name_phone_and_inn(isolated_app_env) -> None:
     service = OrderIntakeService()
 
     with session_scope() as session:
         _create_chat(session, "jivo:order-bank")
-        incomplete = service.update_draft(
+        result = service.update_draft(
             session,
             external_chat_id="jivo:order-bank",
             patch={
                 "items": [{"identifier": "770", "quantity": 2}],
                 "needed_by": "до 20 июля",
                 "fulfillment": {"method": "pickup"},
-                "payment": {"method": "bank_transfer"},
+                "payment": {"method": "bank_transfer", "inn": "1234567890"},
                 "contact": {"name": "Иван", "phone": "+7 900 111-22-33"},
             },
         )
 
-        complete = service.update_draft(
+    assert result["status"] == "ready_for_confirmation"
+    assert result["missing_fields"] == []
+    assert "ИНН 1234567890" in result["summary"]
+
+
+def test_bank_transfer_preserves_voluntary_invoice_details(isolated_app_env) -> None:
+    service = OrderIntakeService()
+
+    with session_scope() as session:
+        _create_chat(session, "jivo:order-bank-optional")
+        result = service.update_draft(
             session,
-            external_chat_id="jivo:order-bank",
+            external_chat_id="jivo:order-bank-optional",
             patch={
+                "items": [{"identifier": "770", "quantity": 2}],
+                "needed_by": "до 20 июля",
+                "fulfillment": {"method": "pickup"},
                 "payment": {
-                    "customer_type": "individual_entrepreneur",
-                    "company_name": "ИП Иванов",
-                    "inn": "123456789012",
+                    "method": "bank_transfer",
+                    "customer_type": "legal_entity",
+                    "company_name": "ООО Мебель",
+                    "inn": "1234567890",
+                    "kpp": "123456789",
                 },
-                "contact": {"email": "ivanov@example.ru"},
+                "contact": {
+                    "name": "Ирина",
+                    "phone": "+7 900 111-22-33",
+                    "email": "info@example.ru",
+                },
             },
         )
 
-    assert "тип плательщика" in incomplete["missing_fields"]
-    assert "название организации или ИП" in incomplete["missing_fields"]
-    assert "ИНН" in incomplete["missing_fields"]
-    assert "email для счёта" in incomplete["missing_fields"]
-    assert complete["status"] == "ready_for_confirmation"
-    assert complete["missing_fields"] == []
-    assert "КПП" not in complete["summary"]
-    assert "ИП" in complete["summary"]
+    assert result["status"] == "ready_for_confirmation"
+    assert result["data"]["payment"]["company_name"] == "ООО Мебель"
+    assert result["data"]["payment"]["kpp"] == "123456789"
+    assert result["data"]["contact"]["email"] == "info@example.ru"
+    assert "ООО Мебель" in result["summary"]
+    assert "КПП 123456789" in result["summary"]
+    assert "info@example.ru" in result["summary"]
 
 
 def test_bank_transfer_requires_phone_even_when_invoice_email_is_present(isolated_app_env) -> None:
@@ -100,6 +118,27 @@ def test_bank_transfer_requires_phone_even_when_invoice_email_is_present(isolate
                     "company_name": "ООО Мебель",
                     "inn": "1234567890",
                 },
+                "contact": {"name": "Ирина", "email": "info@example.ru"},
+            },
+        )
+
+    assert result["status"] == "collecting"
+    assert "телефон" in result["missing_fields"]
+
+
+def test_non_bank_transfer_requires_phone_even_when_email_is_present(isolated_app_env) -> None:
+    service = OrderIntakeService()
+
+    with session_scope() as session:
+        _create_chat(session, "jivo:order-card-phone")
+        result = service.update_draft(
+            session,
+            external_chat_id="jivo:order-card-phone",
+            patch={
+                "items": [{"description": "ручки", "quantity": 5}],
+                "needed_by": "до конца месяца",
+                "fulfillment": {"method": "pickup"},
+                "payment": {"method": "card"},
                 "contact": {"name": "Ирина", "email": "info@example.ru"},
             },
         )

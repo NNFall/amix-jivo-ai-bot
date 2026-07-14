@@ -140,20 +140,12 @@ class OrderIntakeService:
         contact = data.get("contact") or {}
         if not contact.get("name"):
             missing.append("имя контактного лица")
+        if not contact.get("phone"):
+            missing.append("телефон")
 
         if payment_method == "bank_transfer":
-            if not contact.get("phone"):
-                missing.append("телефон")
-            if payment.get("customer_type") not in {"legal_entity", "individual_entrepreneur"}:
-                missing.append("тип плательщика")
-            if not payment.get("company_name"):
-                missing.append("название организации или ИП")
             if not payment.get("inn"):
                 missing.append("ИНН")
-            if not contact.get("email"):
-                missing.append("email для счёта")
-        elif not (contact.get("phone") or contact.get("email")):
-            missing.append("телефон или email")
         return missing
 
     def _check_products(self, session, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -216,8 +208,9 @@ class OrderIntakeService:
             payer = [
                 customer_types.get(payment.get("customer_type")),
                 payment.get("company_name"),
-                f"ИНН {payment.get('inn')}",
             ]
+            if payment.get("inn"):
+                payer.append(f"ИНН {payment.get('inn')}")
             if payment.get("kpp"):
                 payer.append(f"КПП {payment.get('kpp')}")
             lines.append("Плательщик: " + ", ".join(str(value) for value in payer if value))
