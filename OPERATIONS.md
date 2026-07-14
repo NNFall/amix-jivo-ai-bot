@@ -8,6 +8,10 @@
 - Focused red run: `2 failed`; focused green run: `4 passed`; order/assistant regression: `87 passed`.
 - Independent review found no defects and identified one test-coverage risk: voluntary invoice fields were not explicitly verified. Added service and tool-schema coverage for preserving those fields.
 - Final local verification after review: focused optional-field checks -> `2 passed`; full `python -m pytest -q` -> `166 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`; compile and diff checks passed.
+- Committed as `8c5d963`, pushed the feature branch, fast-forwarded `master` and pushed `master`.
+- VPS `/root/amix` updated from `5f85a04` to `8c5d963`; server `python -m pytest -q` -> `166 passed`; both services -> `active`; local and public healthchecks -> `200`; no warning-level journal entries after restart.
+- The first isolated live Gemini smoke supplied every field in one long message. Gemini retained the order, timing, name, phone and INN but asked one follow-up for fulfillment/payment, so the draft correctly remained `collecting` rather than fabricating values.
+- A two-turn isolated live Gemini smoke passed: draft `awaiting_confirmation`; no missing fields; contact keys `name,phone`; payment keys `inn,method`; zero handoffs; chronological roles included both tool calls and tool results. The temporary database was removed and production statistics were not changed.
 
 # Iteration 62 - order intake and cumulative LLM usage (2026-07-13)
 

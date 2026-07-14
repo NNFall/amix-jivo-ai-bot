@@ -46,4 +46,4 @@
 - [x] Run `python -m pytest -q` and the dialog regression suite.
 - [x] Run compile, diff and secret checks.
 - [x] Request an independent review and fix validated findings.
-- [ ] Commit, push, deploy to VPS and verify services plus public health endpoint.
+- [x] Commit, push, deploy to VPS and verify services plus public health endpoint.

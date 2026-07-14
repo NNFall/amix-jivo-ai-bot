@@ -2,7 +2,7 @@
 
 ## Update 2026-07-14 (Confirmed Order Contact Fields)
 
-- Status: implemented, independently reviewed and verified locally; deployment in progress.
+- Status: completed, independently reviewed, verified and deployed to VPS.
 - AMIX confirmed that the bot must collect the customer's name and phone, plus INN for payment by bank transfer.
 - Customer type, company/IP name, KPP and invoice email are no longer required; values supplied voluntarily remain supported.
 - Final summary, explicit customer confirmation and manager handoff behavior remain unchanged.
@@ -10,6 +10,8 @@
 - Verification target: focused red/green tests, full pytest suite, dialog regression, secret scan and deployment smoke.
 - Local verification: `python -m pytest -q` -> `166 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`; compile and diff checks passed.
 - Independent review: no findings; the suggested optional-field coverage was added before the final test run.
+- Deployment: server revision `8c5d963`; `166 passed`; both services active; local and public healthchecks passed.
+- Isolated live Gemini smoke: two customer turns produced `awaiting_confirmation`, no missing fields, only name/phone plus INN for the invoice flow, and zero handoffs.
 
 ## Update 2026-07-13 (Order Intake + Persistent LLM Usage)
 
