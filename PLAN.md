@@ -1,5 +1,24 @@
 # PLAN
 
+## Update 2026-07-15 (Live Multi-Turn Dialog Evaluation)
+
+- Status: completed; live behavior reviewed and scored, no production behavior changed.
+- Goal: run several long, isolated customer dialogs through the production-configured Gemini provider and real product tools on the VPS.
+- Scenarios: coded order, free-form order, protected stock checks, duplicate article refinement, missing-code recovery and technical handoff.
+- Isolation: use a temporary SQLite database populated from the current AMIX XML; use demo handoff mode; do not send messages to real Jivo chats or alter production statistics.
+- Evidence: save complete chronological dialogs, tool calls, draft/handoff states, latency and token/cost usage to local JSON and Markdown reports.
+- Result: 6 scenarios, 37 customer turns, 45 real Gemini calls, 268,972 total tokens, estimated cost RUB 8.03; average response 1.54 s, P95 3.09 s.
+- Score: 6.7/10 after independent review. Both order-intake scenarios passed; stock attempt limiting, large duplicate-article refinement and missing-code recovery failed.
+- Confirmed defects:
+  - quantity-attempt counting is bypassed when later checks are answered from `active_product` without a new `search_products` call;
+  - a sentence-ending dot can become part of a numeric product code before the literal code lookup;
+  - price refinement cannot select a product omitted from the first 20 matches of a very large duplicate-article result;
+  - a quantity reply in a product-check conversation can start order intake before the customer asks to place an order;
+  - an immediate handoff after a customer disputes a not-found result prevents a later corrected code from being checked.
+- Independent review: totals, costs, latency, transcripts, order states and handoff behavior matched the raw JSON; the reviewer identified the premature missing-code handoff and required the score reduction above.
+- Local artifacts: `data/logs/live_multiturn_dialogs_2026-07-15.json` and `data/logs/live_multiturn_dialogs_2026-07-15.md` (ignored by Git because they contain full synthetic transcripts).
+- Completion criteria met: all scenarios executed and manually reviewed, artifacts saved locally, invalid encoding run excluded, temporary VPS database and result file removed.
+
 ## Update 2026-07-14 (Confirmed Order Contact Fields)
 
 - Status: completed, independently reviewed, verified and deployed to VPS.

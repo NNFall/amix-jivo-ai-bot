@@ -98,6 +98,46 @@
 
 # OPERATIONS
 
+## Iteration 64 - isolated live multi-turn dialog evaluation (2026-07-15)
+
+- Created branch `codex/live-multiturn-eval-20260715` from the current clean project revision.
+- Built six realistic multi-turn scenarios covering:
+  - an order by two product codes with delivery and bank-transfer payment;
+  - an order described without codes or articles;
+  - protected quantity checks and repeated stock probing;
+  - refinement of the duplicate article `МП/ОЗ` by price and code;
+  - safe not-found handling and a later correction;
+  - technical comparison, manager handoff and post-handoff bot silence.
+- Ran the scenarios on the VPS through the production-configured Google AI Studio provider and `gemini-3.1-flash-lite`.
+- Used the real `AssistantService` and real local tools `search_products`, `update_order_draft` and `handoff_to_manager` against a temporary SQLite database containing a copy of the current 6,923-product catalog.
+- Kept handoff in `demo` mode and disabled outbound Jivo effects. No production chats, product rows, LLM totals or customer data were modified.
+- The first run was invalid because PowerShell-to-SSH piping replaced Cyrillic with question marks. It was preserved as `data/logs/live_multiturn_dialogs_2026-07-15-invalid-encoding.json`, excluded from all scoring and repeated with explicit UTF-8 console/output encoding.
+- Valid run totals:
+  - 6 scenarios and 37 customer turns;
+  - 45 real Gemini calls;
+  - 258,493 prompt, 2,748 completion and 7,731 thinking tokens; 268,972 total;
+  - estimated cost USD 0.080342 / RUB 8.0342;
+  - average response 1.54 s, median 1.38 s, P95 3.09 s, maximum 4.31 s.
+- Initial manual score: 7.2/10; reduced to 6.7/10 after independent review found that MT-05 did not achieve missing-code recovery.
+- Passed behavior:
+  - both order flows collected the required data, showed a canonical summary and handed off only after explicit confirmation;
+  - INN was requested only for bank-transfer payment;
+  - free-form products were retained without inventing a technical selection;
+  - exact stock was not exposed;
+  - every handoff promise had a real handoff event;
+  - normal consultation stopped after handoff;
+  - the agreed safe not-found wording was used.
+- Confirmed defects:
+  - repeated quantity checks answered from `active_product` do not enter the stock-guard counter, so the three-attempt handoff did not fire;
+  - `Код товара 27818.` was searched as literal code `27818.`, so the existing product was missed;
+  - the initial `МП/ОЗ` result was limited to 20 of 962 matching products, preventing price refinement to code `27818`;
+  - `по 5 штук каждого` during a product check started order intake even though the customer had not asked to order;
+  - `На сайте вроде был такой товар` caused immediate handoff, so a later corrected code and follow-up questions were not processed.
+- Independent review recalculated all totals and confirmed the transcripts, costs, latency, order states and handoff events. It also noted that the saved JSON independently proves a 20-item `МП/ОЗ` slice, while the exact catalog count of 962 came from the direct temporary-database measurement made before cleanup.
+- Saved the complete machine log to `data/logs/live_multiturn_dialogs_2026-07-15.json` and the full reviewed transcript/report to `data/logs/live_multiturn_dialogs_2026-07-15.md`.
+- Removed the temporary VPS SQLite database and remote result file after downloading the evidence.
+- This iteration is evaluation-only. The five confirmed defects remain for a separate TDD fix iteration.
+
 ## 2026-06-16 - Live Jivo dialog log audit and SQLite lock hardening
 
 - Checked live Jivo webhook logs on VPS after provider connection.
