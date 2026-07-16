@@ -369,6 +369,13 @@ def test_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -
     assert "сохрани описание" in prompt
 
 
+def test_prompt_rechecks_current_facts_after_customer_resolves_ambiguity() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+    assert "уточнил конкретную позицию" in prompt
+    assert "актуальные товарные факты" in prompt
+    assert "вызови search_products" in prompt
+
+
 def test_handoff_tool_does_not_treat_order_delivery_as_separate_handoff_reason() -> None:
     handoff_tool = next(
         tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "handoff_to_manager"

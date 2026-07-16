@@ -1505,6 +1505,64 @@ def test_order_creation_handoff_is_blocked_until_summary_confirmation(isolated_a
         assert session.query(Handoff).count() == 0
 
 
+def test_complete_order_handoff_with_wrong_reason_is_still_blocked_until_confirmation(
+    isolated_app_env,
+) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="handoff_to_manager",
+                arguments={
+                    "reason": "product_selection",
+                    "summary": (
+                        "Заказ: 6 черных петель, доставка в Псков, оплата наличными, "
+                        "Мария, +7 921 555-66-77."
+                    ),
+                },
+                call_id="premature-order-wrong-reason",
+            )
+        ],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:premature-order-wrong-reason",
+            external_client_id="telegram-user:premature-order-wrong-reason",
+            customer_name="Мария",
+            customer_text="Мария, +7 921 555-66-77.",
+            inbound_event_id="premature-order-wrong-reason-in",
+            outbound_event_id="premature-order-wrong-reason-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert "итог заказа" in reply.text.lower()
+    assert "всё верно" in reply.text.lower()
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+
+
+def test_conditional_future_handoff_phrase_does_not_trigger_handoff_guard() -> None:
+    assert AssistantService._reply_claims_handoff(  # noqa: SLF001
+        "Если всё верно, я передам заказ менеджеру, и он подключится к диалогу."
+    ) is False
+    assert AssistantService._reply_claims_handoff(  # noqa: SLF001
+        "Передаю вопрос менеджеру. Он подключится к диалогу."
+    ) is True
+
+
+def test_order_confirmation_request_accepts_conjugated_confirmation_question() -> None:
+    assert AssistantService._bot_message_requests_order_confirmation(  # noqa: SLF001
+        "Итог заказа: 4 штуки, доставка, оплата наличными. Подтверждаете заказ?"
+    ) is True
+
+
 def test_order_summary_must_have_required_facts_before_handoff() -> None:
     assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
         "Одна P-AM02/B-S, остальные данные заказа ещё не собраны."

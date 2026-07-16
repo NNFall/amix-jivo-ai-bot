@@ -593,13 +593,17 @@ class AssistantService:
         if first_recognized.name == "handoff_to_manager":
             reason = str(first_recognized.arguments.get("reason") or "llm_requested_manager")
             summary = str(first_recognized.arguments.get("summary") or "").strip()
-            if reason == "order_creation" and (
-                not self._order_handoff_follows_confirmed_summary(
-                    session,
-                    external_chat_id=external_chat_id,
-                    customer_text=customer_text,
-                )
-                or not self._order_summary_is_confirmable(summary)
+            summary_is_confirmable = self._order_summary_is_confirmable(summary)
+            follows_confirmed_summary = self._order_handoff_follows_confirmed_summary(
+                session,
+                external_chat_id=external_chat_id,
+                customer_text=customer_text,
+            )
+            handoff_contains_order = reason == "order_creation" or summary_is_confirmable
+            if (
+                reason != "client_requested_manager"
+                and handoff_contains_order
+                and (not follows_confirmed_summary or not summary_is_confirmable)
             ):
                 return self._order_handoff_confirmation_guard_reply(
                     session,
@@ -607,6 +611,8 @@ class AssistantService:
                     call=first_recognized,
                     outbound_event_id=outbound_event_id,
                 )
+            if reason != "client_requested_manager" and summary_is_confirmable:
+                reason = "order_creation"
             return self._handoff_reply(
                 session,
                 external_chat_id=external_chat_id,
@@ -1524,9 +1530,21 @@ class AssistantService:
     @staticmethod
     def _reply_claims_handoff(reply_text: str) -> bool:
         text = reply_text.lower()
-        return (
-            ("передаю" in text and ("менеджер" in text or "специалист" in text))
-            or ("подключится к диалогу" in text and ("менеджер" in text or "специалист" in text))
+        if "менеджер" not in text and "специалист" not in text:
+            return False
+
+        claim_indexes = [
+            index
+            for marker in ("передаю", "подключится к диалогу")
+            if (index := text.find(marker)) >= 0
+        ]
+        if not claim_indexes:
+            return False
+
+        claim_index = min(claim_indexes)
+        prefix = text[max(0, claim_index - 160) : claim_index]
+        return not any(
+            marker in prefix for marker in ("если", "после подтвержд", "когда подтверд")
         )
 
     @staticmethod
@@ -2560,7 +2578,9 @@ class AssistantService:
     @staticmethod
     def _bot_message_requests_order_confirmation(bot_text: str) -> bool:
         text = bot_text.lower().replace("ё", "е")
-        has_confirmation_request = "подтверд" in text or any(
+        has_confirmation_request = any(
+            marker in text for marker in ("подтверд", "подтвержд")
+        ) or any(
             marker in text
             for marker in ("все верно", "все правильно", "данные верны", "итог верен")
         )

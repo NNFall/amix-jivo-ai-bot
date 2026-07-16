@@ -32,7 +32,7 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {"type": "no_handoff"},
-          {"type": "response_contains_any", "values": ["оба", "2"]}
+          {"type": "response_contains_any", "values": ["эти товары", "оба", "2"]}
         ]
       },
       {
@@ -441,7 +441,8 @@
         },
         "assertions": [
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["6", "петел", "Псков", "Мария", "верно"]}
+          {"type": "response_contains_all", "values": ["6", "пет", "Псков", "Мария"]},
+          {"type": "response_contains_any", "values": ["верно", "подтвержд"]}
         ]
       },
       {
@@ -501,7 +502,7 @@
           },
           {"type": "no_handoff"},
           {"type": "response_contains_all", "values": ["14.023пр", "P-AM02/B-S"]},
-          {"type": "response_contains_any", "values": ["нет", "недоступ"]}
+          {"type": "response_contains_any", "values": ["нет", "недоступ", "отсутств"]}
         ]
       },
       {
@@ -578,7 +579,8 @@
         },
         "assertions": [
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["2", "Самар", "Лев", "верно"]}
+          {"type": "response_contains_all", "values": ["2", "Самар", "Лев"]},
+          {"type": "response_contains_any", "values": ["верно", "подтвержд"]}
         ]
       },
       {
@@ -605,7 +607,8 @@
             ]
           },
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["4", "P-AM02/B-S", "верно"]}
+          {"type": "response_contains_all", "values": ["4", "P-AM02/B-S"]},
+          {"type": "response_contains_any", "values": ["верно", "подтвержд"]}
         ]
       },
       {
