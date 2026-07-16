@@ -1,157 +1,155 @@
-# History-Driven Order Flow Design
+# Заказ по полной истории диалога
 
-## Goal
+## Цель
 
-Simplify AMIX order intake so Gemini conducts the conversation from the complete chronological chat history instead of maintaining a second structured order memory in the backend.
+Упростить сбор заказа AMIX: Gemini ведёт разговор по полной хронологической истории, а backend не создаёт вторую память заказа.
 
-The runtime exposes exactly two functions to the model:
+Модели доступны ровно две функции:
 
-- `search_products` for product facts;
-- `handoff_to_manager` for a real operator transfer.
+- `search_products` — поиск товарных фактов;
+- `handoff_to_manager` — реальная передача оператору.
 
-There is no order-draft function, summary function, hidden order aggregate or backend order state machine.
+Отдельной функции черновика, функции итогового резюме, скрытого объекта заказа и backend-автомата этапов заказа нет.
 
-## Approved Behavior
+## Поведение
 
-Gemini uses the entire persisted conversation as its working memory. The history contains every client message, bot message, assistant function call and function result in chronological order from the beginning of the chat.
+Gemini использует всю сохранённую историю как рабочую память. В запрос модели передаются по порядку все сообщения клиента, ответы бота, вызовы функций и результаты функций от начала чата.
 
-The backend does not truncate a normal chat to a fixed number of database rows. If a conversation ever exceeds the provider context window, the service must fail safely instead of silently removing early order details.
+Backend не обрезает обычный диалог фиксированным количеством строк. Если когда-нибудь чат превысит контекстное окно модели, сервис должен безопасно сообщить об ошибке или передать вопрос человеку, а не молча удалить начало заказа.
 
-When the client explicitly wants to place an order, Gemini:
+После явного намерения клиента оформить заказ Gemini:
 
-1. Understands what has already been agreed from the conversation.
-2. Collects the products and quantity for each product.
-3. Collects the desired timing without promising supply dates.
-4. Collects pickup or delivery and the destination city when delivery is requested.
-5. Collects the payment method.
-6. Collects the client's name and phone number.
-7. Collects INN only when payment by invoice is requested.
-8. Does not ask again for information already present in the history.
-9. Treats later corrections as replacing the corresponding earlier information.
-10. Asks one natural next question instead of sending the client a full questionnaire.
-11. Produces a concise final summary of the current agreement and asks the client to confirm it.
-12. If the client corrects the summary, continues the conversation and presents an updated summary.
-13. Calls `handoff_to_manager` with `reason=order_creation` only after an explicit confirmation of the latest summary.
+1. Учитывает всё, о чём стороны уже договорились.
+2. Собирает товары и количество по каждой позиции.
+3. Уточняет желаемый срок, не обещая дату поставки.
+4. Уточняет самовывоз или доставку, а для доставки — город.
+5. Уточняет способ оплаты.
+6. Собирает имя и телефон.
+7. Запрашивает ИНН только при оплате по счёту.
+8. Не спрашивает повторно данные, уже присутствующие в истории.
+9. Считает более позднее исправление актуальнее прежних данных.
+10. Задаёт один естественный следующий вопрос, а не присылает анкету целиком.
+11. Когда данных достаточно, кратко подводит полный итог и просит подтвердить его.
+12. После исправления показывает новый актуальный итог и снова ждёт подтверждения.
+13. Вызывает `handoff_to_manager` с причиной `order_creation` только после явного подтверждения последнего итога.
 
-The bot does not claim that the order is already created. It says that the collected request is being transferred to a manager for continued processing.
+Бот не говорит, что заказ уже оформлен. Он сообщает, что собранная заявка передаётся менеджеру для продолжения работы.
 
-An explicit request for a person remains an immediate handoff and does not require order confirmation.
+Явная просьба клиента позвать человека остаётся немедленной передачей и не требует подтверждения заказа.
 
-## Prompt Design
+## Промпт
 
-The order policy is one compact, generalized section in the system prompt. It describes goals, required information, conversational sequencing, corrections, final confirmation and handoff conditions.
+В системном промпте остаётся один компактный и обобщённый раздел про заказ. Он описывает цель, необходимые сведения, порядок уточнений, исправления, итог, подтверждение и передачу.
 
-The prompt must not contain rules tied to isolated article formats, spelling mistakes, individual test products or one-off customer phrases. It must not turn the conversation into a fixed script.
+Промпт не должен содержать правила под отдельные артикулы, опечатки, тестовые товары или единичные формулировки клиента. Диалог не должен превращаться в жёсткий скрипт.
 
-Examples are not used as the primary control mechanism. Prompt changes are made only for repeated behavioral categories found across several dialogues, and the resulting rule must remain applicable to unseen conversations.
+Промпт меняется только по повторяющимся типам ошибок в нескольких диалогах. Новая инструкция должна работать и на неизвестных заранее формулировках.
 
-The existing non-sales style remains:
+Сохраняется общий стиль консультанта:
 
-- consult rather than pressure the customer;
-- do not offer order creation unless the customer expresses that intent;
-- keep replies short and natural;
-- do not invent product facts or technical advice;
-- use a manager for product selection, compatibility and unsupported technical questions.
+- не дожимать клиента до покупки;
+- не предлагать заказ без намерения клиента;
+- отвечать коротко и естественно;
+- не выдумывать товарные и технические факты;
+- передавать человеку подбор, совместимость и технические вопросы, на которые нет данных.
 
-## Product Search Contract
+## Поиск товаров
 
-`search_products` remains one function, but its request must represent every product independently. Each requested item contains:
+`search_products` остаётся одной функцией, но каждый товар в запросе описывается отдельно. Для каждой позиции передаются:
 
-- the client's product query;
-- the requested quantity when the client supplied it.
+- поисковое значение клиента;
+- требуемое количество, если клиент его назвал.
 
-This replaces one scalar quantity shared by all queries. It prevents a request for different quantities of several products from being checked against the wrong value.
+Одно общее количество для нескольких запросов удаляется. Так запрос разных количеств нескольких товаров не будет проверяться по одному случайному числу.
 
-The tool result preserves the mapping between the client's query, product code and article. Customer replies must retain that identity instead of silently replacing codes with article names.
+Результат функции сохраняет связь между исходным запросом клиента, кодом и артикулом. Ответ клиенту не должен молча заменять введённый код названием другого вида.
 
-For protected stock questions, the model receives only the information needed to answer whether the requested quantity is available. It must not reveal the exact free stock.
+При защищённой проверке наличия модель получает только информацию, достаточную для ответа «да» или «нет» по требуемому количеству. Точный свободный остаток не раскрывается.
 
-## History And Persistence
+## История и хранение
 
-SQLite remains the durable source of conversation history. The provider payload is built from all persisted messages for the current chat, ordered chronologically:
+SQLite остаётся постоянным источником истории. В запрос модели попадают все сообщения текущего чата по хронологии:
 
-- `client` becomes `user`;
-- `bot` becomes `assistant`;
-- `assistant_tool_call` remains an assistant function call;
-- `tool` remains its matching function result.
+- `client` преобразуется в `user`;
+- `bot` преобразуется в `assistant`;
+- `assistant_tool_call` остаётся вызовом функции ассистентом;
+- `tool` остаётся соответствующим результатом функции.
 
-The old `OrderDraft` runtime path is removed completely. Existing rows in the deployed `order_drafts` table must not activate order behavior or enter runtime context. The physical table may remain for one deployment as rollback data, then be removed in a later migration after the new flow is accepted.
+Старый runtime-путь `OrderDraft` удаляется полностью. Существующие строки таблицы `order_drafts` не влияют на маршрутизацию и не попадают в скрытый контекст. Физическая таблица остаётся на один релиз для отката, затем удаляется отдельной миграцией после принятия нового поведения.
 
-Historical `update_order_draft` messages already stored in old chats remain part of their real chronology, but the function is no longer declared or callable in new model requests.
+Исторические вызовы `update_order_draft` в старых чатах остаются частью реальной истории, но эта функция больше не объявляется и не может вызываться в новых запросах.
 
-## Backend Responsibilities That Remain
+## Что остаётся обязанностью backend
 
-Removing the order draft does not remove transport and safety responsibilities:
+- сохранять входящие и исходящие сообщения;
+- идемпотентно обрабатывать повторные события Jivo;
+- объединять быстрые последовательные сообщения и подавлять устаревшие ответы модели;
+- не отвечать после подключения оператора или закрытия чата;
+- успешно выполнить `INVITE_AGENT` до сообщения клиенту о вызове менеджера;
+- при ошибке `INVITE_AGENT` не отправлять ложное обещание передачи;
+- брать товарные факты только из локальной базы;
+- защищать точный остаток;
+- сохранять токены, время и стоимость обращений к модели.
 
-- persist all inbound and outbound messages;
-- process duplicate Jivo events idempotently;
-- combine rapid consecutive client messages and suppress stale model responses;
-- never answer after an operator has joined or the chat is closed;
-- execute a real `INVITE_AGENT` before telling the client that a manager was called;
-- if `INVITE_AGENT` fails, do not send a false handoff promise;
-- keep product facts database-backed;
-- keep exact-stock protection;
-- retain LLM usage and cost accounting.
+Backend не разбирает разговор во второй объект заказа и самостоятельно не определяет, какие поля заказа ещё не заполнены.
 
-The backend does not parse the conversation into a second order representation and does not independently decide which order fields are missing.
+## Что удаляется из runtime
 
-## Removed Runtime Components
+- объявление и выполнение `update_order_draft`;
+- принудительный повторный вызов модели с этой функцией;
+- использование `OrderIntakeService`;
+- включение режима заказа по наличию строки черновика;
+- `order_draft` в `INTERNAL_CONTEXT_JSON`;
+- backend-генерация итогового резюме;
+- блокировка handoff по состояниям черновика;
+- классификация тестов по существованию черновика.
 
-- `update_order_draft` tool declaration and execution;
-- forced retry requiring the order-draft tool;
-- `OrderIntakeService` runtime use;
-- draft lookup as an order-mode switch;
-- draft data in `INTERNAL_CONTEXT_JSON`;
-- draft-based canonical summary generation;
-- draft-based order handoff blocking;
-- draft-specific regression classifications.
+Обычная история handoff, сообщения, поиск, учёт LLM и события Jivo сохраняются.
 
-Generic handoff audit records, message history, product lookup, LLM accounting and Jivo lifecycle handling remain.
+## Проверка
 
-## Verification Strategy
+Реализация выполняется через TDD. Старые тесты черновика заменяются тестами реального поведения.
 
-Implementation follows TDD. Existing tests are first replaced with behavior-level tests that fail without the new design.
+Детерминированные тесты проверяют:
 
-Deterministic coverage includes:
+- модели доступны ровно две функции;
+- в модель передаётся вся хронология без лимита в 20 строк;
+- каждому товару соответствует собственное требуемое количество;
+- старые строки черновиков не влияют на ответы;
+- явное подтверждение может привести к передаче заказа;
+- исправление вместо подтверждения не вызывает передачу;
+- неуспешный вызов Jivo не сопровождается обещанием менеджера;
+- быстрые сообщения дают один актуальный ответ без устаревших действий;
+- подключение оператора и закрытие чата останавливают бота.
 
-- exactly two model tools are exposed;
-- all chronological messages are sent without the old 20-row truncation;
-- multi-product searches preserve a separate requested quantity for every item;
-- legacy draft rows do not affect routing;
-- explicit customer confirmation can lead to an order handoff;
-- a correction instead of confirmation does not hand off;
-- a failed Jivo invite cannot produce a success promise;
-- stale and rapid-message turns produce one current response and no stale side effects;
-- operator join and closed-chat events stop bot replies.
+Реальные прогоны Gemini выполняются на сервере с изолированной базой и текущим каталогом. Набор содержит разные многоходовые диалоги:
 
-Real Gemini evaluation runs on the server against an isolated database and current product catalog. It contains diverse multi-turn conversations covering:
+- несколько кодов с разными количествами;
+- товары без кодов;
+- исправления товаров, количества, доставки, оплаты и контактов;
+- оплату по счёту и другие способы;
+- неоднозначные и ненайденные товары;
+- отмену заказа и смену темы;
+- быстрые сообщения подряд;
+- итоговое подтверждение и передачу менеджеру;
+- retry модели и ошибку Jivo.
 
-- several coded products with different quantities;
-- products described without codes;
-- corrections to products, quantities, delivery, payment and contacts;
-- bank-transfer and non-bank-transfer orders;
-- ambiguous and missing products;
-- cancellation and later topic changes;
-- rapid consecutive user messages;
-- final confirmation and manager handoff;
-- provider retry and Jivo handoff failure.
+Каждый сценарий запускается несколько раз. Полная хронология, вызовы функций, ответы, скорость, токены и автоматические проверки сохраняются в JSON и локальном читаемом отчёте.
 
-Each scenario is run multiple times. Full chronological payloads, function calls, replies, latency, tokens and pass/fail assertions are saved to JSON, with a readable local report generated from that evidence.
+Промпт улучшается итерационно:
 
-Prompt refinement is iterative:
+1. Запускается неизменяемый набор сценариев.
+2. Ошибки группируются по общему поведению, а не по буквальной фразе теста.
+3. Вносится минимальное обобщённое изменение промпта.
+4. Повторно запускается весь набор, включая неизменённые и провокационные сценарии.
+5. Изменение отклоняется, если один диалог улучшился ценой более шаблонных или менее точных остальных ответов.
 
-1. Run the frozen scenario set.
-2. Group failures by general behavior, not by literal test phrase.
-3. Make the smallest generalized prompt change.
-4. Re-run the full set, including unchanged and adversarial scenarios.
-5. Reject a prompt change if it fixes one dialogue by making other conversations more scripted or less accurate.
+Независимые агенты отдельно проверяют код, промпт и обезличенные диалоги. Деплой разрешается только после прохождения детерминированных тестов и отсутствия критических ошибок в повторных живых прогонах.
 
-Independent reviewers receive separate scopes for code correctness, prompt quality and blinded transcript evaluation. Production deployment is allowed only after deterministic tests pass and the repeated live-dialog report has no safety-critical failures.
+## Вне задачи
 
-## Out Of Scope
-
-- automatic order creation in an external accounting or CRM system;
-- PDF, Excel or image specification recognition;
-- product recommendation based on unsupported catalog knowledge;
-- a replacement hidden order state under another name;
-- a separate final-summary function.
+- автоматическое создание заказа в 1С или CRM;
+- распознавание PDF, Excel и изображений;
+- рекомендации по товарам без достаточных данных;
+- скрытое состояние заказа под другим названием;
+- отдельная функция итогового резюме.

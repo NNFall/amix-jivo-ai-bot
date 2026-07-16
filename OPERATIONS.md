@@ -8,6 +8,8 @@
 - Rejected proposals to retain `update_order_draft` or replace it with a new final-summary function because they conflict with the approved two-tool architecture.
 - Baseline before implementation: `python -m pytest -q` -> `166 passed`.
 - Wrote `docs/superpowers/specs/2026-07-16-history-driven-order-flow-design.md` with the approved runtime boundary, prompt principles, history rules and verification strategy.
+- Translated the specification into Russian after the user clarified that project-facing design documents must be directly readable without English.
+- Created the implementation plan `docs/superpowers/plans/2026-07-16-history-driven-order-flow.md` with RED/GREEN steps, exact file scopes, live-evaluation evidence and independent review gates.
 - No production code or VPS service was changed in this design iteration.
 
 # Iteration 64 - independent audit of live multi-turn evaluation (2026-07-16)

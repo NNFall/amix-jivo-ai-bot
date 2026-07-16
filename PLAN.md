@@ -12,6 +12,7 @@
 - Legacy data: stop all runtime reads/writes of `OrderDraft`; leave the physical table for one rollback window, then remove it separately.
 - Verification: TDD, full deterministic suite, repeated real Gemini multi-turn evaluation on the server, saved JSON/Markdown evidence and independent code/prompt/transcript reviews.
 - Specification: `docs/superpowers/specs/2026-07-16-history-driven-order-flow-design.md`.
+- Implementation plan: `docs/superpowers/plans/2026-07-16-history-driven-order-flow.md`; execution started through TDD and subagent review checkpoints.
 
 ## Update 2026-07-16 (Independent Audit Of Live Dialog Evaluation)
 
