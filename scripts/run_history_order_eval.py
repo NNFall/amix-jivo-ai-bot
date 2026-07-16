@@ -533,21 +533,25 @@ def _search_query_quantities(function_calls: list[dict[str, Any]]) -> list[dict[
 def _normalized_query_quantities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
-            "query": str(item.get("query") or "").strip().casefold().replace("ё", "е"),
+            "query": _normalize_query_key(item.get("query")),
             "requested_quantity": item.get("requested_quantity"),
         }
         for item in items
     ]
 
 
+def _normalize_query_key(value: Any) -> str:
+    return str(value or "").strip().rstrip(".,;:!?").casefold().replace("ё", "е")
+
+
 def _query_quantity_item_matches(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
     aliases = expected.get("query_any") or [expected.get("query")]
     normalized_aliases = {
-        str(value or "").strip().casefold().replace("ё", "е")
+        _normalize_query_key(value)
         for value in aliases
         if str(value or "").strip()
     }
-    normalized_actual = str(actual.get("query") or "").strip().casefold().replace("ё", "е")
+    normalized_actual = _normalize_query_key(actual.get("query"))
     return (
         normalized_actual in normalized_aliases
         and actual.get("requested_quantity") == expected.get("requested_quantity")
@@ -571,8 +575,8 @@ def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason
         passed = not calls
         detail = f"called={names}"
     elif assertion_type == "no_handoff":
-        passed = not handoff_reason
-        detail = f"handoff_reason={handoff_reason!r}"
+        passed = not handoff_reason and "handoff_to_manager" not in names
+        detail = f"handoff_reason={handoff_reason!r}, called={names}"
     elif assertion_type == "handoff_reason":
         expected = str(spec.get("value") or "")
         passed = handoff_reason == expected and "handoff_to_manager" in names
@@ -661,6 +665,7 @@ def _privacy_assertion(
             rf"(?<!\d){re.escape(stock)}(?:[.,]0+)?\s*(?:шт|штук|единиц)",
             rf"(?:остат(?:ок|ка)|на складе)\D{{0,16}}{re.escape(stock)}(?:[.,]0+)?(?!\d)",
             rf"(?:доступно|есть в наличии)\D{{0,16}}{re.escape(stock)}(?:[.,]0+)?(?!\d)",
+            rf'"(?:stock|остаток|свободный_остаток)"\s*:\s*"?{re.escape(stock)}(?:[.,]0+)?"?',
         )
         if any(re.search(pattern, normalized) for pattern in patterns):
             leaks.append(f"exact_stock:{stock}")

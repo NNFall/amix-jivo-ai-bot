@@ -1,10 +1,22 @@
 from decimal import Decimal
 
 from core.assistant_service import AssistantService
+from core.handoff_service import HandoffService
 from database.db import session_scope
 from database.models import Handoff, Product
 from database.repositories import search_products_structured
 from llm.openai_client import LLMTurnResult
+
+
+def test_order_item_replacement_is_not_forced_into_technical_handoff() -> None:
+    service = HandoffService()
+    decisions = [
+        service.evaluate("Нет, замените вторую позицию в заказе"),
+        service.evaluate("Нужно заменить вторую позицию в заказе"),
+    ]
+
+    assert all(decision.should_handoff is False for decision in decisions)
+    assert all(decision.reason is None for decision in decisions)
 
 
 def seed_eval_products() -> None:

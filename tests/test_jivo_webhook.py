@@ -167,3 +167,29 @@ def test_jivo_webhook_agent_joined_marks_chat_as_terminal(isolated_app_env) -> N
 
     assert chat.status == "agent_joined"
     assert messages == []
+
+
+def test_non_client_event_does_not_reactivate_chat_after_agent_joined(isolated_app_env) -> None:
+    agent_joined = {
+        "id": "event-agent-terminal",
+        "event": "AGENT_JOINED",
+        "chat_id": "chat-agent-terminal",
+        "client_id": "client-agent-terminal",
+        "sender": {"id": "agent-1", "name": "Operator"},
+    }
+    bot_message = {
+        "id": "event-after-agent-terminal",
+        "event": "BOT_MESSAGE",
+        "chat_id": "chat-agent-terminal",
+        "client_id": "client-agent-terminal",
+        "message": {"type": "TEXT", "text": "Служебное событие"},
+    }
+
+    with build_client() as client:
+        assert client.post("/webhooks/jivo/test-token", json=agent_joined).status_code == 200
+        assert client.post("/webhooks/jivo/test-token", json=bot_message).status_code == 200
+
+    with session_scope() as session:
+        chat = session.query(Chat).filter(Chat.external_chat_id == "chat-agent-terminal").one()
+
+    assert chat.status == "agent_joined"

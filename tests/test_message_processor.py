@@ -3,7 +3,7 @@ import pytest
 from core.assistant_service import AssistantReply
 from core.message_processor import MessageProcessor
 from database.db import session_scope
-from database.repositories import get_or_create_chat, get_or_create_customer
+from database.repositories import get_or_create_chat, get_or_create_customer, mark_chat_status
 from jivo.schemas import JivoIncomingEvent
 
 
@@ -16,6 +16,14 @@ class _CurrentHandle:
 class _Assistant:
     @staticmethod
     def handle_pending_client_messages(*args, **kwargs) -> AssistantReply:
+        return AssistantReply(text="Передаю вопрос менеджеру.", handoff_reason="client_requested_manager")
+
+
+class _OperatorJoinedAssistant:
+    @staticmethod
+    def handle_pending_client_messages(session, *, external_chat_id: str, **kwargs) -> AssistantReply:
+        mark_chat_status(session, external_chat_id, "agent_joined")
+        session.flush()
         return AssistantReply(text="Передаю вопрос менеджеру.", handoff_reason="client_requested_manager")
 
 
@@ -87,3 +95,14 @@ def test_rejected_manager_invite_does_not_send_false_handoff_promise(isolated_ap
         )
 
     assert calls == ["invite"]
+
+
+def test_operator_joined_while_model_was_running_prevents_invite_and_send(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = _processor(calls)
+    processor.assistant_service = _OperatorJoinedAssistant()
+
+    processor._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
+
+    assert calls == []

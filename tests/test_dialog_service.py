@@ -188,3 +188,17 @@ def test_dialog_service_redacts_exact_stock_from_legacy_bot_reply(isolated_app_e
     serialized = json.dumps(messages, ensure_ascii=False)
     assert "220" not in serialized
     assert "точный остаток скрыт" in serialized.lower()
+
+
+def test_dialog_service_redacts_legacy_stock_without_unit(isolated_app_env) -> None:
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:legacy-bare-stock")
+        get_or_create_chat(session, "chat:legacy-bare-stock", customer.id)
+        append_message(session, "chat:legacy-bare-stock", "client", "Какой остаток?")
+        append_message(session, "chat:legacy-bare-stock", "bot", "Остаток: 220.")
+
+        messages = DialogService().get_llm_messages(session, "chat:legacy-bare-stock")
+
+    serialized = json.dumps(messages, ensure_ascii=False)
+    assert "220" not in serialized
+    assert "точный остаток скрыт" in serialized.lower()

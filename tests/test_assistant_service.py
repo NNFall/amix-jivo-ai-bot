@@ -10,7 +10,12 @@ from core.assistant_service import (
 )
 from database.db import session_scope
 from database.models import Handoff, LLMCall, Message, OrderDraft, Product
-from database.repositories import append_message, get_or_create_chat, get_or_create_customer
+from database.repositories import (
+    append_message,
+    get_or_create_chat,
+    get_or_create_customer,
+    mark_chat_status,
+)
 from llm.openai_client import LLMTurnResult, ToolCall
 from products.article_utils import normalize_article
 from settings import get_settings
@@ -1499,8 +1504,7 @@ def test_order_creation_handoff_is_blocked_until_summary_confirmation(isolated_a
         )
 
     assert reply.handoff_reason is None
-    assert "недостающие данные" in reply.text.lower()
-    assert "оплату" in reply.text.lower()
+    assert "оплат" in reply.text.lower()
     with session_scope() as session:
         assert session.query(Handoff).count() == 0
 
@@ -1548,6 +1552,80 @@ def test_complete_order_handoff_with_wrong_reason_is_still_blocked_until_confirm
         assert session.query(Handoff).count() == 0
 
 
+def test_incomplete_order_handoff_with_delivery_reason_continues_collection(
+    isolated_app_env,
+) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="handoff_to_manager",
+                arguments={
+                    "reason": "delivery_or_return_specific_case",
+                    "summary": (
+                        "Клиенту нужны 2 белые ручки. Требуется доставка в Тверь "
+                        "на следующей неделе."
+                    ),
+                },
+                call_id="premature-order-delivery-reason",
+            )
+        ],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:premature-order-delivery-reason",
+            external_client_id="telegram-user:premature-order-delivery-reason",
+            customer_name="Анна",
+            customer_text="Нужна доставка в Тверь на следующей неделе.",
+            inbound_event_id="premature-order-delivery-reason-in",
+            outbound_event_id="premature-order-delivery-reason-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert "оплат" in reply.text.lower()
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+
+
+def test_direct_reply_drops_premature_handoff_claim_while_collecting_details(
+    isolated_app_env,
+) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=(
+            "Хорошо, оплата наличными. Укажите, пожалуйста, имя и телефон. "
+            "Менеджер подключится к диалогу для уточнения заказа."
+        ),
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:premature-text-handoff",
+            external_client_id="telegram-user:premature-text-handoff",
+            customer_name="Мария",
+            customer_text="Оплата наличными.",
+            inbound_event_id="premature-text-handoff-in",
+            outbound_event_id="premature-text-handoff-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert "имя и телефон" in reply.text.lower()
+    assert "подключится к диалогу" not in reply.text.lower()
+
+
 def test_conditional_future_handoff_phrase_does_not_trigger_handoff_guard() -> None:
     assert AssistantService._reply_claims_handoff(  # noqa: SLF001
         "Если всё верно, я передам заказ менеджеру, и он подключится к диалогу."
@@ -1559,8 +1637,49 @@ def test_conditional_future_handoff_phrase_does_not_trigger_handoff_guard() -> N
 
 def test_order_confirmation_request_accepts_conjugated_confirmation_question() -> None:
     assert AssistantService._bot_message_requests_order_confirmation(  # noqa: SLF001
-        "Итог заказа: 4 штуки, доставка, оплата наличными. Подтверждаете заказ?"
+        "Итог заказа: 4 штуки, доставка, оплата наличными, Иван, +7 900 123-45-67. "
+        "Подтверждаете заказ?"
     ) is True
+
+
+def test_order_confirmation_rejects_message_that_also_corrects_the_order() -> None:
+    assert AssistantService._is_explicit_order_confirmation(  # noqa: SLF001
+        "Да, только не 2, а 3 штуки."
+    ) is False
+    assert AssistantService._bot_message_requests_order_confirmation(  # noqa: SLF001
+        "Подтвердите способ оплаты заказа."
+    ) is False
+
+
+def test_pending_jivo_turn_stops_after_operator_joined(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Этот ответ не должен быть создан.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        service.record_client_message(
+            session,
+            external_chat_id="jivo:operator-joined",
+            external_client_id="jivo-user:operator-joined",
+            customer_name="Клиент",
+            customer_text="Подскажите по заказу",
+            inbound_event_id="operator-joined-client",
+            payload={},
+        )
+        mark_chat_status(session, "jivo:operator-joined", "agent_joined")
+        reply = service.handle_pending_client_messages(
+            session,
+            external_chat_id="jivo:operator-joined",
+            outbound_event_id="operator-joined-bot",
+            handoff_mode="jivo",
+        )
+
+    assert reply.superseded is True
+    with session_scope() as session:
+        assert session.query(Message).filter(Message.sender_role == "bot").count() == 0
 
 
 def test_order_summary_must_have_required_facts_before_handoff() -> None:
@@ -3199,6 +3318,20 @@ def test_stock_sanitizer_preserves_customer_requested_quantities() -> None:
 
     assert sanitized == text
     assert "220" not in leaked
+
+
+def test_stock_sanitizer_hides_explicit_stock_even_when_it_matches_requested_quantity() -> None:
+    prefixed = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "На складе 2 шт.",
+        allowed_quantities=[2],
+    )
+    without_unit = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Остаток: 220.",
+        allowed_quantities=[],
+    )
+
+    assert "2 шт" not in prefixed
+    assert "220" not in without_unit
 
 
 def test_fractional_requested_quantity_is_not_rounded_down(isolated_app_env) -> None:

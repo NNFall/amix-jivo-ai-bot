@@ -286,6 +286,32 @@ def test_tool_query_quantities_assertion_checks_each_product_in_order() -> None:
     assert failed["passed"] is False
 
 
+def test_tool_query_quantities_ignore_optional_trailing_article_punctuation() -> None:
+    turn = {
+        "response": "",
+        "function_results": [],
+        "function_calls": [
+            {
+                "name": "search_products",
+                "arguments": {
+                    "queries": [{"query": "14.023пр", "requested_quantity": 2}]
+                },
+            }
+        ],
+    }
+
+    assertion = eval_runner._assertion_result(
+        {
+            "type": "tool_query_quantities",
+            "queries": [{"query": "14.023пр.", "requested_quantity": 2}],
+        },
+        turn,
+        None,
+    )
+
+    assert assertion["passed"] is True
+
+
 def test_tool_query_quantities_contain_accepts_extra_rechecks_and_product_alias() -> None:
     turn = {
         "response": "",
@@ -347,7 +373,7 @@ def test_handoff_summary_assertion_requires_all_latest_order_facts() -> None:
     assert assertion["passed"] is True
 
 
-def test_no_handoff_assertion_accepts_a_rejected_handoff_tool_call() -> None:
+def test_no_handoff_assertion_rejects_even_a_backend_rejected_tool_call() -> None:
     turn = {
         "response": "Проверьте итог.",
         "function_calls": [{"name": "handoff_to_manager", "arguments": {}}],
@@ -358,7 +384,7 @@ def test_no_handoff_assertion_accepts_a_rejected_handoff_tool_call() -> None:
 
     assertion = eval_runner._assertion_result({"type": "no_handoff"}, turn, None)
 
-    assert assertion["passed"] is True
+    assert assertion["passed"] is False
 
 
 def test_stock_privacy_scans_function_arguments_and_every_catalog_stock() -> None:
@@ -389,6 +415,17 @@ def test_stock_privacy_scans_exact_provider_messages() -> None:
                 ]
             }
         ],
+    )
+
+    assert assertion["passed"] is False
+    assert "exact_stock:31" in assertion["detail"]
+
+
+def test_stock_privacy_scans_numeric_stock_json_fields() -> None:
+    assertion = eval_runner._privacy_assertion(
+        "Количество не раскрываю.",
+        [],
+        [{"name": "search_products", "result": {"stock": "31", "unit": "шт"}}],
     )
 
     assert assertion["passed"] is False

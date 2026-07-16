@@ -59,6 +59,11 @@ class ChatTurnCoordinator:
         with self._lock:
             return self._generations.get(chat_id) == generation
 
+    def cancel(self, chat_id: str) -> None:
+        """Invalidate every queued or running turn for a terminal chat."""
+        with self._lock:
+            self._generations[chat_id] = self._generations.get(chat_id, 0) + 1
+
     def _run(
         self,
         handle: TurnHandle,

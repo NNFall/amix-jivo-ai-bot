@@ -79,6 +79,7 @@ class MessageProcessor:
         if should_stop_bot_after_event(event.event):
             terminal_status = get_terminal_chat_status(event.event) or "closed"
             mark_chat_status(session, chat.external_chat_id, terminal_status)
+            GLOBAL_TURN_COORDINATOR.cancel(chat.external_chat_id)
             return
 
         if event.event == JivoEventType.AGENT_UNAVAILABLE:
@@ -91,7 +92,8 @@ class MessageProcessor:
             return
 
         if event.event != JivoEventType.CLIENT_MESSAGE:
-            mark_chat_status(session, chat.external_chat_id, "active")
+            if chat.status not in {"agent_joined", "closed"}:
+                mark_chat_status(session, chat.external_chat_id, "active")
             return
 
         client_text = event.message.text if event.message else ""
@@ -125,6 +127,15 @@ class MessageProcessor:
                 return
             if not handle.is_current():
                 logger.info("Skipping Jivo send for superseded chat %s", event.chat_id)
+                return
+            session.expire_all()
+            chat = get_chat_by_external_id(session, event.chat_id)
+            if chat is not None and chat.status in {"agent_joined", "closed"}:
+                logger.info(
+                    "Skipping Jivo invite/send for chat %s because status is %s",
+                    event.chat_id,
+                    chat.status,
+                )
                 return
 
             if assistant_reply.handoff_reason:

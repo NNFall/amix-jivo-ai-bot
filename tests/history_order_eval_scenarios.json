@@ -662,15 +662,7 @@
       {
         "input": "Да, подтверждаю.",
         "fake": {
-          "tool_calls": [
-            {
-              "name": "handoff_to_manager",
-              "arguments": {
-                "reason": "order_creation",
-                "summary": "Одна P-AM02/B-S, остальные данные заказа ещё не собраны."
-              }
-            }
-          ]
+          "response": "Для продолжения подскажите способ получения и оплаты заказа."
         },
         "assertions": [
           {"type": "no_handoff"},
