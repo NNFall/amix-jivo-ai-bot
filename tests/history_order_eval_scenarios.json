@@ -48,10 +48,24 @@
       {
         "input": "Нет, исправьте: правых нужно 7, и лучше самовывоз.",
         "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "14.023пр.", "requested_quantity": 7}],
+                "intent": "order",
+                "use_dialog_context": true
+              }
+            }
+          ],
           "response": "Исправил: 2 левых, 7 правых, получение самовывозом. Как планируете оплатить?"
         },
         "assertions": [
-          {"type": "no_tool_called"},
+          {"type": "tool_called", "name": "search_products"},
+          {
+            "type": "tool_query_quantities",
+            "queries": [{"query": "14.023пр.", "requested_quantity": 7}]
+          },
           {"type": "response_contains_all", "values": ["7", "самовывоз"]}
         ]
       },
@@ -100,7 +114,11 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "handoff_to_manager"},
-          {"type": "handoff_reason", "value": "order_creation"}
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["2", "14.023л", "7", "14.023пр", "самовывоз", "7812345678", "Иван"]
+          }
         ]
       }
     ]
@@ -178,7 +196,11 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "handoff_to_manager"},
-          {"type": "handoff_reason", "value": "order_creation"}
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["2", "ручк", "Твер", "налич", "Анна", "+7 911"]
+          }
         ]
       }
     ]
@@ -255,7 +277,11 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "handoff_to_manager"},
-          {"type": "handoff_reason", "value": "order_creation"}
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["3", "ABC-100", "10002", "самовывоз", "Сергей"]
+          }
         ]
       }
     ]
@@ -310,16 +336,27 @@
       {
         "input": "Доставка в Казань до конца месяца, оплата по счёту.",
         "fake": {
-          "response": "Записал доставку в Казань до конца месяца и оплату по счёту. Укажите ИНН, имя и телефон."
+          "response": "Записал доставку в Казань до конца месяца и оплату по счёту. Укажите, пожалуйста, ИНН."
         },
         "assertions": [
           {"type": "no_tool_called"},
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["ИНН", "имя", "телефон"]}
+          {"type": "response_contains", "value": "ИНН"}
         ]
       },
       {
-        "input": "ИНН 1650123456, Олег, +7 903 700-80-90.",
+        "input": "ИНН 1650123456.",
+        "fake": {
+          "response": "ИНН записал. Подскажите имя и телефон для связи."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон"]}
+        ]
+      },
+      {
+        "input": "Олег, +7 903 700-80-90.",
         "fake": {
           "response": "Итог: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90. Всё верно?"
         },
@@ -343,7 +380,335 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "handoff_to_manager"},
-          {"type": "handoff_reason", "value": "order_creation"}
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["4", "P-AM02/B-S", "Казан", "1650123456", "Олег"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "missing_description_continues_order",
+    "title": "Свободное описание не найдено, но заказ продолжается",
+    "covers": ["missing_description_continues_order", "free_description_without_code"],
+    "turns": [
+      {
+        "input": "Нужно 6 чёрных петель с доводчиком, кода не знаю.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "чёрные петли с доводчиком", "requested_quantity": 6}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Точного совпадения не нашёл, но описание сохранил в заявке. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {
+            "type": "tool_query_quantities",
+            "queries": [{"query": "чёрные петли с доводчиком", "requested_quantity": 6}]
+          },
+          {"type": "tool_result_status", "value": "не_найдено"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Доставка в Псков через две недели.",
+        "fake": {"response": "Записал доставку в Псков через две недели. Как планируете оплатить?"},
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["Псков", "оплат"]}
+        ]
+      },
+      {
+        "input": "Наличными.",
+        "fake": {"response": "Хорошо. Подскажите имя и телефон для связи."},
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон"]}
+        ]
+      },
+      {
+        "input": "Мария, +7 921 555-66-77.",
+        "fake": {
+          "response": "Итог: 6 чёрных петель с доводчиком, доставка в Псков через две недели, оплата наличными, Мария, +7 921 555-66-77. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["6", "петел", "Псков", "Мария", "верно"]}
+        ]
+      },
+      {
+        "input": "Да, всё верно.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 6 чёрных петель с доводчиком, доставка в Псков через две недели, оплата наличными, Мария, +7 921 555-66-77."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["6", "петел", "Псков", "налич", "Мария"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "mixed_availability",
+    "title": "В заказе один товар доступен, второго количества не хватает",
+    "covers": ["mixed_availability", "multiple_products_different_quantities"],
+    "turns": [
+      {
+        "input": "Закажите 2 штуки 14.023пр. и 50 штук P-AM02/B-S.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [
+                  {"query": "14.023пр.", "requested_quantity": 2},
+                  {"query": "P-AM02/B-S", "requested_quantity": 50}
+                ],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "По 14.023пр. нужное количество есть, а 50 штук P-AM02/B-S сейчас нет. Как поступим со второй позицией?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {
+            "type": "tool_query_quantities",
+            "queries": [
+              {"query": "14.023пр.", "requested_quantity": 2},
+              {"query": "P-AM02/B-S", "requested_quantity": 50}
+            ]
+          },
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["14.023пр", "P-AM02/B-S", "нет"]}
+        ]
+      },
+      {
+        "input": "Вторую позицию уберите, оставьте только 2 штуки 14.023пр.",
+        "fake": {"response": "Оставил только 2 штуки 14.023пр. Как вам удобнее получить заказ?"},
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["2", "14.023пр"]}
+        ]
+      },
+      {
+        "input": "Самовывоз завтра, наличными. Павел, +7 999 111-22-33.",
+        "fake": {
+          "response": "Итог: 2 штуки 14.023пр., самовывоз завтра, оплата наличными, Павел, +7 999 111-22-33. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["2", "14.023пр", "самовывоз", "Павел", "верно"]}
+        ]
+      },
+      {
+        "input": "Всё верно.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 2 штуки 14.023пр., самовывоз завтра, оплата наличными, Павел, +7 999 111-22-33."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["2", "14.023пр", "самовывоз", "налич", "Павел"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "correction_after_summary",
+    "title": "Исправление после показанного итога",
+    "covers": ["correction_after_summary", "correction", "confirmation_and_handoff"],
+    "turns": [
+      {
+        "input": "Нужно заказать 2 штуки P-AM02/B-S.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 2}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Такое количество есть. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Доставка в Самару в понедельник, наличными. Лев, +7 927 100-20-30.",
+        "fake": {
+          "response": "Итог: 2 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["2", "Самар", "Лев", "верно"]}
+        ]
+      },
+      {
+        "input": "Нет, исправьте количество на 4 штуки.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}],
+                "intent": "order",
+                "use_dialog_context": true
+              }
+            }
+          ],
+          "response": "Исправленный итог: 4 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30. Всё верно?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {
+            "type": "tool_query_quantities",
+            "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}]
+          },
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["4", "P-AM02/B-S", "верно"]}
+        ]
+      },
+      {
+        "input": "Теперь всё верно.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил исправленный заказ: 4 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["4", "P-AM02/B-S", "Самар", "налич", "Лев"]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "premature_confirmation",
+    "title": "Преждевременное подтверждение не передаёт заказ",
+    "covers": ["premature_confirmation", "confirmation_and_handoff"],
+    "turns": [
+      {
+        "input": "Хочу заказать одну P-AM02/B-S.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Такое количество есть. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Да, подтверждаю.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Одна P-AM02/B-S, остальные данные заказа ещё не собраны."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "no_handoff"},
+          {"type": "tool_result_status", "value": "rejected"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["одна", "P-AM02/B-S", "не собраны"]
+          },
+          {"type": "response_contains_any", "values": ["недоста", "уточн"]}
+        ]
+      },
+      {
+        "input": "Самовывоз завтра, оплата наличными. Игорь, +7 900 444-55-66.",
+        "fake": {
+          "response": "Итог: одна P-AM02/B-S, самовывоз завтра, оплата наличными, Игорь, +7 900 444-55-66. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["P-AM02/B-S", "самовывоз", "Игорь", "верно"]}
+        ]
+      },
+      {
+        "input": "Да, этот итог верный.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: одна P-AM02/B-S, самовывоз завтра, оплата наличными, Игорь, +7 900 444-55-66."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "handoff_reason", "value": "order_creation"},
+          {
+            "type": "handoff_summary_contains_all",
+            "values": ["одна", "P-AM02/B-S", "самовывоз", "налич", "Игорь"]
+          }
         ]
       }
     ]

@@ -10,7 +10,7 @@ from core.assistant_service import (
 )
 from database.db import session_scope
 from database.models import Handoff, LLMCall, Message, OrderDraft, Product
-from database.repositories import get_or_create_chat, get_or_create_customer
+from database.repositories import append_message, get_or_create_chat, get_or_create_customer
 from llm.openai_client import LLMTurnResult, ToolCall
 from products.article_utils import normalize_article
 from settings import get_settings
@@ -491,7 +491,9 @@ def test_assistant_service_refines_pending_variant_without_stale_history_queries
             handoff_mode="demo",
         )
 
-    assert "237 шт" in reply.text
+    assert "код 26169" in reply.text
+    assert "198 руб" in reply.text
+    assert "237 шт" not in reply.text
     assert "1108035" not in reply.text
 
     with session_scope() as session:
@@ -1376,7 +1378,10 @@ def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_en
                 name="handoff_to_manager",
                 arguments={
                     "reason": "order_creation",
-                    "summary": "Клиент подтвердил заказ: 10 ручек, доставка в Тверь.",
+                    "summary": (
+                        "Клиент подтвердил заказ: 10 ручек, доставка в Тверь, "
+                        "оплата наличными, Иван, +7 900 123-45-67."
+                    ),
                 },
                 call_id="history-order-handoff",
             )
@@ -1384,6 +1389,17 @@ def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_en
     )
 
     with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="telegram-user:history-order")
+        get_or_create_chat(session, "telegram:history-order", customer.id)
+        append_message(
+            session,
+            external_chat_id="telegram:history-order",
+            sender_role="bot",
+            text=(
+                "Итог заказа: 10 ручек, доставка в Тверь, оплата наличными, "
+                "Иван, +7 900 123-45-67. Всё верно? Подтвердите, пожалуйста."
+            ),
+        )
         reply = service.handle_client_message(
             session,
             external_chat_id="telegram:history-order",
@@ -1403,6 +1419,197 @@ def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_en
 
     assert handoff.reason == "order_creation"
     assert "10 ручек" in tool_call.payload["tool_calls"][0]["function"]["arguments"]
+
+
+def test_order_creation_handoff_is_blocked_until_summary_confirmation(isolated_app_env) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="handoff_to_manager",
+                arguments={
+                    "reason": "order_creation",
+                    "summary": "Заказ: две белые ручки, самовывоз, Анна, +7 900 100-20-30.",
+                },
+            )
+        ],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:premature-order-handoff",
+            external_client_id="telegram-user:premature-order-handoff",
+            customer_name="Анна",
+            customer_text="Хочу заказать две белые ручки",
+            inbound_event_id="premature-order-handoff-in",
+            outbound_event_id="premature-order-handoff-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
+    assert "недостающие данные" in reply.text.lower()
+    assert "оплату" in reply.text.lower()
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+
+
+def test_order_summary_must_have_required_facts_before_handoff() -> None:
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Одна P-AM02/B-S, остальные данные заказа ещё не собраны."
+    ) is False
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "2 шт. P-AM02/B-S, самовывоз, наличными, Иван, +7 900 123-45-67."
+    ) is True
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "2 шт. P-AM02/B-S, доставка, оплата по счёту, ИНН не указан, Иван, +7 900 123-45-67."
+    ) is False
+
+
+def test_multiple_product_search_calls_are_all_executed_before_reply(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(code="770", article="14.023пр.", normalized_article="14023ПР", free_stock=10, raw_payload={}),
+                Product(code="28834", article="МП ЦК белая", normalized_article="МПЦКБЕЛАЯ", free_stock=10, raw_payload={}),
+            ]
+        )
+
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    calls = 0
+
+    def split_searches(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        arguments={"queries": [{"query": "770", "requested_quantity": 2}], "intent": "order"},
+                        call_id="search-a",
+                    ),
+                    ToolCall(
+                        name="search_products",
+                        arguments={"queries": [{"query": "28834", "requested_quantity": 3}], "intent": "order"},
+                        call_id="search-b",
+                    ),
+                ],
+            )
+        return LLMTurnResult(text="Обе позиции проверены. Как будете получать заказ?", tool_calls=[])
+
+    service.openai_service.run_messages = split_searches
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:parallel-searches",
+            external_client_id="telegram-user:parallel-searches",
+            customer_name="Demo User",
+            customer_text="Хочу заказать код 770 две штуки и 28834 три штуки",
+            inbound_event_id="parallel-searches-in",
+            outbound_event_id="parallel-searches-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert "Обе позиции" in reply.text
+    with session_scope() as session:
+        tool_calls = session.query(Message).filter(Message.sender_role == "assistant_tool_call").all()
+        tool_results = session.query(Message).filter(Message.sender_role == "tool").all()
+
+    persisted_names = [
+        item["function"]["name"]
+        for message in tool_calls
+        for item in message.payload.get("tool_calls", [])
+    ]
+    assert persisted_names == ["search_products", "search_products"]
+    assert [message.payload["tool_call_id"] for message in tool_results] == ["search-a", "search-b"]
+
+
+def test_order_reply_never_discloses_exact_stock_from_model(isolated_app_env) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Для заказа на складе точно 220 шт. Подскажите способ получения.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:order-stock-leak",
+            external_client_id="telegram-user:order-stock-leak",
+            customer_name="Demo User",
+            customer_text="Хочу заказать 14.023пр.",
+            inbound_event_id="order-stock-leak-in",
+            outbound_event_id="order-stock-leak-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert "220" not in reply.text
+    assert "количество" in reply.text.lower()
+
+
+def test_manager_request_detector_ignores_negation_and_delivery_call_note() -> None:
+    assert AssistantService._is_explicit_manager_request("позовите менеджера") is True  # noqa: SLF001
+    assert AssistantService._is_explicit_manager_request("перезвоните мне") is True  # noqa: SLF001
+    assert AssistantService._is_explicit_manager_request("менеджер пока не нужен") is False  # noqa: SLF001
+    assert AssistantService._is_explicit_manager_request("не зовите человека") is False  # noqa: SLF001
+    assert AssistantService._is_explicit_manager_request("позвоните перед доставкой") is False  # noqa: SLF001
+
+
+def test_cash_payment_is_not_misclassified_as_stock_request() -> None:
+    assert AssistantService._is_stock_only_request("Оплата наличными") is False  # noqa: SLF001
+    assert AssistantService._is_stock_only_request(
+        "Уберите вторую позицию, оставьте только 2 штуки 14.023пр."
+    ) is False  # noqa: SLF001
+    assert AssistantService._is_stock_only_request("Есть в наличии?") is True  # noqa: SLF001
+
+
+def test_explicit_manager_request_does_not_wait_for_product_prelookup(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article="14023ПР",
+                free_stock=10,
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.backend_prelookup_enabled = True
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:direct-manager-with-product",
+            external_client_id="telegram-user:direct-manager-with-product",
+            customer_name="Demo User",
+            customer_text="Позовите менеджера по 14.023пр.",
+            inbound_event_id="direct-manager-with-product-in",
+            outbound_event_id="direct-manager-with-product-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason == "client_requested_manager"
+    with session_scope() as session:
+        tool_messages = session.query(Message).filter(Message.sender_role == "tool").all()
+
+    assert [message.payload["tool_name"] for message in tool_messages] == ["handoff_to_manager"]
 
 
 def test_assistant_service_sends_role_history_and_active_product_context(isolated_app_env) -> None:
@@ -1533,7 +1740,9 @@ def test_assistant_service_records_tool_flow_as_role_messages(isolated_app_env) 
         )
         stored_roles = [message.sender_role for message in session.query(Message).order_by(Message.id.asc()).all()]
 
-    assert reply.text == "Проверил, 14.025пр. стоит 238 руб. Сейчас в наличии 7 шт."
+    assert "14.025пр. стоит 238 руб." in reply.text
+    assert "7 шт" not in reply.text
+    assert "точный остаток" in reply.text.lower()
     assert "assistant_tool_call" in stored_roles
     assert "tool" in stored_roles
     assert any(message.get("role") == "tool" for message in captured["final_messages"])
@@ -1667,7 +1876,7 @@ def test_complex_product_handoff_discards_llm_technical_guess(isolated_app_env) 
     assert "Передаю вопрос менеджеру" in reply.text
 
 
-def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(isolated_app_env) -> None:
+def test_assistant_service_routes_company_contact_question_through_full_dialog_llm(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
     captured: dict = {}
@@ -1698,12 +1907,12 @@ def test_assistant_service_routes_company_contact_question_to_llm_when_enabled(i
     assert "+7 (812) 372-66-07" in reply.text
     assert "market@amix.spb.ru" in reply.text
     assert "где вы находитесь и какой телефон?" in captured["messages"][-1]["content"]
-    assert "safe_answer" in captured["messages"][-1]["content"]
+    assert "safe_answer" not in captured["messages"][-1]["content"]
 
     with session_scope() as session:
         bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
 
-    assert bot_message.payload["source"] == "llm_company_faq"
+    assert bot_message.payload["source"] == "llm_direct"
 
 
 def test_assistant_service_allows_company_faq_polite_rewrite(isolated_app_env) -> None:
@@ -1738,7 +1947,64 @@ def test_assistant_service_allows_company_faq_polite_rewrite(isolated_app_env) -
     with session_scope() as session:
         bot_message = session.query(Message).filter(Message.sender_role == "bot").one()
 
-    assert bot_message.payload["source"] == "llm_company_faq"
+    assert bot_message.payload["source"] == "llm_direct"
+
+
+def test_company_faq_wording_does_not_drop_active_order_history(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    calls: list[list[dict]] = []
+
+    def history_aware_llm(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return LLMTurnResult(
+                text="Записал товар. Как вам удобнее получить заказ?",
+                tool_calls=[],
+            )
+        return LLMTurnResult(
+            text="Записал доставку в Тверь. Подскажите желаемый срок получения.",
+            tool_calls=[],
+        )
+
+    service.openai_service.run_messages = history_aware_llm
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:order-delivery-history",
+            external_client_id="telegram-user:order-delivery-history",
+            customer_name="Demo User",
+            customer_text="Хочу заказать две белые ручки",
+            inbound_event_id="tg-order-delivery-history-1",
+            outbound_event_id="tg-order-delivery-history-1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:order-delivery-history",
+            external_client_id="telegram-user:order-delivery-history",
+            customer_name="Demo User",
+            customer_text="Нужна доставка в Тверь",
+            inbound_event_id="tg-order-delivery-history-2",
+            outbound_event_id="tg-order-delivery-history-2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert len(calls) == 2
+    second_payload = str(calls[1])
+    assert "Хочу заказать две белые ручки" in second_payload
+    assert "Записал товар" in second_payload
+    assert "Нужна доставка в Тверь" in second_payload
+    assert "safe_answer" not in second_payload
+    assert "срок" in reply.text.lower()
+
+    with session_scope() as session:
+        bot_messages = session.query(Message).filter(Message.sender_role == "bot").order_by(Message.id).all()
+
+    assert bot_messages[-1].payload["source"] == "llm_direct"
 
 
 def test_assistant_service_guards_company_self_description_from_bot_capabilities(isolated_app_env) -> None:

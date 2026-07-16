@@ -1,4 +1,5 @@
 import json
+import re
 
 from database.repositories import list_messages
 
@@ -42,7 +43,7 @@ class DialogService:
         if sender_role == "bot":
             if not message.text:
                 return None
-            return {"role": "assistant", "content": message.text}
+            return {"role": "assistant", "content": cls._hide_exact_stock_in_text(message.text)}
 
         if sender_role == "assistant_tool_call":
             tool_calls = payload.get("tool_calls") or []
@@ -93,3 +94,14 @@ class DialogService:
                 continue
             result[key] = cls._without_exact_stock(item)
         return result
+
+    @staticmethod
+    def _hide_exact_stock_in_text(content: str) -> str:
+        patterns = (
+            r"(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n.!?]{0,40}?\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|ед|упак)\.?",
+            r"\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|ед|упак)\.?[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
+        )
+        sanitized = content
+        for pattern in patterns:
+            sanitized = re.sub(pattern, "[точный остаток скрыт]", sanitized, flags=re.IGNORECASE)
+        return sanitized

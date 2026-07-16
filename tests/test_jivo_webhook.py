@@ -110,7 +110,8 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
     assert messages[1].payload["source"] == "backend_prelookup_tool_call"
     assert messages[2].payload["source"] == "backend_prelookup_tool_result"
     assert "Да, нашёл AB-123." in messages[3].text
-    assert "Сейчас в наличии 5 шт." in messages[3].text
+    assert "5 шт" not in messages[3].text
+    assert "точный остаток" in messages[3].text.lower()
 
 
 def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env, monkeypatch) -> None:

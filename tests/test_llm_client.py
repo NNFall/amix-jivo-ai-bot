@@ -359,11 +359,23 @@ def test_order_prompt_does_not_search_or_handoff_before_there_is_enough_context(
     assert "отсутствующие сведения заказа уточняй" in SYSTEM_PROMPT.lower()
 
 
+def test_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+    assert "активного заказа" in prompt
+    assert "важнее общих правил" in prompt
+    assert "количество изменилось" in prompt
+    assert "проверь доступность заново" in prompt
+    assert "не найден" in prompt
+    assert "сохрани описание" in prompt
+
+
 def test_product_result_prompt_continues_confirmed_order_intake_from_history() -> None:
     prompt = PRODUCT_FACTS_RESPONSE_PROMPT.lower()
     assert "продолжи сбор заказа по истории" in prompt
     assert "один следующий недостающий вопрос" in prompt
     assert "до подтверждения итога" in prompt
+    assert "сохрани описание" in prompt
+    assert "не передавай менеджеру только из-за" in prompt
 
 
 def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:

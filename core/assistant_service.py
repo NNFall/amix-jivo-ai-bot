@@ -58,6 +58,9 @@ STOCK_QUANTITY_NOT_ENOUGH_TEXT = "Нет, такого количества се
 STOCK_QUANTITY_HANDOFF_TEXT = (
     "Передаю вопрос менеджеру. Он подключится к диалогу и поможет уточнить наличие по этой позиции."
 )
+STOCK_EXACT_DISCLOSURE_REPLACEMENT = (
+    "Точный остаток не называю, проверяю только указанное количество"
+)
 
 
 @dataclass(slots=True)
@@ -249,26 +252,6 @@ class AssistantService:
             and self._looks_like_explicit_history_article_followup(customer_text)
         ):
             article_candidates = self._select_history_candidates_for_followup(customer_text, history_article_candidates)
-        if self.backend_prelookup_enabled and self._is_explicit_manager_request(customer_text) and article_candidates:
-            lookup_result = self._search_products_by_queries(
-                session,
-                queries=article_candidates,
-                reason=self._guess_lookup_reason(customer_text),
-                customer_text=customer_text,
-            )
-            return self._reply_from_product_result(
-                session,
-                external_chat_id=external_chat_id,
-                customer_text=customer_text,
-                transcript=transcript,
-                product_lookup_result=lookup_result,
-                outbound_event_id=outbound_event_id,
-                payload_source="backend_manager_prelookup",
-                force_handoff_reason="client_requested_manager",
-                handoff_mode=handoff_mode,
-                is_turn_current=is_turn_current,
-            )
-
         if self._is_explicit_manager_request(customer_text):
             return self._handoff_reply(
                 session,
@@ -336,16 +319,6 @@ class AssistantService:
                 payload={"source": "backend_company_faq"},
             )
             return AssistantReply(text=company_answer)
-        if company_answer:
-            return self._reply_from_company_faq(
-                session,
-                external_chat_id=external_chat_id,
-                customer_text=customer_text,
-                safe_answer=company_answer,
-                outbound_event_id=outbound_event_id,
-                is_turn_current=is_turn_current,
-            )
-
         if self.backend_prelookup_enabled and article_candidates:
             lookup_result = self._search_products_by_queries(
                 session,
@@ -472,7 +445,13 @@ class AssistantService:
                 if self._extract_requested_quantity(customer_text) is not None
                 else STOCK_QUANTITY_REQUIRED_TEXT
             )
+        reply_text = self._sanitize_exact_stock_disclosure(reply_text)
         reply_text = self._sanitize_customer_reply(reply_text)
+
+        source = "llm_direct" if first_turn.text else "llm_provider_error" if first_turn.error_type else "fallback"
+        if company_answer and self._company_reply_violates_facts(reply_text):
+            reply_text = company_answer
+            source = "backend_company_faq_guard"
 
         handoff_reason = None
         if self._reply_claims_handoff(reply_text):
@@ -491,7 +470,7 @@ class AssistantService:
             text=reply_text,
             outbound_event_id=outbound_event_id,
             payload={
-                "source": "llm_direct" if first_turn.text else "llm_provider_error" if first_turn.error_type else "fallback",
+                "source": source,
                 "provider_error": first_turn.error_type,
                 "handoff_reason": handoff_reason,
                 "backend_actions": self._build_handoff_backend_actions(handoff_reason, handoff_mode)
@@ -598,38 +577,74 @@ class AssistantService:
             if not call.call_id:
                 call.call_id = f"call_{call.name}_{index}"
 
-            if call.name == "handoff_to_manager":
-                reason = str(call.arguments.get("reason") or "llm_requested_manager")
-                return self._handoff_reply(
+        recognized_calls = [
+            call for call in tool_calls if call.name in {"search_products", "handoff_to_manager"}
+        ]
+        if not recognized_calls:
+            return None
+
+        first_recognized = recognized_calls[0]
+        if first_recognized.name == "handoff_to_manager":
+            reason = str(first_recognized.arguments.get("reason") or "llm_requested_manager")
+            summary = str(first_recognized.arguments.get("summary") or "").strip()
+            if reason == "order_creation" and (
+                not self._order_handoff_follows_confirmed_summary(
                     session,
                     external_chat_id=external_chat_id,
-                    handoff_mode=handoff_mode,
-                    outbound_event_id=outbound_event_id,
-                    reason=reason,
-                    source="llm_tool",
-                    summary=call.arguments.get("summary"),
-                    is_turn_current=is_turn_current,
+                    customer_text=customer_text,
                 )
+                or not self._order_summary_is_confirmable(summary)
+            ):
+                return self._order_handoff_confirmation_guard_reply(
+                    session,
+                    external_chat_id=external_chat_id,
+                    call=first_recognized,
+                    outbound_event_id=outbound_event_id,
+                )
+            return self._handoff_reply(
+                session,
+                external_chat_id=external_chat_id,
+                handoff_mode=handoff_mode,
+                outbound_event_id=outbound_event_id,
+                reason=reason,
+                source="llm_tool",
+                summary=first_recognized.arguments.get("summary"),
+                is_turn_current=is_turn_current,
+            )
 
+        search_calls: list[ToolCall] = []
+        all_query_specs: list[dict[str, Any]] = []
+        lookup_results: list[dict] = []
+        reasons: list[str] = []
+        for call in recognized_calls:
             if call.name != "search_products":
                 continue
-
             query_specs = self._normalize_search_query_specs(call.arguments.get("queries", []))
             if not query_specs:
                 continue
             call.arguments["queries"] = query_specs
+            search_calls.append(call)
+            all_query_specs.extend(query_specs)
+            reasons.append(str(call.arguments.get("intent") or call.arguments.get("reason") or "unknown"))
 
-            self._append_assistant_tool_call_message(
-                session,
-                external_chat_id=external_chat_id,
-                tool_calls=[call],
-            )
+        if not search_calls:
+            return None
+
+        self._append_assistant_tool_call_message(
+            session,
+            external_chat_id=external_chat_id,
+            tool_calls=search_calls,
+        )
+
+        for call in search_calls:
+            query_specs = call.arguments["queries"]
             lookup_result = self._search_products_by_queries(
                 session,
                 queries=query_specs,
                 reason=str(call.arguments.get("intent") or call.arguments.get("reason") or "unknown"),
                 customer_text=customer_text,
             )
+            lookup_results.append(lookup_result)
             llm_lookup_result = self._build_tool_visible_product_lookup_result(
                 lookup_result,
                 customer_text=customer_text,
@@ -665,19 +680,28 @@ class AssistantService:
                     "lookup_result": lookup_result,
                 },
             )
-            return self._reply_from_product_result(
+
+        combined_result = lookup_results[0]
+        if len(lookup_results) > 1:
+            combined_reason = "order" if "order" in reasons else reasons[0]
+            combined_result = self._search_products_by_queries(
                 session,
-                external_chat_id=external_chat_id,
+                queries=all_query_specs,
+                reason=combined_reason,
                 customer_text=customer_text,
-                transcript=transcript,
-                product_lookup_result=lookup_result,
-                outbound_event_id=outbound_event_id,
-                payload_source="llm_tool_search",
-                handoff_mode=handoff_mode,
-                include_tool_results_system=False,
-                is_turn_current=is_turn_current,
             )
-        return None
+        return self._reply_from_product_result(
+            session,
+            external_chat_id=external_chat_id,
+            customer_text=customer_text,
+            transcript=transcript,
+            product_lookup_result=combined_result,
+            outbound_event_id=outbound_event_id,
+            payload_source="llm_tool_search",
+            handoff_mode=handoff_mode,
+            include_tool_results_system=False,
+            is_turn_current=is_turn_current,
+        )
 
     def _reply_from_product_result(
         self,
@@ -870,6 +894,7 @@ class AssistantService:
                 customer_text=customer_text,
                 backend_actions=backend_actions,
             )
+        reply_text = self._sanitize_exact_stock_disclosure(reply_text)
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
@@ -1263,6 +1288,33 @@ class AssistantService:
                 text,
             )
         )
+
+    @staticmethod
+    def _reply_discloses_exact_stock(reply_text: str | None) -> bool:
+        if not reply_text:
+            return False
+        text = reply_text.lower()
+        patterns = (
+            r"(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n.!?]{0,40}?\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)",
+            r"\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    @staticmethod
+    def _sanitize_exact_stock_disclosure(reply_text: str) -> str:
+        patterns = (
+            r"(?:сейчас\s+)?(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n.!?]{0,40}?\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)\.?",
+            r"\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)\.?[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
+        )
+        sanitized = reply_text
+        for pattern in patterns:
+            sanitized = re.sub(
+                pattern,
+                STOCK_EXACT_DISCLOSURE_REPLACEMENT,
+                sanitized,
+                flags=re.IGNORECASE,
+            )
+        return re.sub(r"\s{2,}", " ", sanitized).strip()
 
     @staticmethod
     def _apply_followup_refinement(product_lookup_result: dict, refinement_context: dict) -> dict:
@@ -2373,6 +2425,120 @@ class AssistantService:
         )
         return AssistantReply(text=self._sanitize_customer_reply(handoff_text), handoff_reason=reason)
 
+    def _order_handoff_confirmation_guard_reply(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        call: ToolCall,
+        outbound_event_id: str | None,
+    ) -> AssistantReply:
+        self._append_assistant_tool_call_message(
+            session,
+            external_chat_id=external_chat_id,
+            tool_calls=[call],
+            source="llm_order_handoff_confirmation_guard_tool_call",
+        )
+        tool_result_message = OpenAIService.build_tool_result_message(
+            tool_call_id=call.call_id,
+            name="handoff_to_manager",
+            result={
+                "tool_name": "handoff_to_manager",
+                "status": "rejected",
+                "reason": "order_summary_confirmation_required",
+            },
+        )
+        self._append_tool_result_message(
+            session,
+            external_chat_id=external_chat_id,
+            message=tool_result_message,
+            tool_name="handoff_to_manager",
+            source="llm_order_handoff_confirmation_guard_tool_result",
+        )
+
+        summary = str(call.arguments.get("summary") or "").strip()
+        if self._order_summary_is_confirmable(summary) and not self._reply_discloses_exact_stock(summary):
+            reply_text = f"Проверьте, пожалуйста, итог заказа: {summary} Всё верно?"
+        else:
+            reply_text = (
+                "Перед передачей менеджеру нужно уточнить недостающие данные заказа. "
+                "Подскажите способ получения, оплату, имя и телефон."
+            )
+        reply_text = self._sanitize_customer_reply(reply_text)
+        self._append_bot_message(
+            session,
+            external_chat_id=external_chat_id,
+            text=reply_text,
+            outbound_event_id=outbound_event_id,
+            payload={
+                "source": "llm_order_handoff_confirmation_guard",
+                "handoff_reason": None,
+                "rejected_handoff_reason": "order_creation",
+            },
+        )
+        return AssistantReply(text=reply_text)
+
+    @classmethod
+    def _order_handoff_follows_confirmed_summary(
+        cls,
+        session,
+        *,
+        external_chat_id: str,
+        customer_text: str,
+    ) -> bool:
+        if not cls._is_explicit_order_confirmation(customer_text):
+            return False
+        previous_bot = next(
+            (
+                message
+                for message in reversed(list_messages(session, external_chat_id))
+                if message.sender_role == "bot" and message.text
+            ),
+            None,
+        )
+        return bool(previous_bot and cls._bot_message_requests_order_confirmation(previous_bot.text))
+
+    @staticmethod
+    def _order_summary_is_confirmable(summary: str | None) -> bool:
+        text = str(summary or "").lower().replace("ё", "е")
+        if not text:
+            return False
+        incomplete_markers = (
+            "не указан",
+            "не собран",
+            "не уточнен",
+            "нет данных",
+            "неизвест",
+            "остальные данные",
+        )
+        if any(marker in text for marker in incomplete_markers):
+            return False
+        has_fulfillment = any(marker in text for marker in ("достав", "самовывоз"))
+        has_payment = any(marker in text for marker in ("налич", "по счет", "безнал", "карт"))
+        has_phone = bool(re.search(r"(?:\+?\d[\d\s()\-]{8,}\d)", text))
+        if not (has_fulfillment and has_payment and has_phone):
+            return False
+        if any(marker in text for marker in ("по счет", "безнал")):
+            return bool(re.search(r"\b(?:\d{10}|\d{12})\b", text))
+        return True
+
+    @staticmethod
+    def _is_explicit_order_confirmation(customer_text: str) -> bool:
+        text = customer_text.lower().replace("ё", "е")
+        if re.search(r"\b(?:нет|неверно|не верно|неправильно|не правильно|исправ)\b", text):
+            return False
+        return bool(re.search(r"\b(?:да|верно|правильно|подтверждаю|согласен|согласна)\b", text))
+
+    @staticmethod
+    def _bot_message_requests_order_confirmation(bot_text: str) -> bool:
+        text = bot_text.lower().replace("ё", "е")
+        has_confirmation_request = "подтверд" in text or any(
+            marker in text
+            for marker in ("все верно", "все правильно", "данные верны", "итог верен")
+        )
+        has_summary = any(marker in text for marker in ("итог", "заказ", "товар", "позици", "получ", "оплат"))
+        return has_confirmation_request and has_summary
+
     def _handoff_already_requested_reply(
         self,
         session,
@@ -2392,6 +2558,14 @@ class AssistantService:
     @staticmethod
     def _is_explicit_manager_request(customer_text: str) -> bool:
         text = customer_text.lower()
+        negated_patterns = (
+            r"(?:менеджер|оператор|человек).{0,24}(?:не нужен|не нужна|не надо|не требуется)",
+            r"\bне\s+(?:зовите|подключайте|приглашайте)\s+(?:менеджера|оператора|человека)",
+            r"(?:позвон|перезвон)\w*.{0,20}(?:не надо|не нужно|не требуется)",
+            r"(?:позвон|перезвон)\w*.{0,24}\b(?:перед|до)\b.{0,24}(?:достав|самовывоз|приезд|получен)",
+        )
+        if any(re.search(pattern, text) for pattern in negated_patterns):
+            return False
         keywords = ("менеджер", "оператор", "человек", "перезвон", "позвон")
         return any(keyword in text for keyword in keywords)
 
@@ -2482,9 +2656,10 @@ class AssistantService:
     @staticmethod
     def _is_stock_only_request(customer_text: str) -> bool:
         text = customer_text.lower()
+        stock_text = re.sub(r"\bналичн\w*\b", "", text)
         has_quantity = AssistantService._extract_requested_quantity(customer_text) is not None
         has_stock_intent = any(
-            keyword in text
+            keyword in stock_text
             for keyword in (
                 "налич",
                 "остат",
@@ -2517,7 +2692,10 @@ class AssistantService:
                 "акци",
             )
         )
-        has_order_intent = any(keyword in text for keyword in ("заказ", "купить", "оформ"))
+        has_order_intent = any(
+            keyword in text
+            for keyword in ("заказ", "купить", "оформ", "добав", "убер", "остав", "замен", "исправ")
+        )
         return has_stock_intent and not has_price_intent and not has_other_fact_intent and not has_order_intent
 
     @staticmethod

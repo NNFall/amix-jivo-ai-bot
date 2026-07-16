@@ -366,7 +366,7 @@ def search_products_structured(
     exact_limit: int = 20,
     similar_limit: int = 20,
 ) -> dict:
-    query_raw = (query or "").strip()
+    query_raw = (query or "").strip().strip(".,;:!?\"'«»")
     query_normalized = normalize_article(query_raw)
 
     result = {

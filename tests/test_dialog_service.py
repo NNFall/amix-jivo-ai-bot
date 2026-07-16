@@ -174,3 +174,17 @@ def test_get_llm_messages_hides_exact_stock_from_legacy_search_results(isolated_
     assert "220" not in serialized
     assert "остаток" not in serialized
     assert visible_result["result"]["товары"][0]["requested_quantity_available"] is True
+
+
+def test_dialog_service_redacts_exact_stock_from_legacy_bot_reply(isolated_app_env) -> None:
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:legacy-bot-stock")
+        get_or_create_chat(session, "chat:legacy-bot-stock", customer.id)
+        append_message(session, "chat:legacy-bot-stock", "client", "Сколько осталось 14.023пр.?")
+        append_message(session, "chat:legacy-bot-stock", "bot", "Сейчас в наличии ровно 220 шт.")
+
+        messages = DialogService().get_llm_messages(session, "chat:legacy-bot-stock")
+
+    serialized = json.dumps(messages, ensure_ascii=False)
+    assert "220" not in serialized
+    assert "точный остаток скрыт" in serialized.lower()

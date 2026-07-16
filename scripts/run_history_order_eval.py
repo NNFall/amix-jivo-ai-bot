@@ -37,6 +37,19 @@ DEFAULT_SCENARIOS_PATH = ROOT_DIR / "tests" / "history_order_eval_scenarios.json
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "data" / "history_order_eval_evidence.json"
 ALLOWED_TOOL_NAMES = ("search_products", "handoff_to_manager")
 FAKE_MODEL = "fake-history-order-eval-v1"
+SUPPORTED_ASSERTION_TYPES = {
+    "tool_called",
+    "no_tool_called",
+    "no_handoff",
+    "handoff_reason",
+    "response_contains",
+    "response_contains_all",
+    "response_contains_any",
+    "response_not_contains",
+    "tool_result_status",
+    "tool_query_quantities",
+    "handoff_summary_contains_all",
+}
 
 EVAL_CATALOG = [
     {
@@ -146,6 +159,48 @@ class FakeTurnProvider:
         )
 
 
+class RecordingProvider:
+    def __init__(self, delegate) -> None:
+        self.delegate = delegate
+        self.records: list[dict[str, Any]] = []
+
+    def __call__(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | dict[str, Any] = "auto",
+    ) -> LLMTurnResult:
+        record = {
+            "messages": deepcopy(messages),
+            "tools": deepcopy(tools or []),
+            "tool_choice": deepcopy(tool_choice),
+            "result": {"status": "pending"},
+        }
+        self.records.append(record)
+        try:
+            result = self.delegate(messages=messages, tools=tools, tool_choice=tool_choice)
+        except Exception as exc:
+            record["result"] = {"status": "exception", "error": type(exc).__name__}
+            raise
+        record["result"] = {
+            "status": result.error_type or "ok",
+            "text": result.text,
+            "tool_calls": [
+                {
+                    "name": call.name,
+                    "arguments": deepcopy(call.arguments),
+                    "call_id": call.call_id,
+                }
+                for call in result.tool_calls
+            ],
+            "usage": deepcopy(result.usage or {}),
+            "cost": deepcopy(result.cost or {}),
+            "latency_ms": int(result.latency_ms or 0),
+        }
+        return result
+
+
 def _canonical_json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -166,6 +221,20 @@ def _git_sha() -> str:
     return completed.stdout.strip() if completed.returncode == 0 else "unknown"
 
 
+def _git_dirty_files() -> list[str]:
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT_DIR,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ["unknown"]
+    return [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
+
+
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -180,9 +249,44 @@ def _load_scenarios(path: Path) -> list[dict[str, Any]]:
         if not scenario_id or scenario_id in seen:
             raise ValueError(f"Scenario id must be non-empty and unique: {scenario_id!r}")
         seen.add(scenario_id)
-        if not scenario.get("turns"):
+        turns = scenario.get("turns") or []
+        if not turns:
             raise ValueError(f"Scenario {scenario_id!r} has no turns")
+        for turn_index, turn in enumerate(turns, start=1):
+            if not str(turn.get("input") or "").strip():
+                raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} has no input")
+            assertions = turn.get("assertions") or []
+            if not assertions:
+                raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} has no assertions")
+            for assertion in assertions:
+                _validate_assertion(scenario_id, turn_index, assertion)
     return scenarios
+
+
+def _validate_assertion(scenario_id: str, turn_index: int, assertion: dict[str, Any]) -> None:
+    assertion_type = str(assertion.get("type") or "").strip()
+    if assertion_type not in SUPPORTED_ASSERTION_TYPES:
+        raise ValueError(
+            f"Scenario {scenario_id!r} turn {turn_index} has unknown assertion {assertion_type!r}"
+        )
+    if assertion_type in {"tool_called"} and not str(assertion.get("name") or "").strip():
+        raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires name")
+    if assertion_type in {"response_contains", "tool_result_status", "handoff_reason"}:
+        if not str(assertion.get("value") or "").strip():
+            raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires value")
+    if assertion_type in {
+        "response_contains_all",
+        "response_contains_any",
+        "response_not_contains",
+        "handoff_summary_contains_all",
+    }:
+        values = assertion.get("values") or []
+        if not values or any(not str(value).strip() for value in values):
+            raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires values")
+    if assertion_type == "tool_query_quantities":
+        queries = assertion.get("queries") or []
+        if not queries or any(not str(item.get("query") or "").strip() for item in queries):
+            raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires queries")
 
 
 def _eval_tools() -> list[dict[str, Any]]:
@@ -251,7 +355,9 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     return Decimal(str(value)) if value not in (None, "") else None
 
 
-def _configure_assistant(*, fake: bool, model: str | None) -> tuple[AssistantService, FakeTurnProvider | None, str, str]:
+def _configure_assistant(
+    *, fake: bool, model: str | None
+) -> tuple[AssistantService, FakeTurnProvider | None, RecordingProvider, str, str]:
     assistant = AssistantService()
     assistant.backend_prelookup_enabled = False
     assistant.deterministic_company_faq_enabled = False
@@ -261,12 +367,13 @@ def _configure_assistant(*, fake: bool, model: str | None) -> tuple[AssistantSer
     assistant.openai_service.audit_logger.enabled = False
 
     if fake:
-        provider = FakeTurnProvider()
+        fake_provider = FakeTurnProvider()
+        recording_provider = RecordingProvider(fake_provider)
         assistant.openai_service.provider = "fake"
         assistant.openai_service.model = FAKE_MODEL
         assistant.openai_service.enabled = True
-        assistant.openai_service.run_messages = provider
-        return assistant, provider, "fake", FAKE_MODEL
+        assistant.openai_service.run_messages = recording_provider
+        return assistant, fake_provider, recording_provider, "fake", FAKE_MODEL
 
     if not assistant.openai_service.google_ai_api_key:
         raise RuntimeError("GOOGLE_AI_API_KEY is required for live Gemini mode; use --fake for offline mode")
@@ -278,7 +385,9 @@ def _configure_assistant(*, fake: bool, model: str | None) -> tuple[AssistantSer
         1.0,
     )
     assistant.openai_service.enabled = True
-    return assistant, None, "google_ai", assistant.openai_service.google_ai_model
+    recording_provider = RecordingProvider(assistant.openai_service.run_messages)
+    assistant.openai_service.run_messages = recording_provider
+    return assistant, None, recording_provider, "google_ai", assistant.openai_service.google_ai_model
 
 
 def _max_message_id(session, external_chat_id: str) -> int:
@@ -397,7 +506,33 @@ def _aggregate_llm_calls(rows: list[dict[str, Any]]) -> tuple[dict[str, int], di
 
 
 def _contains(value: str, expected: str) -> bool:
-    return expected.casefold() in value.casefold()
+    return expected.casefold().replace("ё", "е") in value.casefold().replace("ё", "е")
+
+
+def _search_query_quantities(function_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    queries: list[dict[str, Any]] = []
+    for call in function_calls:
+        if call.get("name") != "search_products":
+            continue
+        for item in (call.get("arguments") or {}).get("queries") or []:
+            if isinstance(item, dict):
+                query = str(item.get("query") or "").strip()
+                quantity = item.get("requested_quantity")
+            else:
+                query = str(item or "").strip()
+                quantity = None
+            queries.append({"query": query, "requested_quantity": quantity})
+    return queries
+
+
+def _normalized_query_quantities(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "query": str(item.get("query") or "").strip().casefold().replace("ё", "е"),
+            "requested_quantity": item.get("requested_quantity"),
+        }
+        for item in items
+    ]
 
 
 def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason: str | None) -> dict[str, Any]:
@@ -417,7 +552,7 @@ def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason
         passed = not calls
         detail = f"called={names}"
     elif assertion_type == "no_handoff":
-        passed = not handoff_reason and "handoff_to_manager" not in names
+        passed = not handoff_reason
         detail = f"handoff_reason={handoff_reason!r}"
     elif assertion_type == "handoff_reason":
         expected = str(spec.get("value") or "")
@@ -443,14 +578,41 @@ def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason
         expected = str(spec.get("value") or "")
         passed = _contains(results_text, expected)
         detail = f"expected_status={expected!r}"
+    elif assertion_type == "tool_query_quantities":
+        expected = _normalized_query_quantities(spec.get("queries") or [])
+        actual = _normalized_query_quantities(_search_query_quantities(calls))
+        passed = actual == expected
+        detail = f"expected={expected!r}, actual={actual!r}"
+    elif assertion_type == "handoff_summary_contains_all":
+        expected = [str(value) for value in spec.get("values") or []]
+        summaries = [
+            str((call.get("arguments") or {}).get("summary") or "")
+            for call in calls
+            if call.get("name") == "handoff_to_manager"
+        ]
+        summary = summaries[-1] if summaries else ""
+        passed = bool(expected) and all(_contains(summary, value) for value in expected)
+        detail = f"expected_all={expected!r}, summary={summary!r}"
     else:
         detail = f"unknown assertion type: {assertion_type!r}"
 
     return {"type": assertion_type, "passed": passed, "detail": detail}
 
 
-def _privacy_assertion(response: str, function_results: list[dict[str, Any]]) -> dict[str, Any]:
-    visible = f"{response}\n{json.dumps(function_results, ensure_ascii=False, sort_keys=True)}"
+def _privacy_assertion(
+    response: str,
+    function_calls: list[dict[str, Any]],
+    function_results: list[dict[str, Any]],
+    provider_requests: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    visible = "\n".join(
+        (
+            response,
+            json.dumps(function_calls, ensure_ascii=False, sort_keys=True),
+            json.dumps(function_results, ensure_ascii=False, sort_keys=True),
+            json.dumps(provider_requests or [], ensure_ascii=False, sort_keys=True),
+        )
+    )
     normalized = visible.casefold()
     forbidden_fields = ("free_stock", "raw_product_lookup_result")
     leaks = [field for field in forbidden_fields if field in normalized]
@@ -459,6 +621,7 @@ def _privacy_assertion(response: str, function_results: list[dict[str, Any]]) ->
         patterns = (
             rf"(?<!\d){re.escape(stock)}(?:[.,]0+)?\s*(?:шт|штук|единиц)",
             rf"(?:остат(?:ок|ка)|на складе)\D{{0,16}}{re.escape(stock)}(?:[.,]0+)?(?!\d)",
+            rf"(?:доступно|есть в наличии)\D{{0,16}}{re.escape(stock)}(?:[.,]0+)?(?!\d)",
         )
         if any(re.search(pattern, normalized) for pattern in patterns):
             leaks.append(f"exact_stock:{stock}")
@@ -466,6 +629,44 @@ def _privacy_assertion(response: str, function_results: list[dict[str, Any]]) ->
         "type": "stock_privacy",
         "passed": not leaks,
         "detail": "no exact stock in model-visible evidence" if not leaks else f"leaks={sorted(set(leaks))}",
+    }
+
+
+def _provider_health_assertion(
+    *,
+    mode: str,
+    provider_name: str,
+    provider_requests: list[dict[str, Any]],
+    llm_calls: list[dict[str, Any]],
+) -> dict[str, Any]:
+    request_statuses = [str((item.get("result") or {}).get("status") or "") for item in provider_requests]
+    call_statuses = [str(item.get("status") or "") for item in llm_calls]
+    providers = [str(item.get("provider") or "") for item in llm_calls]
+    token_totals = [int((item.get("usage") or {}).get("total_tokens") or 0) for item in llm_calls]
+    passed = bool(provider_requests) and bool(llm_calls)
+    passed = passed and all(status == "ok" for status in request_statuses + call_statuses)
+    passed = passed and all(provider == provider_name for provider in providers)
+    passed = passed and all(total > 0 for total in token_totals)
+    return {
+        "type": "provider_health",
+        "passed": passed,
+        "detail": (
+            f"mode={mode}, requests={request_statuses}, calls={call_statuses}, "
+            f"providers={providers}, tokens={token_totals}"
+        ),
+    }
+
+
+def _full_history_assertion(
+    provider_requests: list[dict[str, Any]], expected_customer_inputs: list[str]
+) -> dict[str, Any]:
+    first_messages = provider_requests[0].get("messages") if provider_requests else []
+    serialized = json.dumps(first_messages or [], ensure_ascii=False)
+    missing = [value for value in expected_customer_inputs if value not in serialized]
+    return {
+        "type": "complete_chronological_history",
+        "passed": not missing,
+        "detail": "all customer turns present" if not missing else f"missing={missing!r}",
     }
 
 
@@ -483,6 +684,9 @@ def _run_turn(
     *,
     assistant: AssistantService,
     fake_provider: FakeTurnProvider | None,
+    recording_provider: RecordingProvider,
+    provider_name: str,
+    mode: str,
     session,
     scenario: dict[str, Any],
     repetition: int,
@@ -493,6 +697,7 @@ def _run_turn(
     external_chat_id = f"history-order-eval:{scenario_id}:run:{repetition}"
     before_message_id = _max_message_id(session, external_chat_id)
     before_llm_call_id = _max_llm_call_id(session, external_chat_id)
+    before_provider_request = len(recording_provider.records)
     if fake_provider is not None:
         fake_provider.start_turn(scenario_id, turn_index, turn_spec)
 
@@ -514,6 +719,7 @@ def _run_turn(
     messages = _new_messages(session, external_chat_id, before_message_id)
     function_calls, function_results = _function_evidence(messages)
     llm_calls = _serialize_llm_calls(_new_llm_calls(session, external_chat_id, before_llm_call_id))
+    provider_requests = deepcopy(recording_provider.records[before_provider_request:])
     usage, cost = _aggregate_llm_calls(llm_calls)
     turn = {
         "index": turn_index,
@@ -521,6 +727,7 @@ def _run_turn(
         "response": reply.text,
         "function_calls": function_calls,
         "function_results": function_results,
+        "provider_requests": provider_requests,
         "latency_ms": latency_ms,
         "llm_calls": llm_calls,
         "usage": usage,
@@ -533,7 +740,21 @@ def _run_turn(
         for spec in turn_spec.get("assertions") or []
     ]
     assertions.append(_allowed_tools_assertion(function_calls))
-    assertions.append(_privacy_assertion(reply.text, function_results))
+    assertions.append(_privacy_assertion(reply.text, function_calls, function_results, provider_requests))
+    assertions.append(
+        _provider_health_assertion(
+            mode=mode,
+            provider_name=provider_name,
+            provider_requests=provider_requests,
+            llm_calls=llm_calls,
+        )
+    )
+    assertions.append(
+        _full_history_assertion(
+            provider_requests,
+            [str(item["input"]) for item in scenario["turns"][:turn_index]],
+        )
+    )
     turn["assertions"] = assertions
     turn["verdict"] = "PASS" if all(item["passed"] for item in assertions) else "FAIL"
     session.commit()
@@ -556,10 +777,14 @@ def run_evaluation(
     scenarios = _load_scenarios(scenarios_path)
     tools = _eval_tools()
     timestamp = _timestamp()
+    mode = "deterministic_wiring_only" if fake else "live_model_behavior"
 
     with _isolated_database(), _patched_eval_tools(tools):
         _seed_catalog()
-        assistant, fake_provider, provider_name, model_name = _configure_assistant(fake=fake, model=model)
+        assistant, fake_provider, recording_provider, provider_name, model_name = _configure_assistant(
+            fake=fake,
+            model=model,
+        )
         scenario_rows: list[dict[str, Any]] = []
         with db_module.session_scope() as session:
             for repetition in range(1, repeat + 1):
@@ -568,6 +793,9 @@ def run_evaluation(
                         _run_turn(
                             assistant=assistant,
                             fake_provider=fake_provider,
+                            recording_provider=recording_provider,
+                            provider_name=provider_name,
+                            mode=mode,
                             session=session,
                             scenario=scenario,
                             repetition=repetition,
@@ -600,16 +828,27 @@ def run_evaluation(
             "timestamp": timestamp,
             "provider": provider_name,
             "model": model_name,
+            "mode": mode,
+            "git_dirty_files": _git_dirty_files(),
             "isolated_sqlite": True,
             "state_source": "dialog_history_only",
             "jivo_delivery_enabled": False,
             "repeat": repeat,
             "tool_names": list(ALLOWED_TOOL_NAMES),
+            "generation_config": {
+                "temperature": assistant.openai_service.google_ai_temperature if not fake else None,
+                "top_p": assistant.openai_service.google_ai_top_p if not fake else None,
+                "reasoning_effort": assistant.openai_service.google_ai_reasoning_effort if not fake else None,
+            },
             "sha256": {
                 "prompt": _sha256(SYSTEM_PROMPT.encode("utf-8")),
                 "tools": _sha256(_canonical_json(tools)),
                 "scenarios": _sha256(scenarios_path.read_bytes()),
                 "catalog": _sha256(_canonical_json(EVAL_CATALOG)),
+                "runner": _sha256(Path(__file__).read_bytes()),
+                "assistant_service": _sha256((ROOT_DIR / "core" / "assistant_service.py").read_bytes()),
+                "dialog_service": _sha256((ROOT_DIR / "core" / "dialog_service.py").read_bytes()),
+                "openai_client": _sha256((ROOT_DIR / "llm" / "openai_client.py").read_bytes()),
             },
         },
         "summary": {

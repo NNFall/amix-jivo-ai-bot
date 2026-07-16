@@ -181,6 +181,24 @@ def test_search_products_structured_treats_compact_split_article_as_exact() -> N
     assert result["exact_matches"][0]["code"] == "22608"
 
 
+def test_search_products_structured_ignores_sentence_punctuation_around_code() -> None:
+    with build_session() as session:
+        session.add(
+            Product(
+                code="10002",
+                article="ABC-100",
+                normalized_article="ABC100",
+                raw_payload={},
+            )
+        )
+        session.commit()
+
+        result = search_products_structured(session, query="10002.")
+
+    assert result["status"] == "exact_found"
+    assert result["exact_matches"][0]["code"] == "10002"
+
+
 def test_search_products_structured_includes_price_display_fields() -> None:
     with build_session() as session:
         session.add(
