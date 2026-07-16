@@ -329,6 +329,19 @@ def test_model_has_only_product_search_and_manager_handoff_tools() -> None:
     ]
 
 
+def test_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
+    assert "полную хронологическую историю" in SYSTEM_PROMPT
+    assert "Более позднее уточнение или исправление клиента заменяет ранее указанное значение" in SYSTEM_PROMPT
+    assert "за один ответ задавай один естественный вопрос" in SYSTEM_PROMPT.lower()
+    assert "показанный ему итог заказа" in SYSTEM_PROMPT
+    assert "черновик заказа" not in SYSTEM_PROMPT.lower()
+
+
+def test_order_prompt_does_not_search_or_handoff_before_there_is_enough_context() -> None:
+    assert "Не вызывай поиск, пока искать ещё нечего" in SYSTEM_PROMPT
+    assert "отсутствующие сведения заказа уточняй" in SYSTEM_PROMPT.lower()
+
+
 def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:
     path = tmp_path / "audit.json"
     logger = LLMAuditLogger(enabled=True, path=str(path), max_entries=10, usd_to_rub=100)
