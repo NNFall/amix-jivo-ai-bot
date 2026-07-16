@@ -1,5 +1,19 @@
 # PLAN
 
+## Update 2026-07-16 (Independent Audit Of Live Dialog Evaluation)
+
+- Status: completed; previous 6.7/10 score withdrawn, no production behavior changed.
+- Trigger: the first order transcript exposed a mismatch between the customer's wording, the bot reply and the persisted order draft that the initial 10/10 score did not penalize.
+- Goal: independently re-audit the requirements, simulation methodology, order/tool implementation, prompts and every live transcript before accepting the evaluation results.
+- Review structure: multiple read-only subagents with separate scopes, followed by a consolidated local verification against raw JSON and source code.
+- No production changes or deployments are allowed during this audit.
+- Corrected result: scenario-average 4.0/10 and turn-weighted 4.1/10; MT-01 reduced from 10/10 to 6/10.
+- MT-01 root cause: the product turn called only `search_products`, left `order_draft.items` empty, and applied scalar `requested_quantity=2` to codes whose requested quantities were 2 and 3; items were recovered only on the following turn.
+- Critical implementation findings: wrong-tool calls bypass the order-tool retry, per-item quantities cannot be represented by the search schema, later tool calls can be discarded, list replacement can lose items, and a failed Jivo invite can still be followed by a handoff promise.
+- Methodology finding: the run is valid only as a real-Gemini service-layer smoke; it bypassed the production Jivo webhook/background/debounce/outbound/lifecycle path and had no machine assertions or reproducibility manifest.
+- Local audit: `data/logs/live_multiturn_dialogs_2026-07-16-independent-audit.md`; the original report is explicitly marked superseded.
+- Next implementation step: a separate TDD iteration for order invariants, per-item checks, tool execution, handoff delivery truthfulness and a versioned service plus Jivo E2E harness.
+
 ## Update 2026-07-15 (Live Multi-Turn Dialog Evaluation)
 
 - Status: completed; live behavior reviewed and scored, no production behavior changed.

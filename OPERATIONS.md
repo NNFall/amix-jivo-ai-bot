@@ -1,3 +1,16 @@
+# Iteration 64 - independent audit of live multi-turn evaluation (2026-07-16)
+
+- Reopened the 2026-07-15 live evaluation after the first order transcript contradicted its 10/10 verdict.
+- Ran four independent read-only reviews with separate scopes: current requirements, order/tool code, evaluation methodology, and dialogue/prompt quality.
+- Verified the critical MT-01 evidence directly in the raw JSON: code 770 maps to `14.023пр.`, code 28834 maps to `МП ЦК белая`, but the product turn called only `search_products`, used scalar `requested_quantity=2`, and left `order_draft.data.items` empty.
+- Verified that the requested items 770 x 2 and 28834 x 3 were persisted only on the next customer turn about delivery.
+- Confirmed the implementation cause: the forced `update_order_draft` retry runs only when the model returns no tools, so a wrong `search_products` call bypasses it; the search schema cannot represent per-item quantities.
+- Confirmed additional code risks: first-tool return behavior, full-list item replacement, missing code-to-article identity in multi-product replies, mismatched handoff reason enums, and an ignored `False` return from Jivo `invite_agent`.
+- Corrected the evaluation to 4.0/10 scenario-average and 4.1/10 turn-weighted; MT-01 is 6/10, not 10/10.
+- Classified the original run as a real-Gemini service-layer smoke only. It did not exercise Jivo webhook/background/debounce/supersession/outbound/lifecycle behavior and did not contain machine assertions or a reproducibility manifest.
+- Added `data/logs/live_multiturn_dialogs_2026-07-16-independent-audit.md` and marked the original report's score as superseded.
+- No production code, VPS configuration or deployed service was changed during the audit.
+
 # Iteration 63 - confirmed AMIX order contact fields (2026-07-14)
 
 - Received AMIX's final clarification through Artem: collect name, phone and INN.
