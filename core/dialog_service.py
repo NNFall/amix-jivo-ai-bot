@@ -1,3 +1,5 @@
+import json
+
 from database.repositories import list_messages
 
 
@@ -27,8 +29,8 @@ class DialogService:
 
         return result
 
-    @staticmethod
-    def _to_llm_message(message) -> dict | None:
+    @classmethod
+    def _to_llm_message(cls, message) -> dict | None:
         payload = message.payload or {}
         sender_role = message.sender_role
 
@@ -52,6 +54,8 @@ class DialogService:
             content = message.text or payload.get("content")
             if not content:
                 return None
+            if payload.get("tool_name") == "search_products":
+                content = cls._hide_exact_stock(content)
             role_message = {"role": "tool", "content": content}
             if payload.get("tool_call_id"):
                 role_message["tool_call_id"] = payload["tool_call_id"]
@@ -60,3 +64,32 @@ class DialogService:
             return role_message
 
         return None
+
+    @classmethod
+    def _hide_exact_stock(cls, content: str) -> str:
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return content
+        return json.dumps(cls._without_exact_stock(payload), ensure_ascii=False)
+
+    @classmethod
+    def _without_exact_stock(cls, value):
+        if isinstance(value, list):
+            return [cls._without_exact_stock(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        result = {}
+        for key, item in value.items():
+            normalized_key = str(key).lower().replace("_", "").replace("-", "").replace(" ", "")
+            if normalized_key in {
+                "stock",
+                "stockdisplay",
+                "freestock",
+                "остаток",
+                "свободныйостаток",
+            }:
+                continue
+            result[key] = cls._without_exact_stock(item)
+        return result

@@ -662,6 +662,61 @@ def test_numeric_product_code_is_not_treated_as_requested_quantity(isolated_app_
     assert "Нет, такого количества" not in reply.text
 
 
+def test_numeric_code_stays_a_code_when_model_final_text_is_empty(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="1364",
+                article="14.025пр.",
+                normalized_article=normalize_article("14.025пр."),
+                free_stock=Decimal("7"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+
+    def fake_run_messages(**kwargs):
+        if kwargs.get("tools"):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        arguments={
+                            "queries": [{"query": "1364"}],
+                            "intent": "stock",
+                            "use_dialog_context": False,
+                        },
+                        call_id="numeric-code-search",
+                    )
+                ],
+            )
+        return LLMTurnResult(text=None, tool_calls=[])
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:numeric-code-empty-final",
+            external_client_id="telegram-user:numeric-code-empty-final",
+            customer_name="Demo User",
+            customer_text="1364 есть?",
+            inbound_event_id="numeric-code-empty-final-in",
+            outbound_event_id="numeric-code-empty-final-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert "По коду 1364" in reply.text
+    assert "какое количество" in reply.text
+    assert "Нет, такого количества" not in reply.text
+
+
 def test_missing_code_wording_is_guarded_when_llm_omits_out_of_stock_explanation(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
@@ -1986,7 +2041,7 @@ def test_assistant_service_does_not_match_code_from_punctuated_article_query(iso
     assert lookup["per_query_results"][0]["raw_backend_query"] == "14023"
 
 
-def test_order_request_without_llm_uses_stock_guard_without_exposing_exact_stock(isolated_app_env) -> None:
+def test_order_shortage_does_not_handoff_before_customer_confirms_next_step(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -2014,10 +2069,11 @@ def test_order_request_without_llm_uses_stock_guard_without_exposing_exact_stock
             handoff_mode="demo",
         )
 
-    assert reply.handoff_reason == "requested_quantity_exceeds_stock"
+    assert reply.handoff_reason is None
+    assert reply.text == "Нет, такого количества сейчас нет в наличии."
     assert "1 шт" not in reply.text
     with session_scope() as session:
-        assert session.query(Handoff).one().reason == "requested_quantity_exceeds_stock"
+        assert session.query(Handoff).count() == 0
 
 
 def test_stock_shortage_handoff_rewrites_order_wording() -> None:
@@ -2665,6 +2721,132 @@ def test_tool_search_checks_each_requested_quantity_independently(isolated_app_e
     assert "МП ЦК белая: нет, такого количества" in reply.text
     assert "2 шт" not in reply.text
     assert "остаток" not in tool_message.text.lower()
+
+
+def test_model_formats_quantity_reply_after_safe_tool_result(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article=normalize_article("14.023пр."),
+                free_stock=Decimal("220"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    requests = []
+
+    def fake_run_messages(**kwargs):
+        requests.append(kwargs)
+        if kwargs.get("tools"):
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        call_id="safe-quantity-search",
+                        arguments={
+                            "queries": [{"query": "770", "requested_quantity": 2}],
+                            "intent": "order",
+                            "use_dialog_context": False,
+                        },
+                    )
+                ],
+            )
+        return LLMTurnResult(
+            text="Да, такое количество есть в наличии. Как вам удобнее получить заказ?",
+            tool_calls=[],
+        )
+
+    service.openai_service.run_messages = fake_run_messages
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:model-quantity-reply",
+            external_client_id="telegram-user:model-quantity-reply",
+            customer_name="Demo User",
+            customer_text="Код 770, нужно 2 штуки",
+            inbound_event_id="model-quantity-reply-in",
+            outbound_event_id="model-quantity-reply-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert len(requests) == 2
+    assert reply.text == "Да, такое количество есть в наличии. Как вам удобнее получить заказ?"
+    final_payload = json.dumps(requests[1]["messages"], ensure_ascii=False)
+    assert "220" not in final_payload
+    assert "доступно_запрошенное_количество" in final_payload
+
+
+def test_direct_model_reply_cannot_reveal_exact_stock(isolated_app_env) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Сейчас в наличии 220 шт.",
+        tool_calls=[],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:direct-stock-leak",
+            external_client_id="telegram-user:direct-stock-leak",
+            customer_name="Demo User",
+            customer_text="Сколько именно осталось 14.023пр?",
+            inbound_event_id="direct-stock-leak-in",
+            outbound_event_id="direct-stock-leak-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert "220" not in reply.text
+    assert "какое количество" in reply.text.lower()
+
+
+def test_fractional_requested_quantity_is_not_rounded_down(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = False
+    product_lookup_result = {
+        "status": "exact_found",
+        "exact_matches": [
+            {
+                "code": "fractional-product",
+                "article": "TEST-FRACTIONAL",
+                "stock": "2.4",
+                "unit": "кг",
+            }
+        ],
+    }
+    backend_actions = {
+        "stock_only_request": True,
+        "requested_quantity": 2.5,
+        "quantity_requests": [],
+    }
+
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="fractional-customer")
+        get_or_create_chat(session, "telegram:fractional-quantity", customer.id)
+        reply = service._try_stock_quantity_privacy_reply(
+            session,
+            external_chat_id="telegram:fractional-quantity",
+            customer_text="Нужно 2,5 кг TEST-FRACTIONAL",
+            product_lookup_result=product_lookup_result,
+            backend_actions=backend_actions,
+            outbound_event_id="fractional-quantity-out",
+            payload_source="test",
+            handoff_mode="demo",
+        )
+
+    assert reply is not None
+    assert "нет" in reply.text.lower()
 
 
 def test_query_quantity_metadata_is_preserved_in_source_order(isolated_app_env) -> None:

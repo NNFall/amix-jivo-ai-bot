@@ -1,3 +1,5 @@
+import json
+
 from core.dialog_service import DialogService
 from database.db import session_scope
 from database.repositories import append_message, get_or_create_chat, get_or_create_customer
@@ -84,7 +86,7 @@ def test_get_llm_messages_returns_complete_chronological_history(isolated_app_en
         {"role": "assistant", "content": "", "tool_calls": tool_calls},
         {
             "role": "tool",
-            "content": '{"article":"MP-01","stock":"12"}',
+            "content": '{"article": "MP-01"}',
             "tool_call_id": "call_1",
             "name": "search_products",
         },
@@ -119,3 +121,56 @@ def test_get_llm_messages_returns_complete_chronological_history(isolated_app_en
         messages = DialogService().get_llm_messages(session, "chat:full-history")
 
     assert messages == expected
+
+
+def test_get_llm_messages_hides_exact_stock_from_legacy_search_results(isolated_app_env) -> None:
+    tool_result = {
+        "tool_name": "search_products",
+        "status": "ok",
+        "result": {
+            "товары": [
+                {
+                    "код_товара": "770",
+                    "артикул": "14.023пр.",
+                    "остаток": "220 шт",
+                    "stock": "220",
+                    "requested_quantity_available": True,
+                }
+            ]
+        },
+    }
+
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:legacy-stock")
+        get_or_create_chat(session, "chat:legacy-stock", customer.id)
+        append_message(session, "chat:legacy-stock", "client", "Нужно 2 штуки 14.023пр.")
+        append_message(
+            session,
+            "chat:legacy-stock",
+            "assistant_tool_call",
+            "",
+            payload={
+                "tool_calls": [
+                    {
+                        "id": "legacy-stock-call",
+                        "type": "function",
+                        "function": {"name": "search_products", "arguments": "{}"},
+                    }
+                ]
+            },
+        )
+        append_message(
+            session,
+            "chat:legacy-stock",
+            "tool",
+            json.dumps(tool_result, ensure_ascii=False),
+            payload={"tool_call_id": "legacy-stock-call", "tool_name": "search_products"},
+        )
+
+        messages = DialogService().get_llm_messages(session, "chat:legacy-stock")
+
+    visible_result = json.loads(messages[2]["content"])
+    serialized = json.dumps(visible_result, ensure_ascii=False).lower()
+    assert "220" not in serialized
+    assert "остаток" not in serialized
+    assert visible_result["result"]["товары"][0]["requested_quantity_available"] is True

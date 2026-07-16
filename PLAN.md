@@ -2,7 +2,7 @@
 
 ## Update 2026-07-16 (History-Driven Order Flow)
 
-- Status: design approved in conversation; written specification awaiting user review before implementation planning.
+- Status: implementation complete locally; full deterministic verification passed, live server evaluation and final independent review are in progress before deployment.
 - Goal: remove `update_order_draft` and all parallel order memory so Gemini conducts short order conversations from complete chronological history.
 - Tool boundary: expose exactly `search_products` and `handoff_to_manager`.
 - History: send the whole persisted chat from its first message through chronological assistant/tool events; do not apply the current 20-row limit.
@@ -13,6 +13,8 @@
 - Verification: TDD, full deterministic suite, repeated real Gemini multi-turn evaluation on the server, saved JSON/Markdown evidence and independent code/prompt/transcript reviews.
 - Specification: `docs/superpowers/specs/2026-07-16-history-driven-order-flow-design.md`.
 - Implementation plan: `docs/superpowers/plans/2026-07-16-history-driven-order-flow.md`; execution started through TDD and subagent review checkpoints.
+- Local evidence: `python -m pytest -q` -> `171 passed`; dialog regression -> `OK=31 PARTIAL=0 FAIL=0`; fake history-order evaluation -> `10/10` scenarios and `46/46` turns; compile and diff checks passed.
+- Current gate: run the same history-order scenarios repeatedly through the production-configured Gemini provider on the VPS, review every saved transcript, address independent findings, then deploy and verify Jivo services.
 
 ## Update 2026-07-16 (Independent Audit Of Live Dialog Evaluation)
 

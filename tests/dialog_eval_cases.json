@@ -211,10 +211,11 @@
   {
     "id": "T-020",
     "customer_text": "Хочу заказать 10 штук 14.023пр.",
-    "expected_action": "order_intake",
-    "expected_meaning": "Начат сбор заказа без преждевременной передачи менеджеру.",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Товар проверен; дальнейший сбор заказа ведётся по истории без скрытого состояния.",
     "criteria": [
-      "order_draft",
+      "product_lookup",
+      "exact_found",
       "no_handoff"
     ]
   },
@@ -307,10 +308,11 @@
   {
     "id": "T-029",
     "customer_text": "Хочу заказать 5 штук P-AM02/B-S",
-    "expected_action": "order_intake",
-    "expected_meaning": "Начат сбор заказа; нехватка количества зафиксирована безопасно, без немедленной передачи.",
+    "expected_action": "exact_product_lookup",
+    "expected_meaning": "Товар проверен; нехватка количества обрабатывается безопасно без скрытого состояния.",
     "criteria": [
-      "order_draft",
+      "product_lookup",
+      "exact_found",
       "no_handoff",
       "no_fake_price"
     ]

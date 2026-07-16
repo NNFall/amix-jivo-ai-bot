@@ -5,7 +5,7 @@ import httpx
 
 from llm.audit_log import LLMAuditLogger, LLMUsageStats, estimate_cost
 from llm.openai_client import OpenAIService
-from llm.prompts import SYSTEM_PROMPT, build_product_facts_messages
+from llm.prompts import PRODUCT_FACTS_RESPONSE_PROMPT, SYSTEM_PROMPT, build_product_facts_messages
 from llm.tool_schemas import OPENAI_TOOLS
 from settings import get_settings
 
@@ -357,6 +357,13 @@ def test_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
 def test_order_prompt_does_not_search_or_handoff_before_there_is_enough_context() -> None:
     assert "Не вызывай поиск, пока искать ещё нечего" in SYSTEM_PROMPT
     assert "отсутствующие сведения заказа уточняй" in SYSTEM_PROMPT.lower()
+
+
+def test_product_result_prompt_continues_confirmed_order_intake_from_history() -> None:
+    prompt = PRODUCT_FACTS_RESPONSE_PROMPT.lower()
+    assert "продолжи сбор заказа по истории" in prompt
+    assert "один следующий недостающий вопрос" in prompt
+    assert "до подтверждения итога" in prompt
 
 
 def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:

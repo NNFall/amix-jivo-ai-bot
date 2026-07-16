@@ -1,0 +1,389 @@
+[
+  {
+    "id": "multi_item_order_from_history",
+    "title": "Заказ из истории с исправлениями и подтверждением",
+    "covers": [
+      "multiple_products_different_quantities",
+      "correction",
+      "delivery",
+      "pickup",
+      "invoice_payment_with_inn",
+      "confirmation_and_handoff"
+    ],
+    "turns": [
+      {
+        "input": "Хочу заказать 2 штуки 14.023л. и 5 штук 14.023пр.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [
+                  {"query": "14.023л.", "requested_quantity": 2},
+                  {"query": "14.023пр.", "requested_quantity": 5}
+                ],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Нашёл обе позиции: 2 левых и 5 правых. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["2", "5"]}
+        ]
+      },
+      {
+        "input": "Доставкой по Санкт-Петербургу.",
+        "fake": {
+          "response": "Записал доставку по Санкт-Петербургу. Подскажите желаемый срок получения."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "response_contains_any", "values": ["доставк", "срок"]}
+        ]
+      },
+      {
+        "input": "Нет, исправьте: правых нужно 7, и лучше самовывоз.",
+        "fake": {
+          "response": "Исправил: 2 левых, 7 правых, получение самовывозом. Как планируете оплатить?"
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "response_contains_all", "values": ["7", "самовывоз"]}
+        ]
+      },
+      {
+        "input": "Оплата по счёту.",
+        "fake": {
+          "response": "Для выставления счёта укажите, пожалуйста, ИНН организации или ИП."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "response_contains", "value": "ИНН"}
+        ]
+      },
+      {
+        "input": "ИНН 7812345678.",
+        "fake": {
+          "response": "ИНН записал. Подскажите имя и телефон для связи."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "response_contains_any", "values": ["имя", "телефон"]}
+        ]
+      },
+      {
+        "input": "Иван, +7 900 123-45-67, заберу в пятницу.",
+        "fake": {
+          "response": "Итог: 2 шт. 14.023л., 7 шт. 14.023пр., самовывоз в пятницу, оплата по счёту, ИНН 7812345678, Иван, +7 900 123-45-67. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["14.023л", "14.023пр", "самовывоз", "ИНН", "Всё верно"]}
+        ]
+      },
+      {
+        "input": "Да, всё верно, подтверждаю.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 2 шт. 14.023л., 7 шт. 14.023пр., самовывоз в пятницу, оплата по счёту, ИНН 7812345678, Иван, +7 900 123-45-67."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "free_description_without_code",
+    "title": "Поиск товара по свободному описанию",
+    "covers": ["free_description_without_code"],
+    "turns": [
+      {
+        "input": "Нужна белая мебельная ручка 128 мм, две штуки.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "Ручка белая 128 мм", "requested_quantity": 2}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Нашёл белую ручку 128 мм. Две штуки доступны. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_result_status", "value": "точное_совпадение"},
+          {"type": "response_contains", "value": "ручк"}
+        ]
+      },
+      {
+        "input": "Нужна доставка в Тверь на следующей неделе.",
+        "fake": {
+          "response": "Записал доставку в Тверь на следующей неделе. Как планируете оплатить?"
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["оплат", "Твер"]}
+        ]
+      },
+      {
+        "input": "Оплачу наличными.",
+        "fake": {
+          "response": "Хорошо. Подскажите имя и телефон для связи."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон"]}
+        ]
+      },
+      {
+        "input": "Анна, +7 911 222-33-44.",
+        "fake": {
+          "response": "Итог: 2 белые ручки 128 мм, доставка в Тверь на следующей неделе, оплата наличными, Анна, +7 911 222-33-44. Всё правильно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["2", "Твер", "Анна", "правильно"]}
+        ]
+      },
+      {
+        "input": "Да, правильно.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 2 белые ручки 128 мм, доставка в Тверь на следующей неделе, оплата наличными, Анна, +7 911 222-33-44."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ambiguous_product",
+    "title": "Неоднозначный артикул",
+    "covers": ["ambiguous_product"],
+    "turns": [
+      {
+        "input": "Нужно 3 штуки ABC-100.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "ABC-100", "requested_quantity": 3}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "По артикулу ABC-100 есть два варианта. Уточните код товара: 10001 или 10002."
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_result_status", "value": "несколько_точных_позиций"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Код 10002.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "10002", "requested_quantity": 3}],
+                "intent": "clarification",
+                "use_dialog_context": true
+              }
+            }
+          ],
+          "response": "Уточнил позицию с кодом 10002. Три штуки доступны. Как будете получать и оплачивать заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"},
+          {"type": "response_contains", "value": "10002"}
+        ]
+      },
+      {
+        "input": "Самовывоз завтра, оплата наличными. Сергей, +7 912 300-40-50.",
+        "fake": {
+          "response": "Итог: 3 штуки ABC-100, код 10002, самовывоз завтра, оплата наличными, Сергей, +7 912 300-40-50. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["10002", "самовывоз", "Сергей", "верно"]}
+        ]
+      },
+      {
+        "input": "Верно.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 3 штуки ABC-100, код 10002, самовывоз завтра, оплата наличными, Сергей, +7 912 300-40-50."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "missing_product",
+    "title": "Ненайденный товар",
+    "covers": ["missing_product"],
+    "turns": [
+      {
+        "input": "Нужен артикул ZZZ-404, 4 штуки.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "ZZZ-404", "requested_quantity": 4}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Точное совпадение по ZZZ-404 не найдено. Проверьте, пожалуйста, артикул или пришлите название товара."
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_result_status", "value": "не_найдено"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Ошибся, нужен P-AM02/B-S, 4 штуки.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Нашёл P-AM02/B-S. Четыре штуки доступны. Как будете получать заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"},
+          {"type": "response_contains", "value": "P-AM02/B-S"}
+        ]
+      },
+      {
+        "input": "Доставка в Казань до конца месяца, оплата по счёту.",
+        "fake": {
+          "response": "Записал доставку в Казань до конца месяца и оплату по счёту. Укажите ИНН, имя и телефон."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["ИНН", "имя", "телефон"]}
+        ]
+      },
+      {
+        "input": "ИНН 1650123456, Олег, +7 903 700-80-90.",
+        "fake": {
+          "response": "Итог: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90. Всё верно?"
+        },
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["P-AM02/B-S", "Казан", "ИНН", "Олег", "верно"]}
+        ]
+      },
+      {
+        "input": "Да, подтверждаю.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "handoff_to_manager",
+              "arguments": {
+                "reason": "order_creation",
+                "summary": "Клиент подтвердил: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90."
+              }
+            }
+          ]
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "cancel_and_change_topic",
+    "title": "Отмена заказа и смена темы",
+    "covers": ["cancel_or_topic_change"],
+    "turns": [
+      {
+        "input": "Хочу заказать одну P-AM02/B-S.",
+        "fake": {
+          "tool_calls": [
+            {
+              "name": "search_products",
+              "arguments": {
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}],
+                "intent": "order",
+                "use_dialog_context": false
+              }
+            }
+          ],
+          "response": "Нашёл P-AM02/B-S. Одна штука доступна. Как вам удобнее получить заказ?"
+        },
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"}
+        ]
+      },
+      {
+        "input": "Отмените, заказ не нужен. Лучше скажите режим работы в субботу.",
+        "fake": {
+          "response": "Заказ не продолжаю. В субботу AMIX работает с 10:00 до 17:00."
+        },
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["суббот", "10:00", "17:00"]}
+        ]
+      }
+    ]
+  }
+]

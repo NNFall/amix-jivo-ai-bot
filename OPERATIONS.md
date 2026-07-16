@@ -1,3 +1,20 @@
+# Iteration 66 - history-driven order implementation and local verification (2026-07-16)
+
+- Replaced runtime order-draft orchestration with conversation-history-driven behavior; the model now receives the complete chronological chat, including assistant function calls and function results.
+- Removed `update_order_draft` from tool declarations, execution, retries, context generation and guards. The only model tools are `search_products` and `handoff_to_manager`.
+- Kept the legacy `order_drafts` table/model for one rollback window, but confirmed that runtime routing and evaluation do not read or write it.
+- Reworked the order prompt into compact generalized rules: collect missing details naturally, apply customer corrections, summarize the complete order, ask for explicit confirmation and only then hand off to a manager.
+- Added per-product requested quantities to `search_products`; each product is checked independently without exposing exact free stock.
+- Sanitized historical product tool results before sending them to Gemini so old exact stock values are not reintroduced through the transcript.
+- Added direct-response and fallback guards against exact-stock, price and weight disclosure in quantity-only conversations; preserved fractional quantities without integer truncation.
+- Kept the three-attempt protection per product code and removed automatic shortage handoff during order collection.
+- Added `scripts/run_history_order_eval.py` with isolated SQLite, fake/live provider modes, repeated scenarios, full chronological evidence, function calls/results, latency, token/cost accounting, manifest hashes and JSON/Markdown reports.
+- Expanded evaluation coverage to multi-product quantities, corrections, delivery and pickup, invoice payment with INN, free descriptions, ambiguous and missing products, cancellation, summary, confirmation and manager handoff.
+- Fresh local verification: `python -m pytest -q` -> `171 passed`; `python -m compileall api core database jivo llm products scripts -q` -> passed; `git diff --check` -> passed.
+- Dialog regression: `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Fake history-order evaluation with two independent repetitions -> `PASS`, 10/10 scenario runs and 46/46 customer turns.
+- Started independent read-only reviews for code/privacy, prompt/order behavior and evaluation methodology. Live Gemini server evaluation and production deployment remain pending.
+
 # Iteration 65 - history-driven order flow design (2026-07-16)
 
 - The user rejected any separate order-draft or final-summary function and approved a model-driven order flow using only `search_products` and `handoff_to_manager`.
