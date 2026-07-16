@@ -32,6 +32,45 @@ def test_transcript_skips_tool_messages(isolated_app_env) -> None:
     assert "exact_matches_count" not in transcript
 
 
+def test_transcript_returns_complete_visible_history_without_limit_state(isolated_app_env) -> None:
+    expected_lines = []
+
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:full-transcript")
+        get_or_create_chat(session, "chat:full-transcript", customer.id)
+
+        for index in range(22):
+            sender_role = "client" if index % 2 == 0 else "bot"
+            speaker = "Клиент" if sender_role == "client" else "Бот"
+            text = f"visible message {index:02d}"
+            append_message(session, "chat:full-transcript", sender_role, text)
+            expected_lines.append(f"{speaker}: {text}")
+
+            if index == 10:
+                append_message(
+                    session,
+                    "chat:full-transcript",
+                    "assistant_tool_call",
+                    "",
+                    payload={"tool_calls": [{"id": "hidden_call"}]},
+                )
+                append_message(
+                    session,
+                    "chat:full-transcript",
+                    "tool",
+                    '{"hidden_tool_payload":true}',
+                    payload={"tool_name": "search_products"},
+                )
+
+        service = DialogService()
+        transcript = service.get_transcript(session, "chat:full-transcript")
+
+    assert transcript.splitlines() == expected_lines
+    assert "hidden_call" not in transcript
+    assert "hidden_tool_payload" not in transcript
+    assert not hasattr(service, "history_limit")
+
+
 def test_get_llm_messages_returns_complete_chronological_history(isolated_app_env) -> None:
     tool_calls = [
         {
@@ -77,6 +116,6 @@ def test_get_llm_messages_returns_complete_chronological_history(isolated_app_en
             append_message(session, "chat:full-history", sender_role, content)
             expected.append({"role": llm_role, "content": content})
 
-        messages = DialogService(history_limit=3).get_llm_messages(session, "chat:full-history")
+        messages = DialogService().get_llm_messages(session, "chat:full-history")
 
     assert messages == expected

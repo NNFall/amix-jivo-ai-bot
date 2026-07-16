@@ -2,9 +2,6 @@ from database.repositories import list_messages
 
 
 class DialogService:
-    def __init__(self, history_limit: int = 20) -> None:
-        self.history_limit = history_limit
-
     def get_transcript(self, session, external_chat_id: str) -> str:
         messages = list_messages(session, external_chat_id)
         lines: list[str] = []

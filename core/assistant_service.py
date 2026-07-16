@@ -70,7 +70,8 @@ class AssistantReply:
 class AssistantService:
     def __init__(self) -> None:
         settings = get_settings()
-        self.dialog_service = DialogService(history_limit=settings.history_limit)
+        self.dialog_service = DialogService()
+        self.recent_history_limit = settings.history_limit
         self.handoff_service = HandoffService()
         self.order_intake_service = OrderIntakeService()
         self.openai_service = OpenAIService(settings)
@@ -158,7 +159,7 @@ class AssistantService:
             )
 
         pending_messages = self._collect_pending_client_messages(
-            list_recent_messages(session, chat.external_chat_id, limit=self.dialog_service.history_limit)
+            list_recent_messages(session, chat.external_chat_id, limit=self.recent_history_limit)
         )
         if not pending_messages:
             return self._superseded_reply()
@@ -192,7 +193,7 @@ class AssistantService:
         if self._turn_is_stale(is_turn_current):
             return self._superseded_reply()
 
-        recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
+        recent_messages = list_recent_messages(session, external_chat_id, limit=self.recent_history_limit)
         order_dialog_active = get_order_draft(session, external_chat_id) is not None or self._looks_like_order_request(customer_text)
         article_candidates = [] if order_dialog_active else self._sort_queries_by_text_order(
             extract_article_candidates(customer_text), customer_text
@@ -1442,7 +1443,7 @@ class AssistantService:
         product_code: str,
     ) -> int:
         count = 0
-        for message in list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit):
+        for message in list_recent_messages(session, external_chat_id, limit=self.recent_history_limit):
             guard = (message.payload or {}).get("stock_quantity_guard")
             if not isinstance(guard, dict):
                 continue
@@ -2034,7 +2035,7 @@ class AssistantService:
         product_lookup_result: dict | None = None,
         backend_actions: dict | None = None,
     ) -> dict[str, Any]:
-        recent_messages = list_recent_messages(session, external_chat_id, limit=self.dialog_service.history_limit)
+        recent_messages = list_recent_messages(session, external_chat_id, limit=self.recent_history_limit)
         last_lookup = product_lookup_result or self._find_latest_product_lookup(recent_messages)
         active_product = self._extract_active_product(last_lookup)
         pending_clarification = self._extract_pending_clarification(last_lookup)
