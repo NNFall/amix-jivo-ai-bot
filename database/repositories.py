@@ -9,7 +9,6 @@ from database.models import (
     JivoEvent,
     LLMCall,
     Message,
-    OrderDraft,
     ProcessingError,
     Product,
     ProductImport,
@@ -103,41 +102,10 @@ def reset_chat_context(session, external_chat_id: str) -> int:
 
     deleted_messages = session.execute(delete(Message).where(Message.chat_id == chat.id)).rowcount or 0
     session.execute(delete(Handoff).where(Handoff.external_chat_id == external_chat_id))
-    session.execute(delete(OrderDraft).where(OrderDraft.chat_id == chat.id))
     chat.status = "active"
     session.add(chat)
     session.flush()
     return int(deleted_messages)
-
-
-def get_order_draft(session, external_chat_id: str) -> OrderDraft | None:
-    chat = get_chat_by_external_id(session, external_chat_id)
-    if chat is None:
-        return None
-    return session.scalar(select(OrderDraft).where(OrderDraft.chat_id == chat.id))
-
-
-def upsert_order_draft(
-    session,
-    *,
-    external_chat_id: str,
-    status: str,
-    data: dict,
-    summary: str | None,
-) -> OrderDraft:
-    chat = get_chat_by_external_id(session, external_chat_id)
-    if chat is None:
-        raise ValueError(f"Chat {external_chat_id} is not registered")
-
-    draft = session.scalar(select(OrderDraft).where(OrderDraft.chat_id == chat.id))
-    if draft is None:
-        draft = OrderDraft(chat_id=chat.id)
-    draft.status = status
-    draft.data = data
-    draft.summary = summary
-    session.add(draft)
-    session.flush()
-    return draft
 
 
 def create_llm_call(

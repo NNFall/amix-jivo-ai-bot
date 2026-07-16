@@ -1228,49 +1228,43 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     assert "подключится к диалогу" in reply.text
 
 
-def test_assistant_service_blocks_text_only_order_handoff(isolated_app_env) -> None:
-    with session_scope() as session:
-        session.add(
-            Product(
-                code="770",
-                article="14.023пр.",
-                normalized_article="14023ПР",
-                free_stock=Decimal("220"),
-                unit="шт",
-                retail_price=Decimal("473"),
-                raw_payload={},
-            )
-        )
-
-    captured: dict = {}
+def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
-
-    def capture_messages(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return LLMTurnResult(text="Артикул найден. Передаю вопрос менеджеру.", tool_calls=[])
-
-    service.openai_service.run_messages = capture_messages
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="handoff_to_manager",
+                arguments={
+                    "reason": "order_creation",
+                    "summary": "Клиент подтвердил заказ: 10 ручек, доставка в Тверь.",
+                },
+                call_id="history-order-handoff",
+            )
+        ],
+    )
 
     with session_scope() as session:
         reply = service.handle_client_message(
             session,
-            external_chat_id="telegram:backend-actions",
-            external_client_id="telegram-user:backend-actions",
+            external_chat_id="telegram:history-order",
+            external_client_id="telegram-user:history-order",
             customer_name="Demo User",
-            customer_text="Хочу заказать 10 штук 14.023пр.",
-            inbound_event_id="tg-backend-actions",
-            outbound_event_id="tg-backend-actions:bot",
-            payload={"platform": "telegram"},
+            customer_text="Да, всё верно",
+            inbound_event_id="history-order-in",
+            outbound_event_id="history-order-out",
+            payload={},
             handoff_mode="demo",
         )
 
-    content = captured["messages"][0]["content"]
-    assert reply.handoff_reason is None
-    assert "товары" in reply.text.lower()
-    assert "количеств" in reply.text.lower()
-    assert "order_draft" in content
-    assert not any(message.get("role") == "tool" for message in captured["messages"])
+    assert reply.handoff_reason == "order_creation"
+    with session_scope() as session:
+        handoff = session.query(Handoff).one()
+        tool_call = session.query(Message).filter(Message.sender_role == "assistant_tool_call").one()
+
+    assert handoff.reason == "order_creation"
+    assert "10 ручек" in tool_call.payload["tool_calls"][0]["function"]["arguments"]
 
 
 def test_assistant_service_sends_role_history_and_active_product_context(isolated_app_env) -> None:
@@ -1909,7 +1903,7 @@ def test_assistant_service_does_not_match_code_from_punctuated_article_query(iso
     assert lookup["per_query_results"][0]["raw_backend_query"] == "14023"
 
 
-def test_order_request_without_llm_does_not_handoff_or_expose_stock(isolated_app_env) -> None:
+def test_order_request_without_llm_uses_stock_guard_without_exposing_exact_stock(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
             Product(
@@ -1937,10 +1931,10 @@ def test_order_request_without_llm_does_not_handoff_or_expose_stock(isolated_app
             handoff_mode="demo",
         )
 
-    assert reply.handoff_reason is None
+    assert reply.handoff_reason == "requested_quantity_exceeds_stock"
     assert "1 шт" not in reply.text
     with session_scope() as session:
-        assert session.query(Handoff).count() == 0
+        assert session.query(Handoff).one().reason == "requested_quantity_exceeds_stock"
 
 
 def test_stock_shortage_handoff_rewrites_order_wording() -> None:
@@ -2482,308 +2476,47 @@ def test_assistant_service_writes_llm_debug_payload(isolated_app_env, monkeypatc
     assert '"stage": "test_request"' in content
     assert '"role": "system"' in content
     assert '"role": "user"' in content
-def test_order_request_starts_intake_without_immediate_handoff(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    turns = iter(
-        [
-            LLMTurnResult(
-                text=None,
-                tool_calls=[ToolCall(name="update_order_draft", arguments={}, call_id="order-update-1")],
-            ),
-            LLMTurnResult(
-                text="Какие товары вы хотите заказать и в каком количестве?",
-                tool_calls=[],
-            ),
-        ]
-    )
-    service.openai_service.run_messages = lambda **kwargs: next(turns)
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-intake",
-            external_client_id="telegram-user:order-intake",
-            customer_name="Demo User",
-            customer_text="Мне нужно оформить заказ",
-            inbound_event_id="tg-order-intake-1",
-            outbound_event_id="tg-order-intake-1:bot",
-            payload={"platform": "telegram"},
-            handoff_mode="demo",
-        )
-
-    assert reply.handoff_reason is None
-    assert reply.text == "Какие товары вы хотите заказать и в каком количестве?"
-
-    with session_scope() as session:
-        assert session.query(Handoff).count() == 0
-        draft = session.query(OrderDraft).one()
-        messages = session.query(Message).order_by(Message.id.asc()).all()
-        llm_calls = session.query(LLMCall).all()
-
-    assert draft.status == "collecting"
-    assert [call.purpose for call in llm_calls] == ["direct", "order_intake"]
-    assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
-    assert messages[1].payload["tool_calls"][0]["function"]["name"] == "update_order_draft"
 
 
-def test_explicit_order_retries_with_required_order_tool_when_model_returns_only_text(isolated_app_env) -> None:
+def test_legacy_order_draft_does_not_change_routing_or_force_a_tool_retry(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
     requests: list[dict] = []
-    turns = iter(
-        [
-            LLMTurnResult(text="Какие товары вам нужны?", tool_calls=[]),
-            LLMTurnResult(
-                text=None,
-                tool_calls=[ToolCall(name="update_order_draft", arguments={}, call_id="forced-order-update")],
-            ),
-            LLMTurnResult(
-                text="Какие товары вы хотите заказать и в каком количестве?",
-                tool_calls=[],
-            ),
-        ]
-    )
 
     def run_messages(**kwargs):
         requests.append(kwargs)
-        return next(turns)
+        return LLMTurnResult(text="Уточните, пожалуйста, ваш вопрос.", tool_calls=[])
 
     service.openai_service.run_messages = run_messages
 
     with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="legacy-draft-user")
+        chat = get_or_create_chat(session, "telegram:legacy-draft", customer.id)
+        session.add(
+            OrderDraft(
+                chat_id=chat.id,
+                status="collecting",
+                data={"items": [{"description": "старый товар", "quantity": 1}]},
+                summary=None,
+            )
+        )
+        session.flush()
+
         reply = service.handle_client_message(
             session,
-            external_chat_id="telegram:forced-order-tool",
-            external_client_id="telegram-user:forced-order-tool",
+            external_chat_id=chat.external_chat_id,
+            external_client_id="legacy-draft-user",
             customer_name="Demo User",
-            customer_text="Мне нужно оформить заказ",
-            inbound_event_id="forced-order-tool-in",
-            outbound_event_id="forced-order-tool-out",
+            customer_text="Есть вопрос",
+            inbound_event_id="legacy-draft-in",
+            outbound_event_id="legacy-draft-out",
             payload={},
             handoff_mode="demo",
         )
 
-    assert reply.text == "Какие товары вы хотите заказать и в каком количестве?"
-    assert requests[1]["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "update_order_draft"},
-    }
-    with session_scope() as session:
-        assert session.query(OrderDraft).one().status == "collecting"
-        assert [call.purpose for call in session.query(LLMCall).order_by(LLMCall.id.asc())] == [
-            "direct",
-            "order_tool_retry",
-            "order_intake",
-        ]
-
-
-def test_complete_order_is_handed_off_only_after_explicit_confirmation(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    complete_patch = {
-        "items": [{"description": "чёрные петли Блюм", "quantity": 10}],
-        "needed_by": "в течение недели",
-        "fulfillment": {"method": "delivery", "city": "Тверь"},
-        "payment": {"method": "cash"},
-        "contact": {"name": "Наталья", "phone": "+7 900 000-00-00"},
-    }
-    turns = iter(
-        [
-            LLMTurnResult(
-                text=None,
-                tool_calls=[
-                    ToolCall(name="update_order_draft", arguments=complete_patch, call_id="order-update-complete")
-                ],
-            ),
-            LLMTurnResult(
-                text=(
-                    "Проверьте, пожалуйста: чёрные петли Блюм — 10 шт., доставка в Тверь, "
-                    "оплата наличными, контакт Наталья. Всё верно?"
-                ),
-                tool_calls=[],
-            ),
-            LLMTurnResult(
-                text=None,
-                tool_calls=[
-                    ToolCall(
-                        name="handoff_to_manager",
-                        arguments={"reason": "order_creation", "summary": "Черновик заказа подтверждён"},
-                        call_id="order-handoff",
-                    )
-                ],
-            ),
-        ]
-    )
-    service.openai_service.run_messages = lambda **kwargs: next(turns)
-
-    with session_scope() as session:
-        first_reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-confirm",
-            external_client_id="telegram-user:order-confirm",
-            customer_name="Demo User",
-            customer_text="Нужны 10 чёрных петель Блюм с доставкой в Тверь, оплата наличными. Наталья, +7 900 000-00-00",
-            inbound_event_id="tg-order-confirm-1",
-            outbound_event_id="tg-order-confirm-1:bot",
-            payload={"platform": "telegram"},
-            handoff_mode="demo",
-        )
-        second_reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-confirm",
-            external_client_id="telegram-user:order-confirm",
-            customer_name="Demo User",
-            customer_text="Да, всё верно",
-            inbound_event_id="tg-order-confirm-2",
-            outbound_event_id="tg-order-confirm-2:bot",
-            payload={"platform": "telegram"},
-            handoff_mode="demo",
-        )
-
-    assert first_reply.handoff_reason is None
-    assert "Всё верно?" in first_reply.text
-    assert second_reply.handoff_reason == "order_creation"
-
-    with session_scope() as session:
-        draft = session.query(OrderDraft).one()
-        handoffs = session.query(Handoff).all()
-        messages = session.query(Message).order_by(Message.id.asc()).all()
-
-    assert draft.status == "handed_off"
-    assert len(handoffs) == 1
-    assert handoffs[0].reason == "order_creation"
-    handoff_call = next(
-        message
-        for message in messages
-        if message.sender_role == "assistant_tool_call"
-        and message.payload["tool_calls"][0]["function"]["name"] == "handoff_to_manager"
-    )
-    assert "чёрные петли Блюм" in handoff_call.payload["tool_calls"][0]["function"]["arguments"]
-
-
-def test_order_handoff_tool_is_blocked_before_confirmation(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text=None,
-        tool_calls=[
-            ToolCall(
-                name="handoff_to_manager",
-                arguments={"reason": "order_creation", "summary": "Клиент хочет заказать"},
-                call_id="premature-order-handoff",
-            )
-        ],
-    )
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-guard",
-            external_client_id="telegram-user:order-guard",
-            customer_name="Demo User",
-            customer_text="Мне нужно оформить заказ",
-            inbound_event_id="tg-order-guard-1",
-            outbound_event_id="tg-order-guard-1:bot",
-            payload={"platform": "telegram"},
-            handoff_mode="demo",
-        )
-
-    assert reply.handoff_reason is None
-    assert "товар" in reply.text.lower()
-    assert "количеств" in reply.text.lower()
-    with session_scope() as session:
-        assert session.query(Handoff).count() == 0
-
-
-def test_active_order_blocks_alternative_llm_handoff_reason(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-
-    with session_scope() as session:
-        customer = get_or_create_customer(session, external_client_id="order-alt-reason-user")
-        get_or_create_chat(session, "telegram:order-alt-reason", customer.id)
-        service.order_intake_service.update_draft(
-            session,
-            external_chat_id="telegram:order-alt-reason",
-            patch={"items": [{"description": "ручки", "quantity": 5}]},
-        )
-
-    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text=None,
-        tool_calls=[
-            ToolCall(
-                name="handoff_to_manager",
-                arguments={"reason": "bot_uncertain", "summary": "Обход order guard"},
-                call_id="alternative-order-handoff",
-            )
-        ],
-    )
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-alt-reason",
-            external_client_id="order-alt-reason-user",
-            customer_name="Demo User",
-            customer_text="продолжим заказ",
-            inbound_event_id="order-alt-reason-in",
-            outbound_event_id="order-alt-reason-out",
-            payload={},
-            handoff_mode="demo",
-        )
-
-    assert reply.handoff_reason is None
-    with session_scope() as session:
-        assert session.query(Handoff).count() == 0
-
-
-def test_order_confirmation_is_blocked_if_canonical_summary_was_not_shown(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-
-    with session_scope() as session:
-        customer = get_or_create_customer(session, external_client_id="order-no-summary-user")
-        get_or_create_chat(session, "telegram:order-no-summary", customer.id)
-        service.order_intake_service.update_draft(
-            session,
-            external_chat_id="telegram:order-no-summary",
-            patch={
-                "items": [{"description": "ручки", "quantity": 5}],
-                "needed_by": "до конца месяца",
-                "fulfillment": {"method": "pickup"},
-                "payment": {"method": "card"},
-                "contact": {"name": "Ирина", "phone": "+7 900 111-22-33"},
-            },
-        )
-
-    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text=None,
-        tool_calls=[
-            ToolCall(
-                name="handoff_to_manager",
-                arguments={"reason": "order_creation", "summary": "Заказ подтверждён"},
-                call_id="order-no-summary-handoff",
-            )
-        ],
-    )
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-no-summary",
-            external_client_id="order-no-summary-user",
-            customer_name="Demo User",
-            customer_text="да",
-            inbound_event_id="order-no-summary-in",
-            outbound_event_id="order-no-summary-out",
-            payload={},
-            handoff_mode="demo",
-        )
-
-    assert reply.handoff_reason is None
-    with session_scope() as session:
-        assert session.query(Handoff).count() == 0
-
-
+    assert reply.text == "Уточните, пожалуйста, ваш вопрос."
+    assert len(requests) == 1
+    assert requests[0].get("tool_choice", "auto") == "auto"
 def test_assistant_persists_llm_usage_for_each_provider_call(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
@@ -2854,181 +2587,3 @@ def test_llm_usage_survives_later_transaction_rollback(isolated_app_env) -> None
 
     with session_scope() as session:
         assert session.query(LLMCall).filter(LLMCall.request_id.like("direct:%")).count() == 1
-
-
-def test_order_not_found_warning_overrides_unsafe_llm_claim(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    turns = iter(
-        [
-            LLMTurnResult(
-                text=None,
-                tool_calls=[
-                    ToolCall(
-                        name="update_order_draft",
-                        arguments={"items": [{"identifier": "20910", "quantity": 1}]},
-                        call_id="order-not-found-update",
-                    )
-                ],
-            ),
-            LLMTurnResult(text="Такого товара не существует.", tool_calls=[]),
-        ]
-    )
-    service.openai_service.run_messages = lambda **kwargs: next(turns)
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-not-found",
-            external_client_id="telegram-user:order-not-found",
-            customer_name="Demo User",
-            customer_text="Хочу заказать код 20910, 1 штуку",
-            inbound_event_id="order-not-found-in",
-            outbound_event_id="order-not-found-out",
-            payload={},
-            handoff_mode="demo",
-        )
-
-    assert "Возможно, товар не в наличии или код указан неверно" in reply.text
-    assert "не существует" not in reply.text
-
-
-def test_stale_order_intake_turn_keeps_usage_but_discards_hidden_state(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    current = {"value": True}
-    calls = {"count": 0}
-
-    def run_messages(**kwargs):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            return LLMTurnResult(
-                text=None,
-                tool_calls=[
-                    ToolCall(
-                        name="update_order_draft",
-                        arguments={"items": [{"identifier": "770", "quantity": 2}]},
-                        call_id="stale-order-update",
-                    )
-                ],
-                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-            )
-        current["value"] = False
-        return LLMTurnResult(
-            text="Скрытый устаревший ответ",
-            tool_calls=[],
-            usage={"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
-        )
-
-    service.openai_service.run_messages = run_messages
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:stale-order",
-            external_client_id="telegram-user:stale-order",
-            customer_name="Demo User",
-            customer_text="Хочу заказать код 770, 2 штуки",
-            inbound_event_id="stale-order-in",
-            outbound_event_id="stale-order-out",
-            payload={},
-            handoff_mode="demo",
-            is_turn_current=lambda: current["value"],
-        )
-
-    assert reply.superseded is True
-    with session_scope() as session:
-        assert session.query(OrderDraft).count() == 0
-        assert [message.sender_role for message in session.query(Message).order_by(Message.id.asc())] == ["client"]
-        assert session.query(LLMCall).count() == 2
-
-
-def test_dissatisfied_customer_can_handoff_during_active_order(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-
-    with session_scope() as session:
-        customer = get_or_create_customer(session, external_client_id="order-dissatisfied-user")
-        get_or_create_chat(session, "telegram:order-dissatisfied", customer.id)
-        service.order_intake_service.update_draft(
-            session,
-            external_chat_id="telegram:order-dissatisfied",
-            patch={"items": [{"description": "ручки", "quantity": 5}]},
-        )
-
-    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
-        text=None,
-        tool_calls=[
-            ToolCall(
-                name="handoff_to_manager",
-                arguments={"reason": "client_dissatisfied", "summary": "Клиент недоволен консультацией"},
-                call_id="dissatisfied-handoff",
-            )
-        ],
-    )
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-dissatisfied",
-            external_client_id="order-dissatisfied-user",
-            customer_name="Demo User",
-            customer_text="Это ужасно, вы мне вообще не помогаете",
-            inbound_event_id="order-dissatisfied-in",
-            outbound_event_id="order-dissatisfied-out",
-            payload={},
-            handoff_mode="demo",
-        )
-
-    assert reply.handoff_reason == "client_dissatisfied"
-    with session_scope() as session:
-        assert session.query(Handoff).count() == 1
-
-
-def test_order_reply_does_not_leak_exact_stock_from_model(isolated_app_env) -> None:
-    service = AssistantService()
-    service.openai_service.enabled = True
-    with session_scope() as session:
-        session.add(
-            Product(
-                code="770",
-                article="14.023пр.",
-                normalized_article=normalize_article("14.023пр."),
-                free_stock=Decimal("220"),
-                unit="шт",
-                raw_payload={},
-            )
-        )
-
-    turns = iter(
-        [
-            LLMTurnResult(
-                text=None,
-                tool_calls=[
-                    ToolCall(
-                        name="update_order_draft",
-                        arguments={"items": [{"identifier": "770", "quantity": 2}]},
-                        call_id="order-stock-update",
-                    )
-                ],
-            ),
-            LLMTurnResult(text="Товар есть, на складе осталось 220 шт.", tool_calls=[]),
-        ]
-    )
-    service.openai_service.run_messages = lambda **kwargs: next(turns)
-
-    with session_scope() as session:
-        reply = service.handle_client_message(
-            session,
-            external_chat_id="telegram:order-stock-leak",
-            external_client_id="telegram-user:order-stock-leak",
-            customer_name="Demo User",
-            customer_text="Хочу заказать код 770, 2 штуки",
-            inbound_event_id="order-stock-leak-in",
-            outbound_event_id="order-stock-leak-out",
-            payload={},
-            handoff_mode="demo",
-        )
-
-    assert "220" not in reply.text
-    assert "Когда вам нужен заказ?" in reply.text

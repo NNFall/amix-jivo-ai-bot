@@ -13,7 +13,6 @@ from database.repositories import (
     append_message,
     create_llm_call,
     get_chat_by_external_id,
-    get_order_draft,
     get_or_create_chat,
     get_or_create_customer,
     list_recent_messages,
@@ -27,7 +26,6 @@ from settings import get_settings
 
 from .dialog_service import DialogService
 from .handoff_service import HandoffService
-from .order_intake_service import OrderIntakeService
 
 
 logger = logging.getLogger(__name__)
@@ -73,7 +71,6 @@ class AssistantService:
         self.dialog_service = DialogService()
         self.recent_history_limit = settings.history_limit
         self.handoff_service = HandoffService()
-        self.order_intake_service = OrderIntakeService()
         self.openai_service = OpenAIService(settings)
         self.debug_lookup_logs = settings.assistant_debug_lookup_logs
         self.debug_llm_payloads = settings.assistant_debug_llm_payloads
@@ -194,10 +191,7 @@ class AssistantService:
             return self._superseded_reply()
 
         recent_messages = list_recent_messages(session, external_chat_id, limit=self.recent_history_limit)
-        order_dialog_active = get_order_draft(session, external_chat_id) is not None or self._looks_like_order_request(customer_text)
-        article_candidates = [] if order_dialog_active else self._sort_queries_by_text_order(
-            extract_article_candidates(customer_text), customer_text
-        )
+        article_candidates = self._sort_queries_by_text_order(extract_article_candidates(customer_text), customer_text)
         if not article_candidates:
             named_product_query = self._extract_named_product_query(customer_text)
             if named_product_query:
@@ -330,7 +324,7 @@ class AssistantService:
                 is_turn_current=is_turn_current,
             )
 
-        company_answer = None if order_dialog_active else self._build_company_faq_answer(customer_text)
+        company_answer = self._build_company_faq_answer(customer_text)
         if company_answer and (self.deterministic_company_faq_enabled or not self.openai_service.enabled):
             self._append_bot_message(
                 session,
@@ -451,26 +445,6 @@ class AssistantService:
         if self._turn_is_stale(is_turn_current):
             return self._superseded_reply()
 
-        if order_dialog_active and not first_turn.tool_calls:
-            forced_request_id = self._new_llm_request_id(external_chat_id, "order_tool_retry")
-            forced_turn = self._run_llm_messages(
-                session,
-                external_chat_id=external_chat_id,
-                outbound_event_id=outbound_event_id,
-                request_id=forced_request_id,
-                purpose="order_tool_retry",
-                messages=messages,
-                tools=OPENAI_TOOLS,
-                tool_choice={
-                    "type": "function",
-                    "function": {"name": "update_order_draft"},
-                },
-            )
-            if self._turn_is_stale(is_turn_current):
-                return self._superseded_reply()
-            if forced_turn.tool_calls:
-                first_turn = forced_turn
-
         tool_reply = self._handle_tool_calls(
             session,
             external_chat_id=external_chat_id,
@@ -494,22 +468,14 @@ class AssistantService:
 
         handoff_reason = None
         if self._reply_claims_handoff(reply_text):
-            if order_dialog_active:
-                draft_result = self.order_intake_service.update_draft(
-                    session,
-                    external_chat_id=external_chat_id,
-                    patch={},
-                )
-                reply_text = self._build_order_intake_fallback(draft_result)
-            else:
-                handoff_reason = "bot_uncertain"
-                self._register_handoff_action(
-                    session,
-                    external_chat_id=external_chat_id,
-                    reason=handoff_reason,
-                    handoff_mode=handoff_mode,
-                    source="llm_text_handoff_guard",
-                )
+            handoff_reason = "bot_uncertain"
+            self._register_handoff_action(
+                session,
+                external_chat_id=external_chat_id,
+                reason=handoff_reason,
+                handoff_mode=handoff_mode,
+                source="llm_text_handoff_guard",
+            )
 
         self._append_bot_message(
             session,
@@ -624,116 +590,8 @@ class AssistantService:
             if not call.call_id:
                 call.call_id = f"call_{call.name}_{index}"
 
-            if call.name == "update_order_draft":
-                self._append_assistant_tool_call_message(
-                    session,
-                    external_chat_id=external_chat_id,
-                    tool_calls=[call],
-                )
-                draft_result = self.order_intake_service.update_draft(
-                    session,
-                    external_chat_id=external_chat_id,
-                    patch=call.arguments,
-                )
-                tool_result_message = OpenAIService.build_tool_result_message(
-                    tool_call_id=call.call_id,
-                    name="update_order_draft",
-                    result={"tool_name": "update_order_draft", "status": "ok", "result": draft_result},
-                )
-                self._append_tool_result_message(
-                    session,
-                    external_chat_id=external_chat_id,
-                    message=tool_result_message,
-                    tool_name="update_order_draft",
-                )
-                dialog_messages = self._get_provider_safe_llm_messages(session, external_chat_id)
-                runtime_context = self._build_runtime_context(
-                    session,
-                    external_chat_id=external_chat_id,
-                    customer_text=customer_text,
-                    handoff_mode=handoff_mode,
-                )
-                runtime_context = self._redact_order_stock_context(runtime_context)
-                messages = build_llm_messages(dialog_messages=dialog_messages, runtime_context=runtime_context)
-                llm_request_id = self._new_llm_request_id(external_chat_id, "order_intake")
-                turn = self._run_llm_messages(
-                    session,
-                    external_chat_id=external_chat_id,
-                    outbound_event_id=outbound_event_id,
-                    request_id=llm_request_id,
-                    purpose="order_intake",
-                    messages=messages,
-                    commit=False,
-                )
-                if self._turn_is_stale(is_turn_current):
-                    session.rollback()
-                    self._record_llm_call(
-                        session,
-                        external_chat_id=external_chat_id,
-                        outbound_event_id=outbound_event_id,
-                        request_id=llm_request_id,
-                        purpose="order_intake",
-                        turn=turn,
-                    )
-                    session.commit()
-                    return self._superseded_reply()
-                session.commit()
-                reply_text, source = self._build_safe_order_intake_reply(
-                    session,
-                    draft_result,
-                    turn.text,
-                )
-                self._append_bot_message(
-                    session,
-                    external_chat_id=external_chat_id,
-                    text=reply_text,
-                    outbound_event_id=outbound_event_id,
-                    payload={
-                        "source": source,
-                        "order_draft_status": (
-                            "awaiting_confirmation"
-                            if draft_result["status"] in {"ready_for_confirmation", "awaiting_confirmation"}
-                            else draft_result["status"]
-                        ),
-                        "missing_fields": draft_result["missing_fields"],
-                    },
-                )
-                if draft_result["status"] in {"ready_for_confirmation", "awaiting_confirmation"}:
-                    self.order_intake_service.mark_summary_shown(session, external_chat_id)
-                return AssistantReply(text=reply_text)
-
             if call.name == "handoff_to_manager":
                 reason = str(call.arguments.get("reason") or "llm_requested_manager")
-                draft = get_order_draft(session, external_chat_id)
-                if reason in {"order_creation", "order_request"}:
-                    if (
-                        draft is None
-                        or draft.status != "awaiting_confirmation"
-                        or not self.order_intake_service.is_explicit_confirmation(customer_text)
-                        or not self._canonical_order_summary_precedes_confirmation(
-                            session,
-                            external_chat_id=external_chat_id,
-                            summary=draft.summary,
-                        )
-                    ):
-                        return self._block_premature_order_handoff(
-                            session,
-                            external_chat_id=external_chat_id,
-                            call=call,
-                            outbound_event_id=outbound_event_id,
-                        )
-                    self.order_intake_service.mark_handed_off(session, external_chat_id)
-                elif (
-                    draft is not None
-                    and draft.status != "handed_off"
-                    and reason != "client_dissatisfied"
-                ):
-                    return self._block_premature_order_handoff(
-                        session,
-                        external_chat_id=external_chat_id,
-                        call=call,
-                        outbound_event_id=outbound_event_id,
-                    )
                 return self._handoff_reply(
                     session,
                     external_chat_id=external_chat_id,
@@ -741,7 +599,7 @@ class AssistantService:
                     outbound_event_id=outbound_event_id,
                     reason=reason,
                     source="llm_tool",
-                    summary=(draft.summary if reason in {"order_creation", "order_request"} and draft else call.arguments.get("summary")),
+                    summary=call.arguments.get("summary"),
                     is_turn_current=is_turn_current,
                 )
 
@@ -814,164 +672,6 @@ class AssistantService:
                 is_turn_current=is_turn_current,
             )
         return None
-
-    def _block_premature_order_handoff(
-        self,
-        session,
-        *,
-        external_chat_id: str,
-        call: ToolCall,
-        outbound_event_id: str | None,
-    ) -> AssistantReply:
-        self._append_assistant_tool_call_message(
-            session,
-            external_chat_id=external_chat_id,
-            tool_calls=[call],
-        )
-        draft_result = self.order_intake_service.update_draft(
-            session,
-            external_chat_id=external_chat_id,
-            patch={},
-        )
-        tool_result_message = OpenAIService.build_tool_result_message(
-            tool_call_id=call.call_id or "premature_order_handoff",
-            name="handoff_to_manager",
-            result={
-                "tool_name": "handoff_to_manager",
-                "status": "blocked",
-                "reason": "order_draft_requires_explicit_confirmation",
-                "missing_fields": draft_result["missing_fields"],
-            },
-        )
-        self._append_tool_result_message(
-            session,
-            external_chat_id=external_chat_id,
-            message=tool_result_message,
-            tool_name="handoff_to_manager",
-            source="order_handoff_guard",
-        )
-        reply_text, source = self._build_safe_order_intake_reply(session, draft_result, None)
-        self._append_bot_message(
-            session,
-            external_chat_id=external_chat_id,
-            text=reply_text,
-            outbound_event_id=outbound_event_id,
-            payload={
-                "source": source if source == "order_intake_summary" else "order_handoff_guard",
-                "order_draft_status": (
-                    "awaiting_confirmation"
-                    if draft_result["status"] in {"ready_for_confirmation", "awaiting_confirmation"}
-                    else draft_result["status"]
-                ),
-            },
-        )
-        if draft_result["status"] in {"ready_for_confirmation", "awaiting_confirmation"}:
-            self.order_intake_service.mark_summary_shown(session, external_chat_id)
-        return AssistantReply(text=reply_text)
-
-    def _build_safe_order_intake_reply(
-        self,
-        session,
-        draft_result: dict[str, Any],
-        llm_text: str | None,
-    ) -> tuple[str, str]:
-        warnings = [
-            self._build_not_found_text(check.get("identifier"))
-            for check in draft_result.get("product_checks") or []
-            if check.get("status") == "not_found"
-        ]
-        fallback = self._build_order_intake_fallback(draft_result)
-        if draft_result.get("status") in {"ready_for_confirmation", "awaiting_confirmation"}:
-            text = "\n\n".join([*warnings, fallback])
-            return self._sanitize_customer_reply(text), "order_intake_summary"
-        if warnings:
-            text = "\n\n".join([*warnings, fallback])
-            return self._sanitize_customer_reply(text), "order_intake_not_found_guard"
-        if llm_text and self._order_reply_leaks_exact_stock(session, draft_result, llm_text):
-            return self._sanitize_customer_reply(fallback), "order_intake_stock_guard"
-        text = llm_text or fallback
-        return self._sanitize_customer_reply(text), "llm_order_intake" if llm_text else "order_intake_fallback"
-
-    @staticmethod
-    def _redact_order_stock_context(runtime_context: dict[str, Any]) -> dict[str, Any]:
-        result = deepcopy(runtime_context)
-        dialog_state = result.get("dialog_state") or {}
-        active_product = dialog_state.get("active_product")
-        if isinstance(active_product, dict):
-            active_product.pop("stock", None)
-            active_product.pop("stock_display", None)
-        for product in dialog_state.get("product_memory") or []:
-            if isinstance(product, dict):
-                product.pop("stock", None)
-                product.pop("stock_display", None)
-        return result
-
-    def _order_reply_leaks_exact_stock(
-        self,
-        session,
-        draft_result: dict[str, Any],
-        reply_text: str,
-    ) -> bool:
-        normalized_reply = re.sub(r"\s+", " ", reply_text.lower()).strip()
-        for check in draft_result.get("product_checks") or []:
-            identifier = str(check.get("identifier") or "").strip()
-            if not identifier:
-                continue
-            lookup = search_products_structured(session, query=identifier)
-            exact_matches = lookup.get("exact_matches") or []
-            if len(exact_matches) != 1:
-                continue
-            match = exact_matches[0]
-            stock_text = self._format_quantity(match.get("stock"), match.get("unit"))
-            if stock_text and re.sub(r"\s+", " ", stock_text.lower()).strip() in normalized_reply:
-                return True
-        return False
-
-    @staticmethod
-    def _build_order_intake_fallback(draft_result: dict[str, Any]) -> str:
-        if draft_result.get("status") in {"ready_for_confirmation", "awaiting_confirmation"}:
-            return f"Проверьте, пожалуйста:\n{draft_result.get('summary') or ''}\nВсё верно?"
-
-        missing = draft_result.get("missing_fields") or []
-        first = missing[0] if missing else "данные заказа"
-        questions = {
-            "товары и количество": "Какие товары вы хотите заказать и в каком количестве?",
-            "желаемый срок": "Когда вам нужен заказ?",
-            "способ получения": "Как вы хотите получить заказ: самовывозом или с доставкой?",
-            "город доставки": "В какой город нужна доставка?",
-            "способ оплаты": "Как вам удобнее оплатить заказ?",
-            "имя контактного лица": "Как к вам обращаться?",
-            "телефон": "Оставьте, пожалуйста, телефон для связи по заказу.",
-            "ИНН": "Укажите, пожалуйста, ИНН для счёта.",
-        }
-        return questions.get(first, "Уточните, пожалуйста, недостающие данные по заказу.")
-
-    @staticmethod
-    def _canonical_order_summary_precedes_confirmation(
-        session,
-        *,
-        external_chat_id: str,
-        summary: str | None,
-    ) -> bool:
-        if not summary:
-            return False
-        visible_messages = [
-            message
-            for message in list_recent_messages(session, external_chat_id, limit=20)
-            if message.sender_role in {"client", "bot"}
-        ]
-        if len(visible_messages) < 2:
-            return False
-        summary_message, confirmation_message = visible_messages[-2:]
-        expected_text = f"Проверьте, пожалуйста:\n{summary}\nВсё верно?"
-        payload = summary_message.payload or {}
-        return (
-            summary_message.sender_role == "bot"
-            and confirmation_message.sender_role == "client"
-            and summary_message.text.endswith(expected_text)
-            and payload.get("source") == "order_intake_summary"
-            and payload.get("order_draft_status") == "awaiting_confirmation"
-        )
 
     def _reply_from_product_result(
         self,
@@ -2054,7 +1754,6 @@ class AssistantService:
                 "active_product": active_product,
                 "product_memory": product_memory,
                 "pending_clarification": pending_clarification,
-                "order_draft": self.order_intake_service.get_context(session, external_chat_id),
                 "last_handoff_status": self._find_latest_handoff_status(recent_messages),
             },
             "backend_actions": backend_actions or {},
@@ -2569,20 +2268,6 @@ class AssistantService:
         text = customer_text.lower()
         keywords = ("цен", "стоит", "стоим", "налич", "остат", "сколько", "артикул", "код")
         return any(keyword in text for keyword in keywords)
-
-    @staticmethod
-    def _looks_like_order_request(customer_text: str) -> bool:
-        text = customer_text.lower()
-        keywords = (
-            "оформить заказ",
-            "сделать заказ",
-            "хочу заказать",
-            "заказать товар",
-            "нужно заказать",
-        )
-        if any(keyword in text for keyword in keywords):
-            return True
-        return "нужн" in text and any(marker in text for marker in ("достав", "оплат", "самовывоз"))
 
     @staticmethod
     def _extract_named_product_query(customer_text: str) -> str | None:
