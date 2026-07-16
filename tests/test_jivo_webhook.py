@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from database.db import session_scope
 from database.models import Chat, Handoff, JivoEvent, Message, Product
+from jivo.client import JivoClient
 from main import create_application
 
 
@@ -112,7 +113,9 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
     assert "Сейчас в наличии 5 шт." in messages[3].text
 
 
-def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env) -> None:
+def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env, monkeypatch) -> None:
+    monkeypatch.setattr(JivoClient, "invite_agent", lambda self, event, reason: True)
+    monkeypatch.setattr(JivoClient, "send_text_message", lambda self, event, text: True)
     payload = {
         "id": "event-3",
         "event": "CLIENT_MESSAGE",
