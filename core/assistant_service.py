@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 import json
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ from database.repositories import (
     get_chat_by_external_id,
     get_or_create_chat,
     get_or_create_customer,
+    list_messages,
     list_recent_messages,
     search_products_structured,
 )
@@ -606,12 +608,10 @@ class AssistantService:
             if call.name != "search_products":
                 continue
 
-            queries = call.arguments.get("queries", [])
-            if not isinstance(queries, list):
-                queries = []
-            queries = [str(item).strip() for item in queries if str(item).strip()]
-            if not queries:
+            query_specs = self._normalize_search_query_specs(call.arguments.get("queries", []))
+            if not query_specs:
                 continue
+            call.arguments["queries"] = query_specs
 
             self._append_assistant_tool_call_message(
                 session,
@@ -620,7 +620,7 @@ class AssistantService:
             )
             lookup_result = self._search_products_by_queries(
                 session,
-                queries=queries,
+                queries=query_specs,
                 reason=str(call.arguments.get("intent") or call.arguments.get("reason") or "unknown"),
                 customer_text=customer_text,
             )
@@ -700,10 +700,15 @@ class AssistantService:
         product_lookup_result = self._apply_followup_refinement(product_lookup_result, followup_refinement)
         stock_only_request = self._is_stock_only_request(customer_text)
         product_lookup_result = self._apply_stock_only_policy(product_lookup_result, stock_only_request)
-        requested_quantity = self._extract_requested_quantity(customer_text)
+        quantity_requests = self._extract_quantity_requests(product_lookup_result)
+        requested_quantity = (
+            quantity_requests[0]["requested_quantity"]
+            if len(quantity_requests) == 1
+            else self._extract_requested_quantity(customer_text) if not quantity_requests else None
+        )
         stock_handoff_reason = (
             None
-            if stock_only_request
+            if stock_only_request or len(quantity_requests) > 1
             else self._get_stock_shortage_reason(product_lookup_result, requested_quantity)
         )
         corporate_price_handoff_reason = "corporate_price_request" if corporate_price_requested and not self.show_corporate_price else None
@@ -714,6 +719,7 @@ class AssistantService:
             "handoff_reason": handoff_reason,
             "response_mode": self._resolve_response_mode(handoff_reason, stock_only_request=stock_only_request),
             "requested_quantity": requested_quantity,
+            "quantity_requests": quantity_requests,
             "show_corporate_price": self.show_corporate_price,
             "corporate_price_request": corporate_price_requested,
             "queried_by_code": self._lookup_queried_by_code(customer_text, product_lookup_result),
@@ -951,6 +957,26 @@ class AssistantService:
     def _apply_stock_only_policy(product_lookup_result: dict, stock_only_request: bool) -> dict:
         return product_lookup_result
 
+    @staticmethod
+    def _extract_quantity_requests(product_lookup_result: dict) -> list[dict[str, Any]]:
+        per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results") or []
+        requests: list[dict[str, Any]] = []
+        for item in per_query_results:
+            if not isinstance(item, dict) or item.get("requested_quantity") is None:
+                continue
+            exact_matches = item.get("exact_matches") or []
+            match = exact_matches[0] if len(exact_matches) == 1 else {}
+            requests.append(
+                {
+                    "query": item.get("display_query") or item.get("query"),
+                    "requested_quantity": item.get("requested_quantity"),
+                    "requested_quantity_available": item.get("requested_quantity_available"),
+                    "code": match.get("code"),
+                    "article": match.get("article"),
+                }
+            )
+        return requests
+
     def _try_stock_quantity_privacy_reply(
         self,
         session,
@@ -963,7 +989,8 @@ class AssistantService:
         payload_source: str,
         handoff_mode: str,
     ) -> AssistantReply | None:
-        if not backend_actions.get("stock_only_request"):
+        quantity_requests = backend_actions.get("quantity_requests") or []
+        if not backend_actions.get("stock_only_request") and not quantity_requests:
             return None
         if self._extract_pending_clarification(product_lookup_result):
             return None
@@ -977,6 +1004,13 @@ class AssistantService:
             for match in matches
             if str(match.get("code") or "").strip()
         ]
+        quantity_codes = [
+            str(item.get("code") or "").strip()
+            for item in quantity_requests
+            if str(item.get("code") or "").strip()
+        ]
+        if quantity_codes:
+            product_codes = quantity_codes
         if not product_codes:
             return None
 
@@ -995,6 +1029,7 @@ class AssistantService:
         guard_payload = {
             "product_codes": product_codes,
             "requested_quantity": requested_quantity,
+            "quantity_requests": quantity_requests,
             "attempts_by_code": attempts_by_code,
             "attempt_limit": STOCK_QUANTITY_ATTEMPT_LIMIT,
         }
@@ -1037,7 +1072,7 @@ class AssistantService:
 
         per_query_results = product_lookup_result.get("results") or product_lookup_result.get("per_query_results") or []
         if len(per_query_results) > 1:
-            reply_text = self._build_stock_privacy_multi_query_text(per_query_results, requested_quantity)
+            reply_text = self._build_stock_privacy_multi_query_text(per_query_results)
         elif requested_quantity is None:
             match = matches[0]
             article = str(match.get("article") or "").strip()
@@ -1097,7 +1132,6 @@ class AssistantService:
     @staticmethod
     def _build_stock_privacy_multi_query_text(
         per_query_results: list[dict],
-        requested_quantity: int | None,
     ) -> str:
         lines = ["Проверил."]
         for item in per_query_results:
@@ -1107,6 +1141,7 @@ class AssistantService:
             if len(item_exact) == 1:
                 match = item_exact[0]
                 article = str(match.get("article") or item_query).strip()
+                requested_quantity = item.get("requested_quantity")
                 if requested_quantity is None:
                     lines.append(f"По {article} подскажите, пожалуйста, какое количество нужно.")
                     continue
@@ -1143,7 +1178,7 @@ class AssistantService:
         product_code: str,
     ) -> int:
         count = 0
-        for message in list_recent_messages(session, external_chat_id, limit=self.recent_history_limit):
+        for message in list_messages(session, external_chat_id):
             guard = (message.payload or {}).get("stock_quantity_guard")
             if not isinstance(guard, dict):
                 continue
@@ -1153,12 +1188,13 @@ class AssistantService:
         return count
 
     @staticmethod
-    def _stock_covers_requested_quantity(match: dict, requested_quantity: int) -> bool:
+    def _stock_covers_requested_quantity(match: dict, requested_quantity: int | float) -> bool:
         try:
-            stock_value = float(str(match.get("stock") or "0").replace(",", "."))
-        except (TypeError, ValueError):
+            stock_value = Decimal(str(match.get("stock") or "0").replace(",", "."))
+            quantity = Decimal(str(requested_quantity).replace(",", "."))
+        except (InvalidOperation, ValueError):
             return False
-        return stock_value >= requested_quantity
+        return stock_value >= quantity
 
     def _build_tool_visible_product_lookup_result(self, product_lookup_result: dict, *, customer_text: str) -> dict:
         corporate_price_requested = self._is_corporate_price_request(customer_text)
@@ -1626,14 +1662,59 @@ class AssistantService:
             return "По субботам возврат товара не осуществляется. Лучше обратиться по возврату в рабочие дни."
         return None
 
+    @staticmethod
+    def _normalize_search_query_specs(queries: Any) -> list[dict[str, Any]]:
+        if not isinstance(queries, list):
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in queries:
+            if isinstance(item, dict):
+                query = str(item.get("query") or "").strip()
+                raw_quantity = item.get("requested_quantity")
+            else:
+                query = str(item or "").strip()
+                raw_quantity = None
+            if not query:
+                continue
+
+            spec: dict[str, Any] = {"query": query}
+            if raw_quantity is not None and not isinstance(raw_quantity, bool):
+                try:
+                    quantity = Decimal(str(raw_quantity).replace(",", "."))
+                except (InvalidOperation, ValueError):
+                    quantity = Decimal("0")
+                if quantity.is_finite() and quantity > 0:
+                    spec["requested_quantity"] = int(quantity) if quantity == quantity.to_integral() else float(quantity)
+            normalized.append(spec)
+        return normalized
+
+    @staticmethod
+    def _requested_quantity_available(item: dict, requested_quantity: int | float | None) -> bool | None:
+        if requested_quantity is None:
+            return None
+        exact_matches = item.get("exact_matches") or []
+        if len(exact_matches) != 1:
+            return None
+        stock_raw = exact_matches[0].get("stock")
+        if stock_raw is None:
+            return None
+        try:
+            stock = Decimal(str(stock_raw).replace(",", "."))
+            quantity = Decimal(str(requested_quantity).replace(",", "."))
+        except (InvalidOperation, ValueError):
+            return None
+        return stock >= quantity
+
     def _search_products_by_queries(
         self,
         session,
         *,
-        queries: list[str],
+        queries: list[str | dict[str, Any]],
         reason: str,
         customer_text: str | None = None,
     ) -> dict:
+        query_specs = self._normalize_search_query_specs(queries)
         per_query_results: list[dict] = []
         best: dict | None = None
         unique_exact: dict[str, dict] = {}
@@ -1647,25 +1728,20 @@ class AssistantService:
             "error": 5,
         }
 
-        for query in queries:
+        for query_spec in query_specs:
+            query = query_spec["query"]
+            requested_quantity = query_spec.get("requested_quantity")
             display_query = self._resolve_display_query(query, customer_text)
             search_query = display_query or query
             item = search_products_structured(session, query=search_query, search_type="auto")
             item = self._strip_similar_when_exact_found(item)
             item["raw_backend_query"] = query
             item["display_query"] = display_query
-            item_exact_keys = {
-                match.get("code") or match.get("article") or str(index)
-                for index, match in enumerate(item.get("exact_matches", []))
-            }
-            item_similar_keys = {
-                match.get("code") or match.get("article") or str(index)
-                for index, match in enumerate(item.get("similar_matches", []))
-            }
-            if item_exact_keys and item_exact_keys <= set(unique_exact):
-                continue
-            if not item_exact_keys and item_similar_keys and item_similar_keys <= set(unique_exact):
-                continue
+            item["requested_quantity"] = requested_quantity
+            item["requested_quantity_available"] = self._requested_quantity_available(
+                item,
+                requested_quantity,
+            )
             per_query_results.append(item)
             for match in item.get("exact_matches", []):
                 unique_exact[match.get("code") or match.get("article") or str(len(unique_exact))] = match
@@ -1695,8 +1771,6 @@ class AssistantService:
         exact_count = len(exact_matches)
         similar_count = len(similar_matches)
         visible_query_results = per_query_results
-        if exact_matches:
-            visible_query_results = [item for item in per_query_results if item.get("status") != "similar_found"]
         summary = {
             "total_queries": len(visible_query_results),
             "total_exact_matches": exact_count,
@@ -1705,11 +1779,11 @@ class AssistantService:
         }
 
         result = {
-            "queries": queries,
+            "queries": query_specs,
             "display_queries": [item.get("display_query") or item.get("query") for item in visible_query_results],
             "reason": reason,
             "request": {
-                "queries": queries,
+                "queries": query_specs,
                 "intent": reason,
                 "use_dialog_context": self._looks_like_dialog_context_query(customer_text or ""),
                 "context_note": self._build_search_context_note(customer_text or "", reason),
@@ -1813,11 +1887,9 @@ class AssistantService:
             return None
 
         match = exact[0]
-        return {
+        result = {
             "code": match.get("code"),
             "article": match.get("article"),
-            "stock": match.get("stock"),
-            "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
             "retail_price": match.get("retail_price"),
             "retail_price_display": AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price")),
             "corporate_price": match.get("corporate_price"),
@@ -1830,6 +1902,7 @@ class AssistantService:
             "volume": match.get("volume"),
             "discount_status": "unknown",
         }
+        return result
 
     @staticmethod
     def _extract_pending_clarification(product_lookup_result: dict | None) -> dict | None:
@@ -1871,7 +1944,7 @@ class AssistantService:
             key = str(match.get("code") or match.get("article") or "").strip()
             if not key or key in seen:
                 return
-            item = AssistantService._compact_match_for_context(match)
+            item = AssistantService._compact_match_for_context(match, include_stock=False)
             if source_message_id is not None:
                 item["last_discussed_at_turn"] = f"message_{source_message_id}"
             memory.append(item)
@@ -1902,18 +1975,23 @@ class AssistantService:
             "queries": product_lookup_result.get("queries"),
             "exact_matches_count": product_lookup_result.get("exact_matches_count"),
             "similar_matches_count": product_lookup_result.get("similar_matches_count"),
-            "exact_matches": [AssistantService._compact_match_for_context(item) for item in exact_matches[:5]],
-            "similar_matches": [AssistantService._compact_match_for_context(item) for item in similar_matches[:3]],
+            "exact_matches": [
+                AssistantService._compact_match_for_context(item, include_stock=False)
+                for item in exact_matches[:5]
+            ],
+            "similar_matches": [
+                AssistantService._compact_match_for_context(item, include_stock=False)
+                for item in similar_matches[:3]
+            ],
             "resolved_followup_refinement": product_lookup_result.get("resolved_followup_refinement"),
             "summary": product_lookup_result.get("summary"),
         }
 
     @staticmethod
-    def _compact_match_for_context(match: dict) -> dict[str, Any]:
-        return {
+    def _compact_match_for_context(match: dict, *, include_stock: bool = True) -> dict[str, Any]:
+        result = {
             "code": match.get("code"),
             "article": match.get("article"),
-            "stock_display": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
             "retail_price": match.get("retail_price"),
             "retail_price_display": AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price")),
             "corporate_price": match.get("corporate_price"),
@@ -1926,6 +2004,9 @@ class AssistantService:
             "volume": match.get("volume"),
             "discount_status": "unknown",
         }
+        if include_stock:
+            result["stock_display"] = AssistantService._format_quantity(match.get("stock"), match.get("unit"))
+        return result
 
     @staticmethod
     def _build_llm_product_lookup_result(product_lookup_result: dict, *, customer_text: str = "") -> dict[str, Any]:
@@ -1950,13 +2031,14 @@ class AssistantService:
             "clarification": "уточнение_варианта",
         }
 
-        def compact_match(match: dict) -> dict[str, Any]:
+        def compact_match(match: dict, *, include_stock: bool = True) -> dict[str, Any]:
             result = {
                 "код_товара": match.get("code"),
                 "артикул": match.get("article"),
-                "остаток": AssistantService._format_quantity(match.get("stock"), match.get("unit")),
                 "единица": str(match.get("unit") or "").strip() or None,
             }
+            if include_stock:
+                result["остаток"] = AssistantService._format_quantity(match.get("stock"), match.get("unit"))
             retail_price = AssistantService._format_price_text(match.get("retail_price_display"), match.get("retail_price"))
             corporate_price = AssistantService._format_price_text(
                 match.get("corporate_price_display"),
@@ -1975,12 +2057,18 @@ class AssistantService:
         def compact_container(container: dict) -> dict[str, Any]:
             exact = container.get("exact_matches") or []
             similar = [] if exact else container.get("similar_matches") or []
-            return {
+            requested_quantity = container.get("requested_quantity")
+            compact = {
                 "запрос_клиента": container.get("display_query") or container.get("query"),
                 "статус": status_map.get(container.get("status"), container.get("status")),
-                "товары": [compact_match(match) for match in exact],
-                "похожие_варианты": [compact_match(match) for match in similar[:3]],
+                "запрошенное_количество": requested_quantity,
+                "доступно_запрошенное_количество": container.get("requested_quantity_available")
+                if requested_quantity is not None
+                else None,
+                "товары": [compact_match(match, include_stock=False) for match in exact],
+                "похожие_варианты": [compact_match(match, include_stock=False) for match in similar[:3]],
             }
+            return {key: value for key, value in compact.items() if value not in (None, [], {})}
 
         per_query_results = payload.get("results") or payload.get("per_query_results") or []
         result = {
@@ -1993,12 +2081,24 @@ class AssistantService:
                 for item in per_query_results
                 if item.get("display_query") or item.get("query")
             ],
-            "товары": [compact_match(match) for match in (payload.get("exact_matches") or [])],
+            "товары": [
+                compact_match(match, include_stock=False)
+                for match in (payload.get("exact_matches") or [])
+            ],
             "похожие_варианты": [
-                compact_match(match)
+                compact_match(match, include_stock=False)
                 for match in ([] if payload.get("exact_matches") else (payload.get("similar_matches") or [])[:3])
             ],
         }
+
+        if len(per_query_results) == 1:
+            single_result = per_query_results[0]
+            requested_quantity = single_result.get("requested_quantity")
+            if requested_quantity is not None:
+                result["запрошенное_количество"] = requested_quantity
+                result["доступно_запрошенное_количество"] = single_result.get(
+                    "requested_quantity_available"
+                )
 
         if len(per_query_results) > 1:
             result["результаты_по_запросам"] = [compact_container(item) for item in per_query_results]
@@ -2042,11 +2142,14 @@ class AssistantService:
         customer_text: str,
     ) -> None:
         request = product_lookup_result.get("request") or {}
-        call_arguments = {
-            "queries": product_lookup_result.get("display_queries")
+        raw_queries = (
+            product_lookup_result.get("display_queries")
             or request.get("queries")
             or product_lookup_result.get("queries")
-            or [product_lookup_result.get("display_query") or product_lookup_result.get("query")],
+            or [product_lookup_result.get("display_query") or product_lookup_result.get("query")]
+        )
+        call_arguments = {
+            "queries": self._normalize_search_query_specs(raw_queries),
             "intent": product_lookup_result.get("reason") or request.get("intent") or "product_info",
             "use_dialog_context": bool(request.get("use_dialog_context")),
             "context_note": request.get("context_note") or self._build_search_context_note(customer_text, product_lookup_result.get("reason") or "product_info"),
@@ -2529,15 +2632,16 @@ class AssistantService:
             query = AssistantService._preferred_query_for_lookup_item(per_query_results[ordinal_index])
             return [query] if query else []
 
-        if AssistantService._extract_requested_quantity(customer_text) is not None:
+        normalized_fragments = [normalize_article(candidate) for candidate in extract_article_candidates(customer_text)]
+        normalized_fragments = [fragment for fragment in normalized_fragments if len(fragment) >= 3]
+
+        if AssistantService._extract_requested_quantity(customer_text) is not None and not normalized_fragments:
             exact = lookup.get("exact_matches") or []
             if len(exact) == 1:
                 match = exact[0]
                 query = str(match.get("article") or match.get("code") or "").strip()
                 return [query] if query else []
 
-        normalized_fragments = [normalize_article(candidate) for candidate in extract_article_candidates(customer_text)]
-        normalized_fragments = [fragment for fragment in normalized_fragments if len(fragment) >= 3]
         if not normalized_fragments:
             return []
 

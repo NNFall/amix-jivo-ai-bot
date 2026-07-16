@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from core.assistant_service import (
@@ -751,7 +752,8 @@ def test_assistant_service_hides_similar_aliases_when_exact_found(isolated_app_e
 
     assert lookup["exact_matches_count"] == 1
     assert lookup["similar_matches_count"] == 0
-    assert all(item["status"] != "similar_found" for item in lookup["per_query_results"])
+    assert [item["query"] for item in lookup["per_query_results"]] == ["PAM02BS", "AM02"]
+    assert [item["status"] for item in lookup["per_query_results"]] == ["exact_found", "similar_found"]
 
 
 def test_assistant_service_uses_direct_response_without_lookup(isolated_app_env) -> None:
@@ -947,6 +949,7 @@ def test_assistant_service_keeps_full_tool_result_but_guards_stock_only_reply(
     tool_content = tool_message.payload["content"]
     assert "120" in tool_content
     assert "0.500" in tool_content
+    assert "4 pcs" not in tool_content
     assert "120 rub" not in reply.text
     assert "какое количество" in reply.text
     assert "4 pcs" not in reply.text
@@ -1202,6 +1205,85 @@ def test_assistant_service_handoffs_after_third_stock_quantity_attempt_for_same_
     assert bot_messages[-1].payload["stock_quantity_guard"]["attempts_by_code"]["10335"] == 3
 
 
+def test_stock_quantity_attempt_limit_is_counted_per_product_code(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="10335",
+                    article="AB-123",
+                    normalized_article="AB123",
+                    free_stock=Decimal("25"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="10336",
+                    article="CD-456",
+                    normalized_article="CD456",
+                    free_stock=Decimal("25"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.openai_service.enabled = False
+    chat_id = "telegram:stock-quantity-per-code"
+
+    with session_scope() as session:
+        first_a = service.handle_client_message(
+            session,
+            external_chat_id=chat_id,
+            external_client_id="telegram-user:stock-quantity-per-code",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 5 шт",
+            inbound_event_id="stock-per-code-a1",
+            outbound_event_id="stock-per-code-a1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        second_a = service.handle_client_message(
+            session,
+            external_chat_id=chat_id,
+            external_client_id="telegram-user:stock-quantity-per-code",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 10 шт",
+            inbound_event_id="stock-per-code-a2",
+            outbound_event_id="stock-per-code-a2:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        first_b = service.handle_client_message(
+            session,
+            external_chat_id=chat_id,
+            external_client_id="telegram-user:stock-quantity-per-code",
+            customer_name="Demo User",
+            customer_text="CD-456 нужно 5 шт",
+            inbound_event_id="stock-per-code-b1",
+            outbound_event_id="stock-per-code-b1:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+        third_a = service.handle_client_message(
+            session,
+            external_chat_id=chat_id,
+            external_client_id="telegram-user:stock-quantity-per-code",
+            customer_name="Demo User",
+            customer_text="AB-123 нужно 15 шт",
+            inbound_event_id="stock-per-code-a3",
+            outbound_event_id="stock-per-code-a3:bot",
+            payload={"platform": "telegram"},
+            handoff_mode="demo",
+        )
+
+    assert first_a.handoff_reason is None
+    assert second_a.handoff_reason is None
+    assert first_b.handoff_reason is None
+    assert third_a.handoff_reason == "stock_quantity_attempt_limit"
+
+
 def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True
@@ -1230,6 +1312,7 @@ def test_assistant_service_handles_tool_based_handoff(isolated_app_env) -> None:
 
 def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_env) -> None:
     service = AssistantService()
+    service.backend_prelookup_enabled = False
     service.openai_service.enabled = True
     service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
         text=None,
@@ -2517,6 +2600,293 @@ def test_legacy_order_draft_does_not_change_routing_or_force_a_tool_retry(isolat
     assert reply.text == "Уточните, пожалуйста, ваш вопрос."
     assert len(requests) == 1
     assert requests[0].get("tool_choice", "auto") == "auto"
+
+
+def test_tool_search_checks_each_requested_quantity_independently(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article=normalize_article("14.023пр."),
+                    free_stock=Decimal("2"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="28834",
+                    article="МП ЦК белая",
+                    normalized_article=normalize_article("МП ЦК белая"),
+                    free_stock=Decimal("2"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="search_products",
+                call_id="per-product-quantity",
+                arguments={
+                    "queries": [
+                        {"query": "770", "requested_quantity": 2},
+                        {"query": "28834", "requested_quantity": 3},
+                    ],
+                    "intent": "order",
+                    "use_dialog_context": False,
+                },
+            )
+        ],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:per-product-quantity",
+            external_client_id="telegram-user:per-product-quantity",
+            customer_name="Demo User",
+            customer_text="Код 770 — 2 штуки и код 28834 — 3 штуки",
+            inbound_event_id="per-product-quantity-in",
+            outbound_event_id="per-product-quantity-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+        tool_message = session.query(Message).filter(Message.sender_role == "tool").one()
+
+    assert "14.023пр.: да, такое количество есть" in reply.text
+    assert "МП ЦК белая: нет, такого количества" in reply.text
+    assert "2 шт" not in reply.text
+    assert "остаток" not in tool_message.text.lower()
+
+
+def test_query_quantity_metadata_is_preserved_in_source_order(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article=normalize_article("14.023пр."),
+                    free_stock=Decimal("5"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="28834",
+                    article="МП ЦК белая",
+                    normalized_article=normalize_article("МП ЦК белая"),
+                    free_stock=Decimal("1"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+        session.flush()
+        result = AssistantService()._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=[
+                {"query": "770", "requested_quantity": 2},
+                {"query": "28834", "requested_quantity": 3},
+            ],
+            reason="order",
+        )
+
+    assert [item["query"] for item in result["per_query_results"]] == ["770", "28834"]
+    assert [item["requested_quantity"] for item in result["per_query_results"]] == [2, 3]
+    assert [item["requested_quantity_available"] for item in result["per_query_results"]] == [True, False]
+
+
+def test_repeated_queries_remain_in_source_order(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add(
+            Product(
+                code="770",
+                article="14.023пр.",
+                normalized_article=normalize_article("14.023пр."),
+                free_stock=Decimal("5"),
+                unit="шт",
+                raw_payload={},
+            )
+        )
+        session.flush()
+        result = AssistantService()._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=[
+                {"query": "770", "requested_quantity": 1},
+                {"query": "770", "requested_quantity": 2},
+            ],
+            reason="order",
+        )
+
+    assert result["exact_matches_count"] == 1
+    assert [item["query"] for item in result["per_query_results"]] == ["770", "770"]
+    assert [item["requested_quantity"] for item in result["per_query_results"]] == [1, 2]
+
+
+def test_query_quantity_metadata_supports_mixed_quantity_requests(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="770",
+                    article="14.023пр.",
+                    normalized_article=normalize_article("14.023пр."),
+                    free_stock=Decimal("5"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="28834",
+                    article="МП ЦК белая",
+                    normalized_article=normalize_article("МП ЦК белая"),
+                    free_stock=Decimal("4"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+        session.flush()
+        result = AssistantService()._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=[
+                {"query": "770", "requested_quantity": 2},
+                {"query": "28834"},
+            ],
+            reason="order",
+        )
+
+    items = result["per_query_results"]
+    assert items[0]["requested_quantity_available"] is True
+    assert items[1]["requested_quantity"] is None
+    assert items[1]["requested_quantity_available"] is None
+    assert "да, такое количество есть" in AssistantService._build_stock_privacy_multi_query_text(items)  # noqa: SLF001
+    assert "МП ЦК белая подскажите" in AssistantService._build_stock_privacy_multi_query_text(items)  # noqa: SLF001
+
+
+def test_quantity_availability_is_unknown_for_ambiguous_or_missing_products(isolated_app_env) -> None:
+    with session_scope() as session:
+        session.add_all(
+            [
+                Product(
+                    code="27817",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("5"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+                Product(
+                    code="27818",
+                    article="МП/ОЗ",
+                    normalized_article=normalize_article("МП/ОЗ"),
+                    free_stock=Decimal("10"),
+                    unit="шт",
+                    raw_payload={},
+                ),
+            ]
+        )
+        session.flush()
+        result = AssistantService()._search_products_by_queries(  # noqa: SLF001
+            session,
+            queries=[
+                {"query": "МП/ОЗ", "requested_quantity": 2},
+                {"query": "xyz-999", "requested_quantity": 1},
+            ],
+            reason="order",
+        )
+
+    assert [item["requested_quantity_available"] for item in result["per_query_results"]] == [None, None]
+
+
+def test_invalid_requested_quantities_are_not_forwarded(isolated_app_env) -> None:
+    specs = AssistantService._normalize_search_query_specs(  # noqa: SLF001
+        [
+            {"query": "770", "requested_quantity": 0},
+            {"query": "28834", "requested_quantity": -2},
+            {"query": "26141", "requested_quantity": "not-a-number"},
+        ]
+    )
+
+    assert specs == [{"query": "770"}, {"query": "28834"}, {"query": "26141"}]
+
+
+def test_quantity_check_tool_result_hides_exact_stock(isolated_app_env) -> None:
+    lookup = {
+        "reason": "order",
+        "status": "exact_found",
+        "query": "770",
+        "exact_matches": [
+            {
+                "code": "770",
+                "article": "14.023пр.",
+                "unit": "шт",
+                "stock": "220.000",
+                "retail_price": "473.00",
+                "retail_price_display": "473 руб",
+            }
+        ],
+        "per_query_results": [
+            {
+                "query": "770",
+                "display_query": "770",
+                "status": "exact_found",
+                "requested_quantity": 2,
+                "requested_quantity_available": True,
+                "exact_matches": [
+                    {
+                        "code": "770",
+                        "article": "14.023пр.",
+                        "unit": "шт",
+                        "stock": "220.000",
+                        "retail_price": "473.00",
+                        "retail_price_display": "473 руб",
+                    }
+                ],
+                "similar_matches": [],
+            }
+        ],
+    }
+
+    visible = AssistantService._build_llm_product_lookup_result(lookup)  # noqa: SLF001
+    serialized = json.dumps(visible, ensure_ascii=False)
+
+    assert "220" not in serialized
+    assert '"доступно_запрошенное_количество": true' in serialized
+
+
+def test_runtime_context_never_exposes_exact_stock_to_model(isolated_app_env) -> None:
+    lookup = {
+        "status": "exact_found",
+        "query": "770",
+        "exact_matches": [
+            {
+                "code": "770",
+                "article": "14.023пр.",
+                "unit": "шт",
+                "stock": "220.000",
+            }
+        ],
+        "per_query_results": [],
+    }
+
+    with session_scope() as session:
+        context = AssistantService()._build_runtime_context(  # noqa: SLF001
+            session,
+            external_chat_id="telegram:no-stock-context",
+            product_lookup_result=lookup,
+        )
+
+    serialized = json.dumps(context, ensure_ascii=False)
+    assert "220" not in serialized
+    assert "stock" not in serialized.lower()
 def test_assistant_persists_llm_usage_for_each_provider_call(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

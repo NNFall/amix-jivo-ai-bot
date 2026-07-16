@@ -329,6 +329,23 @@ def test_model_has_only_product_search_and_manager_handoff_tools() -> None:
     ]
 
 
+def test_product_search_tool_accepts_quantity_per_query() -> None:
+    search_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "search_products")
+    properties = search_tool["function"]["parameters"]["properties"]
+    query_schema = properties["queries"]["items"]
+
+    assert query_schema["type"] == "object"
+    assert query_schema["required"] == ["query"]
+    assert "requested_quantity" in query_schema["properties"]
+    assert "requested_quantity" not in properties
+
+
+def test_prompt_requires_per_product_quantities_without_exact_stock_disclosure() -> None:
+    assert "количество отдельно для каждой позиции" in SYSTEM_PROMPT
+    assert "не раскрывай точный свободный остаток" in SYSTEM_PROMPT
+    assert "только да/нет" in SYSTEM_PROMPT
+
+
 def test_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
     assert "полную хронологическую историю" in SYSTEM_PROMPT
     assert "Более позднее уточнение или исправление клиента заменяет ранее указанное значение" in SYSTEM_PROMPT
