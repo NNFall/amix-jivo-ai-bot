@@ -1431,7 +1431,7 @@ def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_en
                 arguments={
                     "reason": "order_creation",
                     "summary": (
-                        "Клиент подтвердил заказ: 10 ручек, доставка в Тверь, "
+                        "Клиент подтвердил заказ: 10 ручек, доставка в Тверь на следующей неделе, "
                         "оплата наличными, Иван, +7 900 123-45-67."
                     ),
                 },
@@ -1447,9 +1447,9 @@ def test_order_creation_handoff_uses_model_summary_without_draft(isolated_app_en
             session,
             external_chat_id="telegram:history-order",
             sender_role="bot",
-            text=(
-                "Итог заказа: 10 ручек, доставка в Тверь, оплата наличными, "
-                "Иван, +7 900 123-45-67. Всё верно? Подтвердите, пожалуйста."
+                text=(
+                    "Итог заказа: 10 ручек, доставка в Тверь на следующей неделе, оплата наличными, "
+                    "Иван, +7 900 123-45-67. Всё верно? Подтвердите, пожалуйста."
             ),
         )
         reply = service.handle_client_message(
@@ -1523,7 +1523,7 @@ def test_complete_order_handoff_with_wrong_reason_is_still_blocked_until_confirm
                 arguments={
                     "reason": "product_selection",
                     "summary": (
-                        "Заказ: 6 черных петель, доставка в Псков, оплата наличными, "
+                        "Заказ: 6 черных петель, доставка в Псков через две недели, оплата наличными, "
                         "Мария, +7 921 555-66-77."
                     ),
                 },
@@ -1548,6 +1548,44 @@ def test_complete_order_handoff_with_wrong_reason_is_still_blocked_until_confirm
     assert reply.handoff_reason is None
     assert "итог заказа" in reply.text.lower()
     assert "всё верно" in reply.text.lower()
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+
+
+def test_vague_handoff_with_wrong_reason_is_blocked_during_active_order(
+    isolated_app_env,
+) -> None:
+    service = AssistantService()
+    service.backend_prelookup_enabled = False
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None,
+        tool_calls=[
+            ToolCall(
+                name="handoff_to_manager",
+                arguments={
+                    "reason": "bot_uncertain",
+                    "summary": "Нужна помощь менеджера.",
+                },
+                call_id="vague-premature-order-handoff",
+            )
+        ],
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:vague-premature-order-handoff",
+            external_client_id="telegram-user:vague-premature-order-handoff",
+            customer_name="Анна",
+            customer_text="Хочу оформить заказ: 2 ручки, код 770.",
+            inbound_event_id="vague-premature-order-handoff-in",
+            outbound_event_id="vague-premature-order-handoff-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.handoff_reason is None
     with session_scope() as session:
         assert session.query(Handoff).count() == 0
 
@@ -1635,9 +1673,16 @@ def test_conditional_future_handoff_phrase_does_not_trigger_handoff_guard() -> N
     ) is True
 
 
+def test_then_future_handoff_phrase_does_not_trigger_handoff_guard() -> None:
+    text = "Подтвердите итог, и тогда передаю заказ менеджеру."
+
+    assert AssistantService._reply_claims_handoff(text) is False  # noqa: SLF001
+    assert AssistantService._strip_premature_handoff_claim(text) == "Подтвердите итог?"  # noqa: SLF001
+
+
 def test_order_confirmation_request_accepts_conjugated_confirmation_question() -> None:
     assert AssistantService._bot_message_requests_order_confirmation(  # noqa: SLF001
-        "Итог заказа: 4 штуки, доставка, оплата наличными, Иван, +7 900 123-45-67. "
+        "Итог заказа: 4 штуки, доставка завтра, оплата наличными, Иван, +7 900 123-45-67. "
         "Подтверждаете заказ?"
     ) is True
 
@@ -1648,6 +1693,9 @@ def test_order_confirmation_rejects_message_that_also_corrects_the_order() -> No
     ) is False
     assert AssistantService._bot_message_requests_order_confirmation(  # noqa: SLF001
         "Подтвердите способ оплаты заказа."
+    ) is False
+    assert AssistantService._is_explicit_order_confirmation(  # noqa: SLF001
+        "Да, поменяйте позицию 770 на 771."
     ) is False
 
 
@@ -1687,10 +1735,27 @@ def test_order_summary_must_have_required_facts_before_handoff() -> None:
         "Одна P-AM02/B-S, остальные данные заказа ещё не собраны."
     ) is False
     assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
-        "2 шт. P-AM02/B-S, самовывоз, наличными, Иван, +7 900 123-45-67."
+        "Заказ: 2 шт. P-AM02/B-S, самовывоз завтра, наличными, Иван, +7 900 123-45-67."
     ) is True
     assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
         "2 шт. P-AM02/B-S, доставка, оплата по счёту, ИНН не указан, Иван, +7 900 123-45-67."
+    ) is False
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Доставка в Тверь завтра, оплата наличными, Иван, +7 900 123-45-67."
+    ) is False
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Заказ: 2 шт. P-AM02/B-S, доставка в Тверь завтра, оплата по СБП, +7 900 123-45-67."
+    ) is False
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Заказ: 2 шт. P-AM02/B-S, доставка в Тверь завтра, оплата по СБП, Иван, +7 900 123-45-67."
+    ) is True
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Заказ: 2 шт. P-AM02/B-S, доставка в Тверь завтра, оплата по счёту, "
+        "ИНН 7812345678, Клиент: Иван."
+    ) is False
+    assert AssistantService._order_summary_is_confirmable(  # noqa: SLF001
+        "Клиент: заказ 2 шт. P-AM02/B-S, доставка в Тверь завтра, "
+        "оплата наличными, телефон +7 900 123-45-67."
     ) is False
 
 
@@ -3329,9 +3394,47 @@ def test_stock_sanitizer_hides_explicit_stock_even_when_it_matches_requested_qua
         "Остаток: 220.",
         allowed_quantities=[],
     )
+    availability_without_unit = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "В наличии: 220.",
+        allowed_quantities=[],
+    )
 
     assert "2 шт" not in prefixed
     assert "220" not in without_unit
+    assert "220" not in availability_without_unit
+
+
+def test_stock_sanitizer_consumes_full_unit_word_without_dangling_suffix() -> None:
+    sanitized = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Товары в наличии 220 штуки и доступны 15 комплектов.",
+        allowed_quantities=[],
+    )
+
+    assert "220" not in sanitized
+    assert "15" not in sanitized
+    assert "количествоуки" not in sanitized
+    assert "количествотов" not in sanitized
+
+    with_following_sentence = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Сейчас в наличии 220 шт. Розничная цена 473 руб.",
+        allowed_quantities=[],
+    )
+    assert "количество. Розничная" in with_following_sentence
+
+
+def test_stock_sanitizer_removes_promise_to_reveal_exact_stock_later() -> None:
+    sanitized = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Уточните код товара. После этого скажу точный остаток.",
+        allowed_quantities=[],
+    )
+    reverse_wording = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Точный остаток назову после уточнения кода.",
+        allowed_quantities=[],
+    )
+
+    assert "скажу точный остаток" not in sanitized.lower()
+    assert "нужное количество" in sanitized.lower()
+    assert "точный остаток назову" not in reverse_wording.lower()
 
 
 def test_fractional_requested_quantity_is_not_rounded_down(isolated_app_env) -> None:

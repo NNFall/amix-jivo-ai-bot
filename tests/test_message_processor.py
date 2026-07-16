@@ -13,6 +13,14 @@ class _CurrentHandle:
         return True
 
 
+class _MutableHandle:
+    def __init__(self) -> None:
+        self.current = True
+
+    def is_current(self) -> bool:
+        return self.current
+
+
 class _Assistant:
     @staticmethod
     def handle_pending_client_messages(*args, **kwargs) -> AssistantReply:
@@ -38,6 +46,17 @@ class _Jivo:
         if self.fail_invite:
             raise RuntimeError("invite failed")
         return self.invite_result
+
+
+class _TurnCancelledDuringInviteJivo(_Jivo):
+    def __init__(self, calls: list[str], handle: _MutableHandle) -> None:
+        super().__init__(calls)
+        self.handle = handle
+
+    def invite_agent(self, **kwargs) -> bool:
+        result = super().invite_agent(**kwargs)
+        self.handle.current = False
+        return result
 
 
 def _processor(
@@ -106,3 +125,15 @@ def test_operator_joined_while_model_was_running_prevents_invite_and_send(isolat
     processor._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
 
     assert calls == []
+
+
+def test_operator_joined_during_invite_prevents_handoff_message(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    handle = _MutableHandle()
+    processor = _processor(calls)
+    processor.jivo_client = _TurnCancelledDuringInviteJivo(calls, handle)
+
+    processor._process_pending_client_turn(handle=handle, event=_event())
+
+    assert calls == ["invite"]

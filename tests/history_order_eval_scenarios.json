@@ -117,7 +117,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["2", "14.023л", "7", "14.023пр", "самовывоз", "7812345678", "Иван"]
+            "values": ["2", "14.023л", "7", "14.023пр", "самовывоз", "пятниц", "счёт", "7812345678", "Иван", "+7 900 123-45-67"]
           }
         ]
       }
@@ -200,7 +200,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["2", "ручк", "Твер", "налич", "Анна"]
+            "values": ["2", "ручк", "доставка", "Твер", "следующей неделе", "налич", "Анна", "+7 911 222-33-44"]
           }
         ]
       }
@@ -281,7 +281,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["3", "ABC-100", "10002", "самовывоз", "Сергей"]
+            "values": ["3", "ABC-100", "10002", "самовывоз", "завтра", "налич", "Сергей", "+7 912 300-40-50"]
           }
         ]
       }
@@ -384,7 +384,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["4", "P-AM02/B-S", "Казан", "1650123456", "Олег"]
+            "values": ["4", "P-AM02/B-S", "доставка", "Казан", "конца месяца", "счёт", "1650123456", "Олег", "+7 903 700-80-90"]
           }
         ]
       }
@@ -462,7 +462,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["6", "петел", "Псков", "налич", "Мария"]
+            "values": ["6", "петел", "доставка", "Псков", "две недели", "налич", "Мария", "+7 921 555-66-77"]
           }
         ]
       }
@@ -541,7 +541,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["2", "14.023пр", "самовывоз", "налич", "Павел"]
+            "values": ["2", "14.023пр", "самовывоз", "завтра", "налич", "Павел", "+7 999 111-22-33"]
           }
         ]
       }
@@ -607,7 +607,7 @@
             ]
           },
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["4", "P-AM02/B-S"]},
+          {"type": "response_contains_all", "values": ["4", "P-AM02/B-S", "Самар", "понедельник", "налич", "Лев", "+7 927 100-20-30"]},
           {"type": "response_contains_any", "values": ["верно", "подтвержд"]}
         ]
       },
@@ -628,7 +628,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["4", "P-AM02/B-S", "Самар", "налич", "Лев"]
+            "values": ["4", "P-AM02/B-S", "доставка", "Самар", "понедельник", "налич", "Лев", "+7 927 100-20-30"]
           }
         ]
       }
@@ -676,7 +676,8 @@
         },
         "assertions": [
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["P-AM02/B-S", "самовывоз", "Игорь", "верно"]}
+          {"type": "response_contains_all", "values": ["P-AM02/B-S", "самовывоз", "Игорь", "+7 900 444-55-66"]},
+          {"type": "response_contains_any", "values": ["верно", "подтвержд"]}
         ]
       },
       {
@@ -696,7 +697,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["P-AM02/B-S", "самовывоз", "налич", "Игорь"]
+            "values": ["одна", "P-AM02/B-S", "самовывоз", "завтра", "налич", "Игорь", "+7 900 444-55-66"]
           }
         ]
       }

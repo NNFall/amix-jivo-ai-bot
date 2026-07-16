@@ -1,3 +1,20 @@
+# Iteration 67 - final history-order guards and reproducible local gate (2026-07-16)
+
+- Re-audited the live v5 transcripts and independent findings instead of accepting the earlier partial pass.
+- Closed premature handoff paths for active orders even when Gemini supplies a vague summary or a non-order reason; a correction such as "поменяйте" is not treated as confirmation.
+- A manager handoff now requires a summary containing products and quantities, fulfillment, desired timing, payment, customer name and phone, plus INN for invoice payment.
+- Distinguished a real phone from a 10/12-digit INN and removed the false-positive name marker where the word "Клиент:" alone could satisfy the contact-name requirement.
+- Added a second Jivo state/current-turn check after `INVITE_AGENT`, so an operator joining during the invite race prevents the bot from sending another message.
+- Kept the direct AMIX tool boundary at exactly `search_products` and `handoff_to_manager`; Kie web search can no longer become a third tool when AMIX tools are supplied.
+- Strengthened stock privacy for bare numeric availability, full Russian unit words and future promises to reveal the exact stock. Historical messages and final replies consume complete unit words and preserve sentence punctuation.
+- Strengthened the evaluation oracle: customer turns must match in exact order; assistant tool calls and tool results must be balanced chronologically; semantic exact-stock promises fail; every order handoff scenario checks the full manager summary.
+- Added and executed the new regressions failing-first before each production fix.
+- Fresh local verification: `python -m pytest -q` -> `224 passed`; `python -m scripts.run_dialog_regression_eval --output DIALOG_EVALS.md` -> `OK=31 PARTIAL=0 FAIL=0`.
+- Fake history-order evaluation with three repetitions -> `PASS`, 27/27 scenario runs and 123/123 turns; evidence saved to ignored local JSON/Markdown files under `data/logs/`.
+- Static checks: exactly two tool names printed from `OPENAI_TOOLS`; no runtime `update_order_draft`/`get_order_draft` references; `python -m compileall` and `git diff --check` passed.
+- A reviewer correctly refused to certify a moving worktree; final independent reviews will be restarted against the stable commit after the server live evaluation.
+- Production services were not changed in this iteration yet.
+
 # Iteration 66 - history-driven order implementation and local verification (2026-07-16)
 
 - Replaced runtime order-draft orchestration with conversation-history-driven behavior; the model now receives the complete chronological chat, including assistant function calls and function results.

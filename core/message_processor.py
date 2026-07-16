@@ -153,6 +153,18 @@ class MessageProcessor:
                         event.id,
                     )
                     raise
+                if not handle.is_current():
+                    logger.info("Skipping Jivo handoff message because operator joined chat %s", event.chat_id)
+                    return
+                session.expire_all()
+                chat = get_chat_by_external_id(session, event.chat_id)
+                if chat is not None and chat.status in {"agent_joined", "closed"}:
+                    logger.info(
+                        "Skipping Jivo handoff message for chat %s because status is %s",
+                        event.chat_id,
+                        chat.status,
+                    )
+                    return
             self._deliver_bot_reply(session, event=event, text=assistant_reply.text)
 
     def _deliver_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:

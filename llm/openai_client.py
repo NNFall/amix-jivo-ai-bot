@@ -308,7 +308,7 @@ class OpenAIService:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
-        if enable_web_search:
+        if enable_web_search and not tools:
             payload.setdefault("tools", [])
             payload["tools"] = [*payload["tools"], {"type": "web_search"}]
 

@@ -120,6 +120,27 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert collector["json"]["messages"][2]["role"] == "user"
 
 
+def test_kie_never_adds_web_search_to_amix_tools(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kie")
+    monkeypatch.setenv("KIE_API_KEY", "test-kie-key")
+    monkeypatch.setenv("KIE_ENABLE_WEB_SEARCH", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Проверьте товар"}],
+        tools=OPENAI_TOOLS,
+        tool_choice="auto",
+    )
+
+    assert [tool["function"]["name"] for tool in collector["json"]["tools"]] == [
+        "search_products",
+        "handoff_to_manager",
+    ]
+
+
 def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app_env) -> None:
     collector: dict = {}
 
@@ -394,6 +415,8 @@ def test_product_result_prompt_continues_confirmed_order_intake_from_history() -
     assert "до подтверждения итога" in prompt
     assert "сохрани описание" in prompt
     assert "не передавай менеджеру только из-за" in prompt
+    assert "самостоятельный вопрос о наличии" in prompt
+    assert "вызови search_products" not in prompt
 
 
 def test_provider_audit_redacts_order_contact_and_invoice_data(tmp_path: Path) -> None:

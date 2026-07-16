@@ -61,6 +61,7 @@ STOCK_QUANTITY_HANDOFF_TEXT = (
 STOCK_EXACT_DISCLOSURE_REPLACEMENT = (
     "Точный остаток не называю, проверяю только указанное количество"
 )
+STOCK_UNIT_PATTERN = r"(?:штук(?:и|у)?|шт|комплект\w*|компл|единиц\w*|упак\w*)\b"
 
 
 @dataclass(slots=True)
@@ -606,6 +607,11 @@ class AssistantService:
                 reason == "order_creation"
                 or summary_is_confirmable
                 or self._handoff_summary_describes_order(summary)
+                or self._dialog_has_active_order_intent(
+                    session,
+                    external_chat_id=external_chat_id,
+                    customer_text=customer_text,
+                )
             )
             if (
                 reason != "client_requested_manager"
@@ -1325,9 +1331,10 @@ class AssistantService:
             return False
         text = reply_text.lower()
         patterns = (
-            r"(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n,.!?]{0,40}?\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)",
-            r"\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
-            r"(?:на складе|остат(?:ок|ке))\s*[:\-]?\s*\d+(?:[.,]\d+)?(?:\s*(?:шт|штук|компл|единиц|упак))?",
+            rf"(?:в наличии|на складе|остат(?:ок|ке)|доступн(?:о|ы)?)[^\n,.!?]{{0,40}}?\d+(?:[.,]\d+)?\s*{STOCK_UNIT_PATTERN}",
+            rf"\d+(?:[.,]\d+)?\s*{STOCK_UNIT_PATTERN}[^\n.!?]{{0,25}}?(?:в наличии|на складе|в остатке)",
+            rf"(?:на складе|остат(?:ок|ке))\s*[:\-]?\s*\d+(?:[.,]\d+)?(?:\s*{STOCK_UNIT_PATTERN})?",
+            rf"(?:в наличии|доступн(?:о|ы)?)\s*[:\-]?\s*\d+(?:[.,]\d+)?(?:\s*{STOCK_UNIT_PATTERN})?",
         )
         return any(re.search(pattern, text) for pattern in patterns)
 
@@ -1343,15 +1350,19 @@ class AssistantService:
         }
         patterns = (
             (
-                r"(?:сейчас\s+)?(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n,.!?]{0,40}?(?P<quantity>\d+(?:[.,]\d+)?)\s*(?:шт|штук|компл|единиц|упак)\.?",
+                rf"(?:сейчас\s+)?(?:в наличии|на складе|остат(?:ок|ке)|доступн(?:о|ы)?)[^\n,.!?]{{0,40}}?(?P<quantity>\d+(?:[.,]\d+)?)\s*{STOCK_UNIT_PATTERN}\.?",
                 False,
             ),
             (
-                r"(?P<quantity>\d+(?:[.,]\d+)?)\s*(?:шт|штук|компл|единиц|упак)\.?[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
+                rf"(?P<quantity>\d+(?:[.,]\d+)?)\s*{STOCK_UNIT_PATTERN}\.?[^\n.!?]{{0,25}}?(?:в наличии|на складе|в остатке)",
                 True,
             ),
             (
-                r"(?:на складе|остат(?:ок|ке))\s*[:\-]?\s*(?P<quantity>\d+(?:[.,]\d+)?)(?:\s*(?:шт|штук|компл|единиц|упак))?\.?",
+                rf"(?:на складе|остат(?:ок|ке))\s*[:\-]?\s*(?P<quantity>\d+(?:[.,]\d+)?)(?:\s*{STOCK_UNIT_PATTERN})?\.?",
+                False,
+            ),
+            (
+                rf"(?:в наличии|доступн(?:о|ы)?)\s*[:\-]?\s*(?P<quantity>\d+(?:[.,]\d+)?)(?:\s*{STOCK_UNIT_PATTERN})?\.?",
                 False,
             ),
         )
@@ -1361,7 +1372,8 @@ class AssistantService:
                 quantity = Decimal(match.group("quantity").replace(",", "."))
                 if preserve_requested_quantity and quantity in allowed:
                     return match.group(0)
-                return STOCK_EXACT_DISCLOSURE_REPLACEMENT
+                terminal = "." if match.group(0).rstrip().endswith(".") else ""
+                return STOCK_EXACT_DISCLOSURE_REPLACEMENT + terminal
 
             sanitized = re.sub(
                 pattern,
@@ -1369,6 +1381,20 @@ class AssistantService:
                 sanitized,
                 flags=re.IGNORECASE,
             )
+        sanitized = re.sub(
+            r"\b(?:скажу|назову|сообщу|покажу|уточню|напишу)\b[^\n.!?]{0,48}"
+            r"\bточн(?:ый|ое)\s+(?:остаток|количество)\b",
+            "проверю, доступно ли нужное количество",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+        sanitized = re.sub(
+            r"\bточн(?:ый|ое)\s+(?:остаток|количество)\b[^\n.!?]{0,48}"
+            r"\b(?:скажу|назову|сообщу|покажу|уточню|напишу)\b",
+            "проверю, доступно ли нужное количество",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
         return re.sub(r"\s{2,}", " ", sanitized).strip()
 
     @staticmethod
@@ -1556,7 +1582,7 @@ class AssistantService:
 
         claim_indexes = [
             index
-            for marker in ("передаю", "подключится к диалогу")
+            for marker in ("передаю", "передам", "подключится к диалогу")
             if (index := text.find(marker)) >= 0
         ]
         if not claim_indexes:
@@ -1565,7 +1591,8 @@ class AssistantService:
         claim_index = min(claim_indexes)
         prefix = text[max(0, claim_index - 160) : claim_index]
         return not any(
-            marker in prefix for marker in ("если", "после подтвержд", "когда подтверд")
+            marker in prefix
+            for marker in ("если", "тогда", "после подтвержд", "после того", "когда подтверд")
         )
 
     @staticmethod
@@ -1575,6 +1602,7 @@ class AssistantService:
             "укажите",
             "подскажите",
             "уточните",
+            "подтвердите",
             "какое количество",
             "как планируете",
             "как вам удобнее",
@@ -1587,7 +1615,7 @@ class AssistantService:
             sentence_lower = sentence.lower()
             claim_positions = [
                 position
-                for marker in ("передаю", "менеджер подключится", "специалист подключится")
+                for marker in ("передаю", "передам", "менеджер подключится", "специалист подключится")
                 if (position := sentence_lower.find(marker)) >= 0
             ]
             if not claim_positions:
@@ -1596,6 +1624,7 @@ class AssistantService:
 
             claim_position = min(claim_positions)
             prefix = sentence[:claim_position].rstrip(" ,;:-")
+            prefix = re.sub(r"(?:,?\s*и\s+)?тогда\s*$", "", prefix, flags=re.IGNORECASE).rstrip(" ,;:-")
             if prefix and any(marker in prefix.lower() for marker in request_markers):
                 kept.append(prefix + ("?" if not prefix.endswith((".", "!", "?")) else ""))
 
@@ -2575,19 +2604,25 @@ class AssistantService:
         )
         return AssistantReply(text=reply_text)
 
-    @staticmethod
-    def _next_order_detail_question(summary: str | None) -> str:
+    @classmethod
+    def _next_order_detail_question(cls, summary: str | None) -> str:
         text = str(summary or "").lower().replace("ё", "е")
+        if not cls._handoff_summary_describes_order(summary):
+            return "Подскажите, пожалуйста, какие товары и в каком количестве вы хотите заказать?"
         if not any(marker in text for marker in ("достав", "самовывоз")):
             return "Как вам удобнее получить заказ: самовывозом или доставкой?"
-        if not any(marker in text for marker in ("налич", "по счет", "безнал", "карт")):
+        if not cls._order_summary_has_payment(text):
             return "Как планируете оплатить заказ?"
         if any(marker in text for marker in ("по счет", "безнал")) and not re.search(
             r"\b(?:\d{10}|\d{12})\b", text
         ):
             return "Укажите, пожалуйста, ИНН организации или ИП для выставления счёта."
-        if not re.search(r"(?:\+?\d[\d\s()\-]{8,}\d)", text):
+        if cls._find_contact_phone(str(summary or "")) is None:
             return "Подскажите, пожалуйста, имя и телефон для связи."
+        if not cls._order_summary_has_timing(text):
+            return "Когда вы хотите получить заказ?"
+        if not cls._order_summary_has_contact_name(str(summary or "")):
+            return "Подскажите, пожалуйста, ваше имя для связи."
         return "Проверьте, пожалуйста, итог заказа и подтвердите, всё ли верно."
 
     @classmethod
@@ -2610,9 +2645,10 @@ class AssistantService:
         )
         return bool(previous_bot and cls._bot_message_requests_order_confirmation(previous_bot.text))
 
-    @staticmethod
-    def _order_summary_is_confirmable(summary: str | None) -> bool:
-        text = str(summary or "").lower().replace("ё", "е")
+    @classmethod
+    def _order_summary_is_confirmable(cls, summary: str | None) -> bool:
+        raw_text = str(summary or "")
+        text = raw_text.lower().replace("ё", "е")
         if not text:
             return False
         incomplete_markers = (
@@ -2625,25 +2661,110 @@ class AssistantService:
         )
         if any(marker in text for marker in incomplete_markers):
             return False
+        has_items = cls._handoff_summary_describes_order(summary)
         has_fulfillment = any(marker in text for marker in ("достав", "самовывоз"))
-        has_payment = any(marker in text for marker in ("налич", "по счет", "безнал", "карт"))
-        has_phone = bool(re.search(r"(?:\+?\d[\d\s()\-]{8,}\d)", text))
-        if not (has_fulfillment and has_payment and has_phone):
+        has_payment = cls._order_summary_has_payment(text)
+        has_phone = cls._find_contact_phone(raw_text) is not None
+        has_timing = cls._order_summary_has_timing(text)
+        has_name = cls._order_summary_has_contact_name(raw_text)
+        if not (has_items and has_fulfillment and has_payment and has_phone and has_timing and has_name):
             return False
         if any(marker in text for marker in ("по счет", "безнал")):
             return bool(re.search(r"\b(?:\d{10}|\d{12})\b", text))
         return True
 
     @staticmethod
+    def _order_summary_has_payment(text: str) -> bool:
+        normalized = str(text or "").lower().replace("ё", "е")
+        return "оплат" in normalized or any(
+            marker in normalized
+            for marker in ("налич", "по счет", "безнал", "карт", "сбп", "перевод", "при получении")
+        )
+
+    @staticmethod
+    def _order_summary_has_timing(text: str) -> bool:
+        normalized = str(text or "").lower().replace("ё", "е")
+        return any(
+            marker in normalized
+            for marker in (
+                "сегодня",
+                "завтра",
+                "послезавтра",
+                "понедель",
+                "вторник",
+                "сред",
+                "четвер",
+                "пятниц",
+                "суббот",
+                "воскрес",
+                "недел",
+                "месяц",
+                "срок",
+                "дата",
+                "как можно скорее",
+                "не срочно",
+            )
+        )
+
+    @staticmethod
+    def _order_summary_has_contact_name(text: str) -> bool:
+        raw = str(text or "")
+        explicit_name = re.search(
+            r"\b(?:имя|контакт|контактное лицо)\s*:\s*"
+            r"(?P<name>[А-ЯЁа-яё][А-ЯЁа-яё\-]{1,30}(?:\s+[А-ЯЁа-яё][А-ЯЁа-яё\-]{1,30}){0,2})"
+            r"(?=\s*[,.;]|\s*$)",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if explicit_name and explicit_name.group("name").lower() not in {
+            "не указан",
+            "неизвестно",
+            "телефон",
+        }:
+            return True
+        phone = AssistantService._find_contact_phone(raw)
+        if phone is None:
+            return False
+        prefix = raw[max(0, phone.start() - 80) : phone.start()].rstrip(" ,;:-")
+        prefix = re.sub(
+            r"\b(?:телефон|тел\.?|номер)\s*[:\-]?\s*$",
+            "",
+            prefix,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:-")
+        return bool(re.search(r"(?:^|[,.!?:;]\s*)(?:[А-ЯЁ][а-яё]{1,30})(?:\s+[А-ЯЁ][а-яё]{1,30}){0,2}$", prefix))
+
+    @staticmethod
+    def _find_contact_phone(text: str) -> re.Match[str] | None:
+        raw = str(text or "")
+        for match in re.finditer(r"\+?\d[\d\s()\-]{8,}\d", raw):
+            token = match.group(0)
+            digits = re.sub(r"\D", "", token)
+            prefix = raw[max(0, match.start() - 24) : match.start()].lower().replace("ё", "е")
+            formatted = token.startswith("+") or bool(re.search(r"[\s()\-]", token))
+            explicitly_labeled = any(marker in prefix for marker in ("телефон", "тел.", "номер"))
+            if len(digits) in {10, 11} and (formatted or len(digits) == 11 or explicitly_labeled):
+                return match
+        return None
+
+    @staticmethod
     def _handoff_summary_describes_order(summary: str | None) -> bool:
         text = str(summary or "").lower().replace("ё", "е")
-        has_quantity = bool(
+        has_numeric_quantity = bool(
             re.search(
                 r"\b\d+(?:[.,]\d+)?(?:\s*(?:шт|штук|штуки|компл|комплект)"
-                r"|\s+(?!руб(?:\.|\b)|дн(?:я|ей)?\b|недел|месяц|год)\w+)",
+                r"|\s+(?!\d)(?!руб(?:\.|\b)|дн(?:я|ей)?\b|недел|месяц|год)\w+)",
                 text,
             )
         )
+        has_word_quantity = bool(
+            re.search(
+                r"\b(?:один|одна|одно|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)\s+"
+                r"(?!дн|недел|месяц|год|руб)\w+",
+                text,
+            )
+        )
+        has_quantity = has_numeric_quantity or has_word_quantity
         has_order_context = any(
             marker in text for marker in ("заказ", "достав", "самовывоз", "оплат")
         )
@@ -2653,7 +2774,7 @@ class AssistantService:
     def _is_explicit_order_confirmation(customer_text: str) -> bool:
         text = customer_text.lower().replace("ё", "е")
         if re.search(
-            r"\b(?:нет|неверно|не верно|неправильно|не правильно|исправ|замен|убер|добав|вместо)",
+            r"\b(?:нет|неверно|не верно|неправильно|не правильно|исправ|замен|поменя|убер|добав|вместо)",
             text,
         ) or "только не" in text:
             return False
@@ -2669,6 +2790,33 @@ class AssistantService:
             for marker in ("все верно", "все правильно", "данные верны", "итог верен")
         )
         return has_confirmation_request and cls._order_summary_is_confirmable(bot_text)
+
+    @staticmethod
+    def _dialog_has_active_order_intent(session, *, external_chat_id: str, customer_text: str) -> bool:
+        customer_messages = [
+            str(message.text or "")
+            for message in list_messages(session, external_chat_id)
+            if message.sender_role == "client" and message.text
+        ]
+        if not customer_messages or customer_messages[-1] != customer_text:
+            customer_messages.append(customer_text)
+
+        relevant: list[str] = []
+        for message in customer_messages:
+            normalized = message.lower().replace("ё", "е")
+            if re.search(r"\b(?:отмен|передумал|не нужен заказ|заказ не нужен)\w*", normalized):
+                relevant = []
+                continue
+            relevant.append(normalized)
+
+        text = "\n".join(relevant)
+        if re.search(r"\b(?:заказ(?:ать|ы|а)?|купить|покупаю|возьму|беру|оформить)\b", text):
+            return True
+        has_quantity = bool(
+            re.search(r"\b\d+(?:[.,]\d+)?\s*(?:шт|штук|штуки|компл|комплект\w*|упак\w*|единиц\w*)\b", text)
+        )
+        has_order_progress = any(marker in text for marker in ("достав", "самовывоз", "оплат", "налич", "по счет"))
+        return has_quantity and has_order_progress
 
     def _handoff_already_requested_reply(
         self,
@@ -3339,7 +3487,8 @@ class AssistantService:
                     return f"По {display_query} есть такие варианты по цене: {variants}. Если нужен один из них, пришлите код товара."
             return (
                 f"По {display_query} нашёл несколько позиций. Они отличаются кодом и ценой, поэтому чтобы не ошибиться, "
-                "уточните, пожалуйста, код товара с сайта или цену, которую видите. После этого скажу точный остаток."
+                "уточните, пожалуйста, код товара с сайта или цену, которую видите. "
+                "После этого проверю, доступно ли нужное количество."
             )
 
         if status == "similar_found" and similar:

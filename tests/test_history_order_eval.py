@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from core.assistant_service import AssistantService
 from scripts import run_history_order_eval as eval_runner
 
 
@@ -192,7 +193,24 @@ def test_every_order_handoff_scenario_asserts_complete_summary() -> None:
             if assertion.get("type") == "handoff_summary_contains_all"
         ]
         assert summary_assertions, f"{scenario_id} does not verify the manager summary"
-        assert len(summary_assertions[0].get("values") or []) >= 3
+        values = summary_assertions[0].get("values") or []
+        assert len(values) >= 7, f"{scenario_id} verifies too few order facts: {values!r}"
+        asserted_text = " ".join(str(value) for value in values).lower().replace("ё", "е")
+        assert any(marker in asserted_text for marker in ("достав", "самовывоз"))
+        assert any(marker in asserted_text for marker in ("налич", "счет", "безнал", "карт", "сбп"))
+        assert AssistantService._order_summary_has_timing(asserted_text)  # noqa: SLF001
+        assert AssistantService._find_contact_phone(asserted_text) is not None  # noqa: SLF001
+
+        handoff_calls = [
+            call
+            for call in ((turn.get("fake") or {}).get("tool_calls") or [])
+            if call.get("name") == "handoff_to_manager"
+        ]
+        assert handoff_calls, f"{scenario_id} has no fake handoff call"
+        summary = str((handoff_calls[-1].get("arguments") or {}).get("summary") or "")
+        assert AssistantService._order_summary_is_confirmable(summary), (  # noqa: SLF001
+            f"{scenario_id} fake handoff summary is incomplete: {summary!r}"
+        )
 
 
 def test_quantity_correction_scenario_rechecks_the_latest_quantity() -> None:
@@ -430,6 +448,82 @@ def test_stock_privacy_scans_numeric_stock_json_fields() -> None:
 
     assert assertion["passed"] is False
     assert "exact_stock:31" in assertion["detail"]
+
+
+def test_stock_privacy_rejects_future_exact_stock_promises() -> None:
+    rejected = eval_runner._privacy_assertion(
+        "После уточнения кода скажу точный остаток.",
+        [],
+        [],
+    )
+    accepted = eval_runner._privacy_assertion(
+        "Точный остаток не называю, проверю только нужное количество.",
+        [],
+        [],
+    )
+
+    assert rejected["passed"] is False
+    assert "exact_stock_promise" in rejected["detail"]
+    assert accepted["passed"] is True
+
+
+def test_full_history_assertion_requires_exact_customer_turn_order() -> None:
+    provider_requests = [
+        {
+            "messages": [
+                {"role": "system", "content": "prompt"},
+                {"role": "user", "content": "Второе сообщение"},
+                {"role": "assistant", "content": "Ответ"},
+                {"role": "user", "content": "Первое сообщение"},
+            ]
+        }
+    ]
+
+    assertion = eval_runner._full_history_assertion(
+        provider_requests,
+        ["Первое сообщение", "Второе сообщение"],
+    )
+
+    assert assertion["passed"] is False
+    assert "customer_turns" in assertion["detail"]
+
+
+def test_full_history_assertion_requires_balanced_chronological_tool_events() -> None:
+    valid_messages = [
+        {"role": "system", "content": "prompt"},
+        {"role": "user", "content": "Проверьте 770"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "search_products", "arguments": "{}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "name": "search_products",
+            "tool_call_id": "call-1",
+            "content": "{}",
+        },
+        {"role": "assistant", "content": "Нашёл товар."},
+        {"role": "user", "content": "Нужно две штуки"},
+    ]
+    valid = eval_runner._full_history_assertion(
+        [{"messages": valid_messages}],
+        ["Проверьте 770", "Нужно две штуки"],
+    )
+    missing_tool_result = eval_runner._full_history_assertion(
+        [{"messages": valid_messages[:-3] + valid_messages[-2:]}],
+        ["Проверьте 770", "Нужно две штуки"],
+    )
+
+    assert valid["passed"] is True
+    assert missing_tool_result["passed"] is False
+    assert "tool_history" in missing_tool_result["detail"]
 
 
 def test_live_provider_health_requires_successful_logged_call_and_usage() -> None:

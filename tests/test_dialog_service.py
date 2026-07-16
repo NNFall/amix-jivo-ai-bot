@@ -202,3 +202,31 @@ def test_dialog_service_redacts_legacy_stock_without_unit(isolated_app_env) -> N
     serialized = json.dumps(messages, ensure_ascii=False)
     assert "220" not in serialized
     assert "точный остаток скрыт" in serialized.lower()
+
+
+def test_dialog_service_redacts_full_legacy_stock_unit_word(isolated_app_env) -> None:
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:legacy-stock-unit")
+        get_or_create_chat(session, "chat:legacy-stock-unit", customer.id)
+        append_message(session, "chat:legacy-stock-unit", "client", "Сколько доступно?")
+        append_message(session, "chat:legacy-stock-unit", "bot", "Сейчас в наличии 220 штуки.")
+
+        messages = DialogService().get_llm_messages(session, "chat:legacy-stock-unit")
+
+    serialized = json.dumps(messages, ensure_ascii=False)
+    assert "220" not in serialized
+    assert "скрытуки" not in serialized.lower()
+
+
+def test_dialog_service_redacts_legacy_availability_without_unit(isolated_app_env) -> None:
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="customer:legacy-bare-availability")
+        get_or_create_chat(session, "chat:legacy-bare-availability", customer.id)
+        append_message(session, "chat:legacy-bare-availability", "client", "Сколько доступно?")
+        append_message(session, "chat:legacy-bare-availability", "bot", "В наличии: 220.")
+
+        messages = DialogService().get_llm_messages(session, "chat:legacy-bare-availability")
+
+    serialized = json.dumps(messages, ensure_ascii=False)
+    assert "220" not in serialized
+    assert "точный остаток скрыт" in serialized.lower()

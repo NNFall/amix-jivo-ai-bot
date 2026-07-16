@@ -659,6 +659,14 @@ def _privacy_assertion(
     normalized = visible.casefold()
     forbidden_fields = ("free_stock", "raw_product_lookup_result")
     leaks = [field for field in forbidden_fields if field in normalized]
+    exact_stock_promise_patterns = (
+        r"\b(?:скажу|назову|сообщу|покажу|уточню|напишу)\b[^\n.!?]{0,48}"
+        r"\bточн(?:ый|ое)\s+(?:остаток|количество)\b",
+        r"\bточн(?:ый|ое)\s+(?:остаток|количество)\b[^\n.!?]{0,48}"
+        r"\b(?:скажу|назову|сообщу|покажу|уточню|напишу)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in exact_stock_promise_patterns):
+        leaks.append("exact_stock_promise")
     for product in EVAL_CATALOG:
         stock = str(product["free_stock"])
         patterns = (
@@ -705,12 +713,55 @@ def _full_history_assertion(
     provider_requests: list[dict[str, Any]], expected_customer_inputs: list[str]
 ) -> dict[str, Any]:
     first_messages = provider_requests[0].get("messages") if provider_requests else []
-    serialized = json.dumps(first_messages or [], ensure_ascii=False)
-    missing = [value for value in expected_customer_inputs if value not in serialized]
+    messages = first_messages if isinstance(first_messages, list) else []
+    actual_customer_inputs = [
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "user"
+    ]
+
+    tool_errors: list[str] = []
+    pending_tool_calls: dict[str, str] = {}
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            tool_errors.append(f"message_{index}_not_object")
+            continue
+        role = str(message.get("role") or "")
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                call_id = str((call or {}).get("id") or "")
+                call_name = str(((call or {}).get("function") or {}).get("name") or "")
+                if not call_id or call_id in pending_tool_calls:
+                    tool_errors.append(f"invalid_tool_call_at_{index}")
+                    continue
+                pending_tool_calls[call_id] = call_name
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            expected_name = pending_tool_calls.pop(call_id, None)
+            actual_name = str(message.get("name") or "")
+            if expected_name is None:
+                tool_errors.append(f"orphan_tool_result_at_{index}")
+            elif actual_name and expected_name and actual_name != expected_name:
+                tool_errors.append(f"tool_name_mismatch_at_{index}")
+        elif role == "user" and pending_tool_calls:
+            tool_errors.append(f"user_before_tool_result_at_{index}")
+
+    if pending_tool_calls:
+        tool_errors.append(f"missing_tool_results={sorted(pending_tool_calls)}")
+
+    customer_turns_match = actual_customer_inputs == expected_customer_inputs
+    passed = bool(messages) and customer_turns_match and not tool_errors
+    details: list[str] = []
+    if not customer_turns_match:
+        details.append(
+            f"customer_turns expected={expected_customer_inputs!r} actual={actual_customer_inputs!r}"
+        )
+    if tool_errors:
+        details.append(f"tool_history={tool_errors!r}")
     return {
         "type": "complete_chronological_history",
-        "passed": not missing,
-        "detail": "all customer turns present" if not missing else f"missing={missing!r}",
+        "passed": passed,
+        "detail": "complete ordered customer and tool history" if passed else "; ".join(details),
     }
 
 
