@@ -210,6 +210,20 @@ def message_exists_by_external_event_id(session, external_event_id: str) -> bool
     ) is not None
 
 
+def list_messages(session, external_chat_id: str) -> list[Message]:
+    chat = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
+    if chat is None:
+        return []
+
+    return list(
+        session.scalars(
+            select(Message)
+            .where(Message.chat_id == chat.id)
+            .order_by(Message.created_at.asc(), Message.id.asc())
+        ).all()
+    )
+
+
 def list_recent_messages(session, external_chat_id: str, limit: int = 20) -> list[Message]:
     chat = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
     if chat is None:

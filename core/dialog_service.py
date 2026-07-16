@@ -1,4 +1,4 @@
-from database.repositories import list_recent_messages
+from database.repositories import list_messages
 
 
 class DialogService:
@@ -6,7 +6,7 @@ class DialogService:
         self.history_limit = history_limit
 
     def get_transcript(self, session, external_chat_id: str) -> str:
-        messages = list_recent_messages(session, external_chat_id, limit=self.history_limit)
+        messages = list_messages(session, external_chat_id)
         lines: list[str] = []
 
         for message in messages:
@@ -20,7 +20,7 @@ class DialogService:
         return "\n".join(lines)
 
     def get_llm_messages(self, session, external_chat_id: str) -> list[dict]:
-        messages = list_recent_messages(session, external_chat_id, limit=self.history_limit)
+        messages = list_messages(session, external_chat_id)
         result: list[dict] = []
 
         for message in messages:
