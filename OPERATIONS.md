@@ -1,3 +1,15 @@
+# Iteration 65 - history-driven order flow design (2026-07-16)
+
+- The user rejected any separate order-draft or final-summary function and approved a model-driven order flow using only `search_products` and `handoff_to_manager`.
+- Inspected the current order service, prompt, tool schemas, handoff guard, message history and existing order tests before proposing changes.
+- Confirmed that the current model context is limited to 20 database rows and that assistant/tool records consume the same limit.
+- Ran four independent read-only reviews covering architecture, prompt policy, code-removal impact and live-evaluation methodology.
+- Accepted the shared findings that the draft duplicates conversation state, the search schema cannot express different quantities per product, full-history construction must be fixed, and failed Jivo invites must not produce a success promise.
+- Rejected proposals to retain `update_order_draft` or replace it with a new final-summary function because they conflict with the approved two-tool architecture.
+- Baseline before implementation: `python -m pytest -q` -> `166 passed`.
+- Wrote `docs/superpowers/specs/2026-07-16-history-driven-order-flow-design.md` with the approved runtime boundary, prompt principles, history rules and verification strategy.
+- No production code or VPS service was changed in this design iteration.
+
 # Iteration 64 - independent audit of live multi-turn evaluation (2026-07-16)
 
 - Reopened the 2026-07-15 live evaluation after the first order transcript contradicted its 10/10 verdict.

@@ -1,5 +1,18 @@
 # PLAN
 
+## Update 2026-07-16 (History-Driven Order Flow)
+
+- Status: design approved in conversation; written specification awaiting user review before implementation planning.
+- Goal: remove `update_order_draft` and all parallel order memory so Gemini conducts short order conversations from complete chronological history.
+- Tool boundary: expose exactly `search_products` and `handoff_to_manager`.
+- History: send the whole persisted chat from its first message through chronological assistant/tool events; do not apply the current 20-row limit.
+- Prompt: replace draft-specific and narrow instructions with one compact generalized order policy covering collection, corrections, summary, explicit confirmation and handoff.
+- Product lookup: represent requested quantity per product and preserve `customer query -> code -> article` identity.
+- Backend scope: retain message persistence, rapid-message supersession, Jivo lifecycle/idempotency, product truth, stock privacy, usage accounting and invite-before-promise behavior; do not parse a second order aggregate.
+- Legacy data: stop all runtime reads/writes of `OrderDraft`; leave the physical table for one rollback window, then remove it separately.
+- Verification: TDD, full deterministic suite, repeated real Gemini multi-turn evaluation on the server, saved JSON/Markdown evidence and independent code/prompt/transcript reviews.
+- Specification: `docs/superpowers/specs/2026-07-16-history-driven-order-flow-design.md`.
+
 ## Update 2026-07-16 (Independent Audit Of Live Dialog Evaluation)
 
 - Status: completed; previous 6.7/10 score withdrawn, no production behavior changed.
