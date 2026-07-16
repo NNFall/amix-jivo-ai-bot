@@ -15,6 +15,18 @@ from products.article_utils import normalize_article
 from settings import get_settings
 
 
+def test_assistant_service_keeps_recent_history_limit_outside_dialog_service(
+    isolated_app_env, monkeypatch
+) -> None:
+    monkeypatch.setenv("HISTORY_LIMIT", "7")
+    get_settings.cache_clear()
+
+    service = AssistantService()
+
+    assert service.recent_history_limit == 7
+    assert not hasattr(service.dialog_service, "history_limit")
+
+
 def test_assistant_service_returns_product_reply(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
