@@ -176,11 +176,11 @@ def test_every_order_handoff_scenario_asserts_complete_summary() -> None:
     handoff_turns = []
     for scenario in scenarios:
         for turn in scenario["turns"]:
-            calls = (turn.get("fake") or {}).get("tool_calls") or []
+            assertions = turn.get("assertions") or []
             if any(
-                call.get("name") == "handoff_to_manager"
-                and (call.get("arguments") or {}).get("reason") == "order_creation"
-                for call in calls
+                assertion.get("type") == "handoff_reason"
+                and assertion.get("value") == "order_creation"
+                for assertion in assertions
             ):
                 handoff_turns.append((scenario["id"], turn))
 
@@ -205,7 +205,7 @@ def test_quantity_correction_scenario_rechecks_the_latest_quantity() -> None:
 
     assert queries == [{"query": "14.023пр.", "requested_quantity": 7}]
     assert any(
-        assertion.get("type") == "tool_query_quantities"
+        assertion.get("type") == "tool_query_quantities_contain"
         and assertion.get("queries") == queries
         for assertion in correction_turn.get("assertions") or []
     )
@@ -284,6 +284,37 @@ def test_tool_query_quantities_assertion_checks_each_product_in_order() -> None:
 
     assert passed["passed"] is True
     assert failed["passed"] is False
+
+
+def test_tool_query_quantities_contain_accepts_extra_rechecks_and_product_alias() -> None:
+    turn = {
+        "response": "",
+        "function_results": [],
+        "function_calls": [
+            {
+                "name": "search_products",
+                "arguments": {
+                    "queries": [
+                        {"query": "14.023л.", "requested_quantity": 2},
+                        {"query": "22608", "requested_quantity": 4},
+                    ]
+                },
+            }
+        ],
+    }
+
+    assertion = eval_runner._assertion_result(
+        {
+            "type": "tool_query_quantities_contain",
+            "queries": [
+                {"query_any": ["P-AM02/B-S", "22608"], "requested_quantity": 4},
+            ],
+        },
+        turn,
+        None,
+    )
+
+    assert assertion["passed"] is True
 
 
 def test_handoff_summary_assertion_requires_all_latest_order_facts() -> None:

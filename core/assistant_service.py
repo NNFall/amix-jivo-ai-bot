@@ -445,7 +445,13 @@ class AssistantService:
                 if self._extract_requested_quantity(customer_text) is not None
                 else STOCK_QUANTITY_REQUIRED_TEXT
             )
-        reply_text = self._sanitize_exact_stock_disclosure(reply_text)
+        direct_requested_quantity = self._extract_requested_quantity(customer_text)
+        reply_text = self._sanitize_exact_stock_disclosure(
+            reply_text,
+            allowed_quantities=(
+                [direct_requested_quantity] if direct_requested_quantity is not None else []
+            ),
+        )
         reply_text = self._sanitize_customer_reply(reply_text)
 
         source = "llm_direct" if first_turn.text else "llm_provider_error" if first_turn.error_type else "fallback"
@@ -876,7 +882,10 @@ class AssistantService:
             customer_text=customer_text,
             backend_actions=backend_actions,
         )
-        if self._lookup_is_only_not_found(product_lookup_result):
+        if (
+            self._lookup_is_only_not_found(product_lookup_result)
+            and str(product_lookup_result.get("reason") or "").lower() != "order"
+        ):
             reply_text = self._build_programmatic_lookup_fallback(
                 product_lookup_result,
                 customer_text=customer_text,
@@ -894,7 +903,14 @@ class AssistantService:
                 customer_text=customer_text,
                 backend_actions=backend_actions,
             )
-        reply_text = self._sanitize_exact_stock_disclosure(reply_text)
+        reply_text = self._sanitize_exact_stock_disclosure(
+            reply_text,
+            allowed_quantities=[
+                item["requested_quantity"]
+                for item in quantity_requests
+                if item.get("requested_quantity") is not None
+            ],
+        )
         reply_text = self._ensure_refinement_code_text(reply_text, product_lookup_result)
         reply_text = self._sanitize_customer_reply(reply_text)
 
@@ -1301,16 +1317,28 @@ class AssistantService:
         return any(re.search(pattern, text) for pattern in patterns)
 
     @staticmethod
-    def _sanitize_exact_stock_disclosure(reply_text: str) -> str:
+    def _sanitize_exact_stock_disclosure(
+        reply_text: str,
+        *,
+        allowed_quantities: list[int | float] | None = None,
+    ) -> str:
+        allowed = {
+            Decimal(str(value).replace(",", "."))
+            for value in (allowed_quantities or [])
+        }
         patterns = (
-            r"(?:сейчас\s+)?(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n.!?]{0,40}?\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)\.?",
-            r"\d+(?:[.,]\d+)?\s*(?:шт|штук|компл|единиц|упак)\.?[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
+            r"(?:сейчас\s+)?(?:в наличии|на складе|остат(?:ок|ке)|доступно)[^\n.!?]{0,40}?(?P<quantity>\d+(?:[.,]\d+)?)\s*(?:шт|штук|компл|единиц|упак)\.?",
+            r"(?P<quantity>\d+(?:[.,]\d+)?)\s*(?:шт|штук|компл|единиц|упак)\.?[^\n.!?]{0,25}?(?:в наличии|на складе|в остатке)",
         )
         sanitized = reply_text
         for pattern in patterns:
+            def replace_match(match: re.Match[str]) -> str:
+                quantity = Decimal(match.group("quantity").replace(",", "."))
+                return match.group(0) if quantity in allowed else STOCK_EXACT_DISCLOSURE_REPLACEMENT
+
             sanitized = re.sub(
                 pattern,
-                STOCK_EXACT_DISCLOSURE_REPLACEMENT,
+                replace_match,
                 sanitized,
                 flags=re.IGNORECASE,
             )

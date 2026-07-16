@@ -369,6 +369,17 @@ def test_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -
     assert "сохрани описание" in prompt
 
 
+def test_handoff_tool_does_not_treat_order_delivery_as_separate_handoff_reason() -> None:
+    handoff_tool = next(
+        tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "handoff_to_manager"
+    )
+    description = handoff_tool["function"]["description"].lower()
+
+    assert "сбор" in description
+    assert "достав" in description
+    assert "не" in description
+
+
 def test_product_result_prompt_continues_confirmed_order_intake_from_history() -> None:
     prompt = PRODUCT_FACTS_RESPONSE_PROMPT.lower()
     assert "продолжи сбор заказа по истории" in prompt

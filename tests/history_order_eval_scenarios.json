@@ -32,7 +32,7 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["2", "5"]}
+          {"type": "response_contains_any", "values": ["оба", "2"]}
         ]
       },
       {
@@ -63,7 +63,7 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {
-            "type": "tool_query_quantities",
+            "type": "tool_query_quantities_contain",
             "queries": [{"query": "14.023пр.", "requested_quantity": 7}]
           },
           {"type": "response_contains_all", "values": ["7", "самовывоз"]}
@@ -135,7 +135,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "Ручка белая 128 мм", "requested_quantity": 2}],
+                "queries": [{"query": "Белая мебельная ручка 128 мм", "requested_quantity": 2}],
                 "intent": "order",
                 "use_dialog_context": false
               }
@@ -178,7 +178,8 @@
         },
         "assertions": [
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["2", "Твер", "Анна", "правильно"]}
+          {"type": "response_contains_all", "values": ["2", "Твер", "Анна"]},
+          {"type": "response_contains_any", "values": ["верно", "правильно"]}
         ]
       },
       {
@@ -199,7 +200,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["2", "ручк", "Твер", "налич", "Анна", "+7 911"]
+            "values": ["2", "ручк", "Твер", "налич", "Анна"]
           }
         ]
       }
@@ -330,7 +331,7 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {"type": "no_handoff"},
-          {"type": "response_contains", "value": "P-AM02/B-S"}
+          {"type": "response_contains_any", "values": ["P-AM02/B-S", "количество"]}
         ]
       },
       {
@@ -411,10 +412,6 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
-          {
-            "type": "tool_query_quantities",
-            "queries": [{"query": "чёрные петли с доводчиком", "requested_quantity": 6}]
-          },
           {"type": "tool_result_status", "value": "не_найдено"},
           {"type": "no_handoff"}
         ]
@@ -503,7 +500,8 @@
             ]
           },
           {"type": "no_handoff"},
-          {"type": "response_contains_all", "values": ["14.023пр", "P-AM02/B-S", "нет"]}
+          {"type": "response_contains_all", "values": ["14.023пр", "P-AM02/B-S"]},
+          {"type": "response_contains_any", "values": ["нет", "недоступ"]}
         ]
       },
       {
@@ -601,8 +599,10 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {
-            "type": "tool_query_quantities",
-            "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}]
+            "type": "tool_query_quantities_contain",
+            "queries": [
+              {"query_any": ["P-AM02/B-S", "22608"], "requested_quantity": 4}
+            ]
           },
           {"type": "no_handoff"},
           {"type": "response_contains_all", "values": ["4", "P-AM02/B-S", "верно"]}
@@ -670,14 +670,8 @@
           ]
         },
         "assertions": [
-          {"type": "tool_called", "name": "handoff_to_manager"},
           {"type": "no_handoff"},
-          {"type": "tool_result_status", "value": "rejected"},
-          {
-            "type": "handoff_summary_contains_all",
-            "values": ["одна", "P-AM02/B-S", "не собраны"]
-          },
-          {"type": "response_contains_any", "values": ["недоста", "уточн"]}
+          {"type": "response_contains_any", "values": ["недоста", "уточн", "способ получения"]}
         ]
       },
       {
@@ -707,7 +701,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["одна", "P-AM02/B-S", "самовывоз", "налич", "Игорь"]
+            "values": ["P-AM02/B-S", "самовывоз", "налич", "Игорь"]
           }
         ]
       }

@@ -48,6 +48,7 @@ SUPPORTED_ASSERTION_TYPES = {
     "response_not_contains",
     "tool_result_status",
     "tool_query_quantities",
+    "tool_query_quantities_contain",
     "handoff_summary_contains_all",
 }
 
@@ -70,7 +71,7 @@ EVAL_CATALOG = [
     },
     {
         "code": "5001",
-        "article": "Ручка белая 128 мм",
+        "article": "Белая мебельная ручка 128 мм",
         "retail_price": "198.00",
         "corporate_price": "149.00",
         "free_stock": "61",
@@ -283,9 +284,13 @@ def _validate_assertion(scenario_id: str, turn_index: int, assertion: dict[str, 
         values = assertion.get("values") or []
         if not values or any(not str(value).strip() for value in values):
             raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires values")
-    if assertion_type == "tool_query_quantities":
+    if assertion_type in {"tool_query_quantities", "tool_query_quantities_contain"}:
         queries = assertion.get("queries") or []
-        if not queries or any(not str(item.get("query") or "").strip() for item in queries):
+        if not queries or any(
+            not str(item.get("query") or "").strip()
+            and not any(str(value).strip() for value in item.get("query_any") or [])
+            for item in queries
+        ):
             raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires queries")
 
 
@@ -535,6 +540,20 @@ def _normalized_query_quantities(items: list[dict[str, Any]]) -> list[dict[str, 
     ]
 
 
+def _query_quantity_item_matches(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+    aliases = expected.get("query_any") or [expected.get("query")]
+    normalized_aliases = {
+        str(value or "").strip().casefold().replace("ё", "е")
+        for value in aliases
+        if str(value or "").strip()
+    }
+    normalized_actual = str(actual.get("query") or "").strip().casefold().replace("ё", "е")
+    return (
+        normalized_actual in normalized_aliases
+        and actual.get("requested_quantity") == expected.get("requested_quantity")
+    )
+
+
 def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason: str | None) -> dict[str, Any]:
     assertion_type = str(spec.get("type") or "")
     response = str(turn.get("response") or "")
@@ -583,6 +602,26 @@ def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason
         actual = _normalized_query_quantities(_search_query_quantities(calls))
         passed = actual == expected
         detail = f"expected={expected!r}, actual={actual!r}"
+    elif assertion_type == "tool_query_quantities_contain":
+        expected = spec.get("queries") or []
+        actual = _search_query_quantities(calls)
+        next_index = 0
+        matched = True
+        for expected_item in expected:
+            found_index = next(
+                (
+                    index
+                    for index in range(next_index, len(actual))
+                    if _query_quantity_item_matches(actual[index], expected_item)
+                ),
+                None,
+            )
+            if found_index is None:
+                matched = False
+                break
+            next_index = found_index + 1
+        passed = bool(expected) and matched
+        detail = f"expected_subset={expected!r}, actual={actual!r}"
     elif assertion_type == "handoff_summary_contains_all":
         expected = [str(value) for value in spec.get("values") or []]
         summaries = [

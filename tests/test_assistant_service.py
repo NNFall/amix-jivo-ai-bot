@@ -631,6 +631,53 @@ def test_assistant_service_explains_that_missing_code_may_be_out_of_stock(isolat
     )
 
 
+def test_not_found_free_description_keeps_order_intake_response(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Описание сохранил в заказе. Как вам удобнее получить заказ?",
+        tool_calls=[],
+    )
+    lookup_result = {
+        "status": "not_found",
+        "reason": "order",
+        "query": "чёрные петли с доводчиком",
+        "display_query": "чёрные петли с доводчиком",
+        "results": [
+            {
+                "status": "not_found",
+                "query": "чёрные петли с доводчиком",
+                "display_query": "чёрные петли с доводчиком",
+                "exact_matches": [],
+                "similar_matches": [],
+                "requested_quantity": 6,
+            }
+        ],
+    }
+
+    with session_scope() as session:
+        customer = get_or_create_customer(session, external_client_id="order-not-found-user")
+        get_or_create_chat(session, "telegram:order-not-found", customer.id)
+        append_message(
+            session,
+            external_chat_id="telegram:order-not-found",
+            sender_role="client",
+            text="Нужно 6 чёрных петель с доводчиком, кода не знаю.",
+        )
+        reply = service._reply_from_product_result(  # noqa: SLF001
+            session,
+            external_chat_id="telegram:order-not-found",
+            customer_text="Нужно 6 чёрных петель с доводчиком, кода не знаю.",
+            transcript="",
+            product_lookup_result=lookup_result,
+            outbound_event_id="order-not-found-out",
+            payload_source="test",
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Описание сохранил в заказе. Как вам удобнее получить заказ?"
+
+
 def test_numeric_product_code_is_not_treated_as_requested_quantity(isolated_app_env) -> None:
     with session_scope() as session:
         session.add(
@@ -3075,6 +3122,25 @@ def test_direct_model_reply_cannot_reveal_exact_stock(isolated_app_env) -> None:
 
     assert "220" not in reply.text
     assert "какое количество" in reply.text.lower()
+
+
+def test_stock_sanitizer_preserves_customer_requested_quantities() -> None:
+    text = (
+        "Товар 14.023пр. (2 шт.) есть в наличии, а P-AM02/B-S "
+        "в количестве 50 штук сейчас недоступен."
+    )
+
+    sanitized = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        text,
+        allowed_quantities=[2, 50],
+    )
+    leaked = AssistantService._sanitize_exact_stock_disclosure(  # noqa: SLF001
+        "Для заказа нужно 2 штуки, а на складе 220 шт.",
+        allowed_quantities=[2],
+    )
+
+    assert sanitized == text
+    assert "220" not in leaked
 
 
 def test_fractional_requested_quantity_is_not_rounded_down(isolated_app_env) -> None:
