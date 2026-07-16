@@ -129,7 +129,12 @@ class MessageProcessor:
 
             if assistant_reply.handoff_reason:
                 try:
-                    self.jivo_client.invite_agent(event=event, reason=assistant_reply.handoff_reason)
+                    invited = self.jivo_client.invite_agent(
+                        event=event,
+                        reason=assistant_reply.handoff_reason,
+                    )
+                    if not invited:
+                        raise RuntimeError("Jivo manager invite was not accepted")
                 except Exception:
                     logger.exception(
                         "phase=invite_agent_failed_before_send chat_id=%s event_id=%s action=invite_agent",

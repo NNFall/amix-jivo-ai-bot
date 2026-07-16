@@ -20,20 +20,24 @@ class _Assistant:
 
 
 class _Jivo:
-    def __init__(self, calls: list[str], *, fail_invite: bool = False) -> None:
+    def __init__(self, calls: list[str], *, fail_invite: bool = False, invite_result: bool = True) -> None:
         self.calls = calls
         self.fail_invite = fail_invite
+        self.invite_result = invite_result
 
-    def invite_agent(self, **kwargs) -> None:
+    def invite_agent(self, **kwargs) -> bool:
         self.calls.append("invite")
         if self.fail_invite:
             raise RuntimeError("invite failed")
+        return self.invite_result
 
 
-def _processor(calls: list[str], *, fail_invite: bool = False) -> MessageProcessor:
+def _processor(
+    calls: list[str], *, fail_invite: bool = False, invite_result: bool = True
+) -> MessageProcessor:
     processor = object.__new__(MessageProcessor)
     processor.assistant_service = _Assistant()
-    processor.jivo_client = _Jivo(calls, fail_invite=fail_invite)
+    processor.jivo_client = _Jivo(calls, fail_invite=fail_invite, invite_result=invite_result)
     processor._deliver_bot_reply = lambda *args, **kwargs: calls.append("send")
     return processor
 
@@ -69,5 +73,17 @@ def test_failed_manager_invite_does_not_send_false_handoff_promise(isolated_app_
 
     with pytest.raises(RuntimeError, match="invite failed"):
         _processor(calls, fail_invite=True)._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
+
+    assert calls == ["invite"]
+
+
+def test_rejected_manager_invite_does_not_send_false_handoff_promise(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+
+    with pytest.raises(RuntimeError, match="invite was not accepted"):
+        _processor(calls, invite_result=False)._process_pending_client_turn(
+            handle=_CurrentHandle(), event=_event()
+        )
 
     assert calls == ["invite"]
