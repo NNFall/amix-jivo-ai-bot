@@ -314,3 +314,68 @@ def test_unknown_provider_tool_is_returned_as_tool_error_then_model_continues(is
     assert len(requests) == 2
     tool_message = next(message for message in requests[1]["messages"] if message["role"] == "tool")
     assert "unsupported_tool" in tool_message["content"]
+
+
+def test_record_client_message_is_idempotent_for_same_external_event(isolated_app_env) -> None:
+    service = AssistantService()
+    with session_scope() as session:
+        for _ in range(2):
+            service.record_client_message(
+                session,
+                external_chat_id="chat-idempotent",
+                external_client_id="client-idempotent",
+                customer_name=None,
+                customer_text="Одно сообщение",
+                inbound_event_id="event-idempotent",
+            )
+
+    with session_scope() as session:
+        messages = session.query(Message).all()
+        assert len(messages) == 1
+        assert messages[0].external_event_id == "event-idempotent"
+
+
+def test_stale_second_model_round_removes_committed_tool_branch_but_keeps_usage(
+    isolated_app_env,
+) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    current = {"value": True}
+    calls = 0
+
+    def fake_model(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return LLMTurnResult(
+                text=None,
+                tool_calls=[
+                    ToolCall(
+                        name="search_products",
+                        arguments={"queries": [{"query": "missing"}]},
+                        call_id="search-stale",
+                    )
+                ],
+                usage={"total_tokens": 10},
+            )
+        current["value"] = False
+        return LLMTurnResult(text="Late reply", tool_calls=[], usage={"total_tokens": 20})
+
+    service.openai_service.run_messages = fake_model
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="chat-stale-second-round",
+            external_client_id="client-stale-second-round",
+            customer_name=None,
+            customer_text="Проверьте товар",
+            inbound_event_id="stale-second-round-in",
+            outbound_event_id="stale-second-round-out",
+            handoff_mode="jivo",
+            is_turn_current=lambda: current["value"],
+        )
+
+    assert reply.superseded is True
+    with session_scope() as session:
+        assert [message.sender_role for message in session.query(Message).all()] == ["client"]
+        assert session.query(LLMCall).count() == 2

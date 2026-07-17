@@ -7,7 +7,10 @@ from fastapi import FastAPI
 from api.admin import router as admin_router
 from api.health import router as health_router
 from api.jivo_webhook import router as jivo_router
-from database.db import create_db_and_tables
+from core.message_processor import process_event_record
+from core.turn_coordinator import GLOBAL_TURN_COORDINATOR
+from database.db import create_db_and_tables, session_scope
+from database.repositories import list_unfinished_event_ids
 from products.remote_xml_importer import ProductRemoteXmlImporter
 from products.remote_xml_scheduler import ProductsXmlAutoImportRunner
 from settings import get_settings
@@ -25,6 +28,10 @@ def configure_logging() -> None:
 async def lifespan(app: FastAPI):
     configure_logging()
     create_db_and_tables()
+    with session_scope() as session:
+        unfinished_event_ids = list_unfinished_event_ids(session)
+    for event_record_id in unfinished_event_ids:
+        process_event_record(event_record_id)
     settings = get_settings()
     auto_import_runner = None
     if settings.products_xml_auto_import_enabled:
@@ -40,6 +47,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        GLOBAL_TURN_COORDINATOR.shutdown()
         if auto_import_runner is not None:
             await auto_import_runner.stop()
 

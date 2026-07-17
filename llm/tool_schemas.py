@@ -11,12 +11,14 @@ OPENAI_TOOLS = [
             ),
             "parameters": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "queries": {
                         "type": "array",
                         "description": "Товары, которые нужно найти, в порядке сообщения клиента.",
                         "items": {
                             "type": "object",
+                            "additionalProperties": False,
                             "properties": {
                                 "query": {
                                     "type": "string",
@@ -45,6 +47,7 @@ OPENAI_TOOLS = [
             ),
             "parameters": {
                 "type": "object",
+                "additionalProperties": False,
                 "properties": {
                     "reason": {
                         "type": "string",

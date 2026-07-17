@@ -2292,3 +2292,30 @@
   - `python -m pytest -q` -> `163 passed`;
   - `python -m compileall api core database jivo llm products scripts -q` -> успешно;
   - `git diff --check` -> ошибок нет, только предупреждения Git о преобразовании LF/CRLF.
+
+## Итерация 55 - удаление сценарного backend и исправления независимого аудита
+
+- По требованию архитектура сведена к model-driven диалогу:
+  - в модель передаётся вся сохранённая история с ролями `user`, `assistant`, вызовами функций и результатами функций;
+  - в runtime доступны только `search_products` и `handoff_to_manager`;
+  - backend не определяет намерение по словам, не использует локальный заказ, `active_product`, `product_memory`, `pending_clarification`, `backend_actions` или prelookup;
+  - решение о поиске, вопросах клиенту, итоговой сверке и handoff принимает Gemini по системному промпту.
+- Контракт `search_products` упрощён до списка объектов `query` + необязательного `requested_quantity`; поле `intent` отсутствует.
+- Из товарного результата удалены внутренние и пустые поля `search_type`, `query_normalized`, `backend_notes`, `category`, `tags`.
+- Удалены неиспользуемые `get_product_by_article`, `get_similar_products` и старый генератор `products/product_search.py`.
+- Исправления после независимого критического ревью:
+  - при ошибке SQLite сначала выполняется rollback, затем событие помечается failed в рабочей транзакции;
+  - устаревшая ветка model/tool-истории удаляется целиком, но статистика LLM сохраняется;
+  - недоставленный Jivo/Telegram ответ удаляется из истории;
+  - handoff фиксируется только после принятого `INVITE_AGENT`, а терминальный статус оператора не перезаписывается;
+  - повтор ранее failed Jivo-события разрешён без дублирования клиентского сообщения;
+  - незавершённые события восстанавливаются при старте;
+  - shutdown приложения инвалидирует отложенные потоки, поэтому они не работают с новой БД после перезапуска.
+- В fake-eval добавлена строгая JSON Schema-проверка аргументов реальных функций. Старые лишние аргументы теперь приводят к падению теста.
+- Проверки:
+  - `python -m pytest -q` -> `132 passed`;
+  - `python scripts/run_dialog_regression_eval.py` -> `PASS=9 FAIL=0`;
+  - `python scripts/run_history_order_eval.py --fake --repeat 3 ...` -> `27/27` сценариев, `123/123` ходов, `PASS`;
+  - `python -m compileall -q api core database jivo llm products scripts` -> успешно;
+  - runtime-скан не нашёл `intent`, prelookup, backend state или keyword-классификацию.
+- Fake-eval используется только как проверка проводки. До деплоя обязателен отдельный live-прогон Gemini на VPS и ручная оценка реальных ответов.

@@ -16,6 +16,7 @@ from database.repositories import (
     get_or_create_chat,
     get_or_create_customer,
     list_messages,
+    message_exists_by_external_event_id,
     search_products_structured,
 )
 from llm.openai_client import OpenAIService, ToolCall
@@ -29,13 +30,11 @@ from .handoff_service import HandoffService
 
 logger = logging.getLogger(__name__)
 
-SAFE_FALLBACK_TEXT = "Подскажите, что нужно посмотреть?"
 PROVIDER_DELAY_TEXT = (
     "Сейчас автоматическая проверка задерживается. Попробуйте, пожалуйста, ещё раз чуть позже "
     "или позовите менеджера."
 )
-JIVO_HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
-TELEGRAM_DEMO_HANDOFF_TEXT = JIVO_HANDOFF_TEXT
+HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 HANDOFF_ALREADY_REQUESTED_TEXT = "Менеджер уже вызван, он подключится к диалогу."
 MAX_MODEL_ROUNDS = 5
 ALLOWED_TOOL_NAMES = {"search_products", "handoff_to_manager"}
@@ -104,6 +103,8 @@ class AssistantService:
     ) -> str:
         customer = get_or_create_customer(session, external_client_id=external_client_id, name=customer_name)
         chat = get_or_create_chat(session, external_chat_id, customer.id)
+        if inbound_event_id and message_exists_by_external_event_id(session, inbound_event_id):
+            return chat.external_chat_id
         append_message(
             session,
             external_chat_id=chat.external_chat_id,
@@ -168,7 +169,11 @@ class AssistantService:
     ) -> AssistantReply:
         for round_index in range(1, MAX_MODEL_ROUNDS + 1):
             if self._turn_is_stale(is_turn_current):
-                return self._superseded_reply()
+                return self._discard_model_turn_and_supersede(
+                    session,
+                    external_chat_id=external_chat_id,
+                    turn_id=outbound_event_id,
+                )
 
             messages = build_llm_messages(
                 dialog_messages=self.dialog_service.get_llm_messages(session, external_chat_id)
@@ -192,7 +197,11 @@ class AssistantService:
                 messages=messages,
             )
             if self._turn_is_stale(is_turn_current):
-                return self._superseded_reply()
+                return self._discard_model_turn_and_supersede(
+                    session,
+                    external_chat_id=external_chat_id,
+                    turn_id=outbound_event_id,
+                )
 
             if not turn.tool_calls:
                 text = (turn.text or PROVIDER_DELAY_TEXT).strip()
@@ -205,8 +214,11 @@ class AssistantService:
                     extra_payload={"provider_error": turn.error_type},
                 )
                 if self._turn_is_stale(is_turn_current):
-                    session.rollback()
-                    return self._superseded_reply()
+                    return self._discard_model_turn_and_supersede(
+                        session,
+                        external_chat_id=external_chat_id,
+                        turn_id=outbound_event_id,
+                    )
                 return reply
 
             calls = self._prepare_tool_calls(turn.tool_calls, round_index=round_index)
@@ -237,7 +249,7 @@ class AssistantService:
                         "jivo_invite_requested": handoff_mode == "jivo",
                     }
                     customer_message = str(call.arguments.get("customer_message") or "").strip()
-                    handoff = (reason, customer_message or self._resolve_handoff_text(handoff_mode))
+                    handoff = (reason, customer_message or HANDOFF_TEXT)
                 else:
                     result = {
                         "tool_name": call.name,
@@ -254,8 +266,11 @@ class AssistantService:
                 )
 
                 if self._turn_is_stale(is_turn_current):
-                    session.rollback()
-                    return self._superseded_reply()
+                    return self._discard_model_turn_and_supersede(
+                        session,
+                        external_chat_id=external_chat_id,
+                        turn_id=outbound_event_id,
+                    )
 
             if handoff is not None:
                 reason, customer_message = handoff
@@ -269,8 +284,11 @@ class AssistantService:
                 )
                 reply.handoff_reason = reason
                 if self._turn_is_stale(is_turn_current):
-                    session.rollback()
-                    return self._superseded_reply()
+                    return self._discard_model_turn_and_supersede(
+                        session,
+                        external_chat_id=external_chat_id,
+                        turn_id=outbound_event_id,
+                    )
                 return reply
 
         return self._store_text_reply(
@@ -300,7 +318,7 @@ class AssistantService:
 
         results: list[dict[str, Any]] = []
         for spec in query_specs:
-            item = search_products_structured(session, query=spec["query"], search_type="auto")
+            item = search_products_structured(session, query=spec["query"])
             item["requested_quantity"] = spec.get("requested_quantity")
             item["requested_quantity_available"] = self._requested_quantity_available(
                 item,
@@ -529,16 +547,28 @@ class AssistantService:
         return list(reversed(pending))
 
     @staticmethod
+    def _discard_model_turn_and_supersede(
+        session,
+        *,
+        external_chat_id: str,
+        turn_id: str | None,
+    ) -> AssistantReply:
+        session.rollback()
+        if turn_id:
+            for message in list_messages(session, external_chat_id):
+                payload = message.payload or {}
+                if message.external_event_id == turn_id or payload.get("turn_id") == turn_id:
+                    session.delete(message)
+            session.commit()
+        return AssistantService._superseded_reply()
+
+    @staticmethod
     def _turn_is_stale(is_turn_current) -> bool:
         return is_turn_current is not None and not is_turn_current()
 
     @staticmethod
     def _superseded_reply() -> AssistantReply:
         return AssistantReply(text="", superseded=True)
-
-    @staticmethod
-    def _resolve_handoff_text(handoff_mode: str) -> str:
-        return TELEGRAM_DEMO_HANDOFF_TEXT if handoff_mode == "demo" else JIVO_HANDOFF_TEXT
 
     def _active_llm_model(self) -> str | None:
         if self.openai_service.provider in {"google", "google_ai", "google_ai_studio", "gemini"}:

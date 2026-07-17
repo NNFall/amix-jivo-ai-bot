@@ -3,11 +3,11 @@ import logging
 from database.db import session_scope
 from database.repositories import (
     append_message,
+    delete_generated_messages_for_turn,
     get_chat_by_external_id,
     get_or_create_chat,
     get_or_create_customer,
     get_stored_event,
-    list_messages,
     log_processing_error,
     mark_chat_status,
     mark_event_failed,
@@ -56,14 +56,18 @@ class MessageProcessor:
                 return
 
             event = JivoIncomingEvent.model_validate(event_record.payload)
+            event_payload = dict(event_record.payload)
             mark_event_processing(session, event_record)
 
             try:
                 deferred = self._handle_event(session, event, event_record_id=event_record.id)
             except Exception as exc:  # pragma: no cover - defensive branch
                 logger.exception("Failed to process Jivo event %s", event.id)
-                mark_event_failed(session, event_record, str(exc))
-                log_processing_error(session, event.id, "message_processor", str(exc), event_record.payload)
+                session.rollback()
+                failed_event_record = get_stored_event(session, event_record_id)
+                if failed_event_record is not None:
+                    mark_event_failed(session, failed_event_record, str(exc))
+                log_processing_error(session, event.id, "message_processor", str(exc), event_payload)
                 if event.chat_id:
                     self.telegram_notifier.send_text(
                         f"[amix-jivo] Ошибка обработки события {event.id} в чате {event.chat_id}: {exc}"
@@ -147,10 +151,10 @@ class MessageProcessor:
                 chat = get_chat_by_external_id(session, event.chat_id)
                 handoff_completed = bool(chat and chat.status == "handoff_requested")
                 if not handoff_completed:
-                    self._discard_generated_turn_messages(
-                        session,
-                        external_chat_id=event.chat_id,
-                        turn_id=f"{event.id}:bot",
+                    delete_generated_messages_for_turn(session, event.chat_id, f"{event.id}:bot")
+                else:
+                    delete_generated_messages_for_turn(
+                        session, event.chat_id, f"{event.id}:bot", bot_only=True
                     )
                 self._set_event_record_status(
                     session,
@@ -197,11 +201,7 @@ class MessageProcessor:
         chat = get_chat_by_external_id(session, event.chat_id)
         if chat is not None and chat.status in {"agent_joined", "closed"}:
             session.rollback()
-            self._discard_generated_turn_messages(
-                session,
-                external_chat_id=event.chat_id,
-                turn_id=f"{event.id}:bot",
-            )
+            delete_generated_messages_for_turn(session, event.chat_id, f"{event.id}:bot")
             self._set_event_record_status(session, event_record_id, status="processed")
             logger.info(
                 "Skipping Jivo invite/send for chat %s because status is %s",
@@ -222,11 +222,7 @@ class MessageProcessor:
                 if not invited:
                     raise RuntimeError("Jivo manager invite was not accepted")
             except Exception:
-                self._discard_generated_turn_messages(
-                    session,
-                    external_chat_id=event.chat_id,
-                    turn_id=f"{event.id}:bot",
-                )
+                delete_generated_messages_for_turn(session, event.chat_id, f"{event.id}:bot")
                 session.expire_all()
                 chat = get_chat_by_external_id(session, event.chat_id)
                 if chat is not None and chat.status not in {"agent_joined", "closed"}:
@@ -259,12 +255,19 @@ class MessageProcessor:
                     chat.status,
                 )
                 return
-        self._deliver_bot_reply(
+        delivered = self._deliver_bot_reply(
             session,
             event=event,
             text=assistant_reply.text,
             is_turn_current=handle.is_current,
         )
+        if not delivered:
+            delete_generated_messages_for_turn(session, event.chat_id, f"{event.id}:bot")
+            session.expire_all()
+            chat = get_chat_by_external_id(session, event.chat_id)
+            status = "processed" if chat and chat.status in {"agent_joined", "closed"} else "superseded"
+            self._set_event_record_status(session, event_record_id, status=status)
+            return
         self._set_event_record_status(session, event_record_id, status="processed")
 
     @staticmethod
@@ -292,37 +295,24 @@ class MessageProcessor:
         with session_scope() as session:
             self._set_event_record_status(session, event_record_id, status=status)
 
-    @staticmethod
-    def _discard_generated_turn_messages(
-        session,
-        *,
-        external_chat_id: str,
-        turn_id: str,
-    ) -> None:
-        for message in list_messages(session, external_chat_id):
-            payload = message.payload or {}
-            if message.external_event_id == turn_id or payload.get("turn_id") == turn_id:
-                session.delete(message)
-        session.flush()
-
     def _deliver_bot_reply(
         self,
         session,
         event: JivoIncomingEvent,
         text: str,
         is_turn_current=None,
-    ) -> None:
+    ) -> bool:
         if should_stop_bot_after_event(event.event):
-            return
+            return False
         if is_turn_current is not None and not is_turn_current():
             logger.info("Skipping bot reply for superseded chat %s at delivery boundary", event.chat_id)
-            return
+            return False
 
         session.expire_all()
         chat = get_chat_by_external_id(session, event.chat_id)
         if chat is not None and chat.status in {"agent_joined", "closed"}:
             logger.info("Skipping bot reply for chat %s because status is %s", event.chat_id, chat.status)
-            return
+            return False
 
         logger.info(
             "phase=message_send_started chat_id=%s event_id=%s text_length=%s",
@@ -333,7 +323,7 @@ class MessageProcessor:
         try:
             if is_turn_current is not None and not is_turn_current():
                 logger.info("Skipping bot reply for superseded chat %s before outbound call", event.chat_id)
-                return
+                return False
             sent = self.jivo_client.send_text_message(event=event, text=text)
             if not sent:
                 raise RuntimeError("Jivo bot message was not accepted")
@@ -346,9 +336,11 @@ class MessageProcessor:
             event.id,
             len(text or ""),
         )
+        return True
 
     def _send_and_store_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
-        self._deliver_bot_reply(session, event=event, text=text)
+        if not self._deliver_bot_reply(session, event=event, text=text):
+            return
         append_message(
             session,
             external_chat_id=event.chat_id,

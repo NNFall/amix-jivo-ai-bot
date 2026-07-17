@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 
 from database.models import (
     Chat,
@@ -44,6 +44,16 @@ def create_event_if_new(session, event):
 
 def get_stored_event(session, event_record_id: int) -> JivoEvent | None:
     return session.get(JivoEvent, event_record_id)
+
+
+def list_unfinished_event_ids(session) -> list[int]:
+    return list(
+        session.scalars(
+            select(JivoEvent.id)
+            .where(JivoEvent.status.in_({"received", "processing"}))
+            .order_by(JivoEvent.id.asc())
+        ).all()
+    )
 
 
 def mark_event_processing(session, event_record: JivoEvent) -> None:
@@ -106,6 +116,19 @@ def mark_chat_status(session, external_chat_id: str, status: str) -> None:
 
     entity.status = status
     session.add(entity)
+
+
+def mark_chat_handoff_requested_if_not_terminal(session, external_chat_id: str) -> bool:
+    result = session.execute(
+        update(Chat)
+        .where(
+            Chat.external_chat_id == external_chat_id,
+            Chat.status.notin_({"agent_joined", "closed"}),
+        )
+        .values(status="handoff_requested")
+        .execution_options(synchronize_session="fetch")
+    )
+    return bool(result.rowcount)
 
 
 def reset_chat_context(session, external_chat_id: str) -> int:
@@ -205,6 +228,24 @@ def list_messages(session, external_chat_id: str) -> list[Message]:
     )
 
 
+def delete_generated_messages_for_turn(
+    session,
+    external_chat_id: str,
+    turn_id: str,
+    *,
+    bot_only: bool = False,
+) -> int:
+    deleted = 0
+    for message in list_messages(session, external_chat_id):
+        payload = message.payload or {}
+        belongs_to_turn = message.external_event_id == turn_id or payload.get("turn_id") == turn_id
+        if belongs_to_turn and (not bot_only or message.sender_role == "bot"):
+            session.delete(message)
+            deleted += 1
+    session.flush()
+    return deleted
+
+
 def list_recent_messages(session, external_chat_id: str, limit: int = 20) -> list[Message]:
     chat = session.scalar(select(Chat).where(Chat.external_chat_id == external_chat_id))
     if chat is None:
@@ -300,35 +341,6 @@ def upsert_product(
     return entity, created
 
 
-def get_product_by_article(session, article: str) -> Product | None:
-    normalized_variants = build_normalized_article_variants(article)
-    if not normalized_variants:
-        return None
-
-    return session.scalar(
-        select(Product)
-        .where(Product.normalized_article.in_(normalized_variants))
-        .order_by(Product.id.asc())
-    )
-
-
-def get_similar_products(session, article: str, limit: int = 5) -> list[Product]:
-    normalized_variants = build_normalized_article_variants(article)
-    if not normalized_variants:
-        return []
-
-    clauses = []
-    for normalized in normalized_variants:
-        token = normalized[:6] or normalized
-        if token:
-            clauses.append(Product.normalized_article.like(f"%{token}%"))
-
-    if not clauses:
-        return []
-
-    return session.scalars(select(Product).where(or_(*clauses)).order_by(Product.article.asc()).limit(limit)).all()
-
-
 def lookup_products(session, query: str, exact_limit: int = 20, similar_limit: int = 20) -> tuple[list[Product], list[Product]]:
     query_clean = (query or "").strip()
     if not query_clean:
@@ -375,26 +387,20 @@ def search_products_structured(
     session,
     *,
     query: str,
-    search_type: str = "auto",
     exact_limit: int = 20,
     similar_limit: int = 20,
 ) -> dict:
     query_raw = (query or "").strip().strip(".,;:!?\"'«»")
-    query_normalized = normalize_article(query_raw)
 
     result = {
         "query": query_raw,
-        "query_normalized": query_normalized,
-        "search_type": search_type,
         "status": "invalid_query",
         "exact_matches_count": 0,
         "similar_matches_count": 0,
         "exact_matches": [],
         "similar_matches": [],
-        "backend_notes": [],
     }
     if not query_raw:
-        result["backend_notes"].append("Empty query")
         return result
 
     exact_matches, similar_matches = lookup_products(
@@ -413,16 +419,12 @@ def search_products_structured(
 
     if result["exact_matches_count"] == 1:
         result["status"] = "exact_found"
-        result["backend_notes"].append("Exact match by code/article/normalized_article")
     elif result["exact_matches_count"] > 1:
         result["status"] = "multiple_exact"
-        result["backend_notes"].append("Multiple exact matches returned")
     elif result["similar_matches_count"] > 0:
         result["status"] = "similar_found"
-        result["backend_notes"].append("No exact match, similar candidates returned")
     else:
         result["status"] = "not_found"
-        result["backend_notes"].append("No exact or similar matches")
 
     return result
 
@@ -439,8 +441,6 @@ def _serialize_product(product: Product) -> dict:
         "weight": str(product.weight) if product.weight is not None else None,
         "volume": str(product.volume) if product.volume is not None else None,
         "stock": str(product.free_stock) if product.free_stock is not None else None,
-        "category": "",
-        "tags": [],
     }
 
 

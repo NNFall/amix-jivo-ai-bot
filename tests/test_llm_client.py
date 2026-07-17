@@ -239,7 +239,7 @@ def test_google_ai_studio_payload_preserves_tool_role_history(monkeypatch, isola
                         "type": "function",
                         "function": {
                             "name": "search_products",
-                            "arguments": "{\"queries\":[\"14.023пр\"],\"intent\":\"stock\"}",
+                            "arguments": "{\"queries\":[{\"query\":\"14.023пр\"}]}",
                         },
                     }
                 ],
@@ -285,7 +285,7 @@ def test_google_ai_studio_payload_keeps_tool_result_as_last_chronological_messag
                         "type": "function",
                         "function": {
                             "name": "search_products",
-                            "arguments": "{\"queries\":[\"14.023пр\"],\"intent\":\"stock\"}",
+                            "arguments": "{\"queries\":[{\"query\":\"14.023пр\"}]}",
                         },
                     }
                 ],
@@ -504,42 +504,6 @@ def test_rate_limit_retry_uses_long_delay(monkeypatch) -> None:
     )
 
     assert sleeps == [66.0]
-
-
-def legacy_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
-    messages = build_product_facts_messages(
-        transcript="Клиент: тест",
-        customer_text="Сравните 14.023л. и 14.023пр.",
-        product_lookup_result={
-            "queries": ["14.023л.", "14.023пр."],
-            "results": [
-                {"query": "14.023л.", "status": "exact_found", "exact_matches": [{"code": "769"}]},
-                {"query": "14.023пр.", "status": "exact_found", "exact_matches": [{"code": "770"}]},
-            ],
-            "summary": {"total_queries": 2, "total_exact_matches": 2},
-        },
-        backend_actions={
-            "search_products_called": True,
-            "handoff_to_manager_called": True,
-            "handoff_reason": "complex_technical_question",
-        },
-    )
-
-    context_content = messages[1]["content"]
-    tool_content = next(message["content"] for message in messages if str(message.get("content", "")).startswith("TOOL_RESULTS_JSON"))
-    internal_context = json.loads(context_content.removeprefix("INTERNAL_CONTEXT_JSON:\n"))
-
-    assert messages[-1]["content"].startswith("TOOL_RESULTS_JSON")
-    assert messages[-2]["role"] == "user"
-    assert messages[-2]["content"] == "Сравните 14.023л. и 14.023пр."
-    assert "INTERNAL_CONTEXT_JSON" in context_content
-    assert "backend_actions" in context_content
-    assert "handoff_to_manager_called" in context_content
-    assert "last_product_lookup" not in internal_context
-    assert "TOOL_RESULTS_JSON" in tool_content
-    assert "backend_prelookup" in tool_content
-    assert "results" in tool_content
-    assert "14.023л." in tool_content
 
 
 def test_kie_payload_preserves_tool_role_messages(monkeypatch, isolated_app_env) -> None:

@@ -15,6 +15,7 @@ import tempfile
 from time import perf_counter
 from typing import Any, Iterator
 
+from jsonschema import ValidationError, validate
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -130,14 +131,25 @@ class FakeTurnProvider:
         calls: list[ToolCall] = []
         if tools and configured_calls and not self._tool_calls_emitted:
             self._tool_calls_emitted = True
+            schemas = {
+                str(tool.get("function", {}).get("name") or ""): tool.get("function", {}).get("parameters") or {}
+                for tool in tools
+            }
             for index, call in enumerate(configured_calls, start=1):
                 name = str(call.get("name") or "")
                 if name not in ALLOWED_TOOL_NAMES:
                     raise ValueError(f"Fake scenario requested disallowed tool: {name}")
+                arguments = deepcopy(call.get("arguments") or {})
+                try:
+                    validate(instance=arguments, schema=schemas.get(name) or {})
+                except ValidationError as exc:
+                    raise ValueError(
+                        f"Fake scenario tool arguments violate production schema for {name}: {exc.message}"
+                    ) from exc
                 calls.append(
                     ToolCall(
                         name=name,
-                        arguments=deepcopy(call.get("arguments") or {}),
+                        arguments=arguments,
                         call_id=f"fake-{self._scenario_id}-{self._turn_index}-{index}",
                     )
                 )

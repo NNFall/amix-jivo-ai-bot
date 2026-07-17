@@ -14,9 +14,9 @@ Verdict: **PASS**
 
 **Client:** Хочу заказать 2 штуки 14.023л. и 5 штук 14.023пр.
 
-**Bot:** Нашёл обе позиции: 2 левых и 5 правых. Как вам удобнее получить заказ?
+**Bot:** Нашёл обе позиции: 2 штуки 14.023л. и 5 штук 14.023пр. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 32 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 33 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -34,9 +34,9 @@ Verdict: **PASS**
 
 **Client:** Нет, исправьте: правых нужно 7, и лучше самовывоз.
 
-**Bot:** Исправил: 2 левых, 7 правых, получение самовывозом. Как планируете оплатить?
+**Bot:** Исправил: 2 штуки 14.023л., 7 штук 14.023пр., получение самовывозом. Как планируете оплатить?
 
-Functions: `search_products`. Latency: 19 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -46,7 +46,7 @@ Verdict: **PASS**
 
 **Bot:** Для выставления счёта укажите, пожалуйста, ИНН организации или ИП.
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -66,7 +66,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 2 шт. 14.023л., 7 шт. 14.023пр., самовывоз в пятницу, оплата по счёту, ИНН 7812345678, Иван, +7 900 123-45-67. Всё верно?
 
-Functions: `none`. Latency: 12 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -74,9 +74,9 @@ Verdict: **PASS**
 
 **Client:** Да, всё верно, подтверждаю.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 14 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 18 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -90,7 +90,7 @@ Verdict: **PASS**
 
 **Bot:** Нашёл белую ручку 128 мм. Две штуки доступны. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 19 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 23 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -100,7 +100,7 @@ Verdict: **PASS**
 
 **Bot:** Записал доставку в Тверь на следующей неделе. Как планируете оплатить?
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -110,7 +110,7 @@ Verdict: **PASS**
 
 **Bot:** Хорошо. Подскажите имя и телефон для связи.
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -120,7 +120,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 2 белые ручки 128 мм, доставка в Тверь на следующей неделе, оплата наличными, Анна, +7 911 222-33-44. Всё правильно?
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -128,9 +128,9 @@ Verdict: **PASS**
 
 **Client:** Да, правильно.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 11 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 15 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -144,7 +144,7 @@ Verdict: **PASS**
 
 **Bot:** По артикулу ABC-100 есть два варианта. Уточните код товара: 10001 или 10002.
 
-Functions: `search_products`. Latency: 19 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 23 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -154,7 +154,7 @@ Verdict: **PASS**
 
 **Bot:** Уточнил позицию с кодом 10002. Три штуки доступны. Как будете получать и оплачивать заказ?
 
-Functions: `search_products`. Latency: 17 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 23 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -164,7 +164,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 3 штуки ABC-100, код 10002, самовывоз завтра, оплата наличными, Сергей, +7 912 300-40-50. Всё верно?
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -172,9 +172,9 @@ Verdict: **PASS**
 
 **Client:** Верно.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 11 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 15 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -188,7 +188,7 @@ Verdict: **PASS**
 
 **Bot:** Точное совпадение по ZZZ-404 не найдено. Проверьте, пожалуйста, артикул или пришлите название товара.
 
-Functions: `search_products`. Latency: 18 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -198,7 +198,7 @@ Verdict: **PASS**
 
 **Bot:** Нашёл P-AM02/B-S. Четыре штуки доступны. Как будете получать заказ?
 
-Functions: `search_products`. Latency: 20 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -208,7 +208,7 @@ Verdict: **PASS**
 
 **Bot:** Записал доставку в Казань до конца месяца и оплату по счёту. Укажите, пожалуйста, ИНН.
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -218,7 +218,7 @@ Verdict: **PASS**
 
 **Bot:** ИНН записал. Подскажите имя и телефон для связи.
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 12 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -228,7 +228,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90. Всё верно?
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -236,9 +236,9 @@ Verdict: **PASS**
 
 **Client:** Да, подтверждаю.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 11 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 16 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -250,9 +250,9 @@ Verdict: **PASS**
 
 **Client:** Нужно 6 чёрных петель с доводчиком, кода не знаю.
 
-**Bot:** Точного совпадения не нашёл, но описание сохранил в заявке. Как вам удобнее получить заказ?
+**Bot:** Точного совпадения не нашёл, но учту это описание в разговоре для менеджера. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 19 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -272,7 +272,7 @@ Verdict: **PASS**
 
 **Bot:** Хорошо. Подскажите имя и телефон для связи.
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 13 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -282,7 +282,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 6 чёрных петель с доводчиком, доставка в Псков через две недели, оплата наличными, Мария, +7 921 555-66-77. Всё верно?
 
-Functions: `none`. Latency: 12 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 13 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -290,9 +290,9 @@ Verdict: **PASS**
 
 **Client:** Да, всё верно.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 11 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 15 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -306,7 +306,7 @@ Verdict: **PASS**
 
 **Bot:** По 14.023пр. нужное количество есть, а 50 штук P-AM02/B-S сейчас нет. Как поступим со второй позицией?
 
-Functions: `search_products`. Latency: 22 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -316,7 +316,7 @@ Verdict: **PASS**
 
 **Bot:** Оставил только 2 штуки 14.023пр. Как вам удобнее получить заказ?
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 12 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -326,7 +326,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 2 штуки 14.023пр., самовывоз завтра, оплата наличными, Павел, +7 999 111-22-33. Всё верно?
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -334,9 +334,9 @@ Verdict: **PASS**
 
 **Client:** Всё верно.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 11 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 17 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -350,7 +350,7 @@ Verdict: **PASS**
 
 **Bot:** Такое количество есть. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 19 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 24 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -360,7 +360,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: 2 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30. Всё верно?
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 11 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -370,7 +370,7 @@ Verdict: **PASS**
 
 **Bot:** Исправленный итог: 4 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30. Всё верно?
 
-Functions: `search_products`. Latency: 18 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 22 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -378,9 +378,9 @@ Verdict: **PASS**
 
 **Client:** Теперь всё верно.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 12 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 15 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -394,7 +394,7 @@ Verdict: **PASS**
 
 **Bot:** Такое количество есть. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 18 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 22 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 
@@ -404,7 +404,7 @@ Verdict: **PASS**
 
 **Bot:** Для продолжения подскажите способ получения и оплаты заказа.
 
-Functions: `none`. Latency: 9 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -414,7 +414,7 @@ Verdict: **PASS**
 
 **Bot:** Итог: одна P-AM02/B-S, самовывоз завтра, оплата наличными, Игорь, +7 900 444-55-66. Всё верно?
 
-Functions: `none`. Latency: 10 ms. Tokens: 125. Cost: 0.0100 RUB.
+Functions: `none`. Latency: 12 ms. Tokens: 125. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -422,9 +422,9 @@ Verdict: **PASS**
 
 **Client:** Да, этот итог верный.
 
-**Bot:** Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам.
+**Bot:** Передаю подтверждённые данные заказа менеджеру.
 
-Functions: `handoff_to_manager`. Latency: 12 ms. Tokens: 110. Cost: 0.0100 RUB.
+Functions: `handoff_to_manager`. Latency: 16 ms. Tokens: 110. Cost: 0.0100 RUB.
 
 Verdict: **PASS**
 
@@ -438,7 +438,7 @@ Verdict: **PASS**
 
 **Bot:** Нашёл P-AM02/B-S. Одна штука доступна. Как вам удобнее получить заказ?
 
-Functions: `search_products`. Latency: 20 ms. Tokens: 236. Cost: 0.0200 RUB.
+Functions: `search_products`. Latency: 22 ms. Tokens: 236. Cost: 0.0200 RUB.
 
 Verdict: **PASS**
 

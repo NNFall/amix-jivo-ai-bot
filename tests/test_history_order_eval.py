@@ -34,6 +34,27 @@ REQUIRED_COVERAGE = {
 LEGACY_ORDER_STATE_MARKERS = ("update_order_draft", "get_order_draft", "order_draft")
 
 
+def test_fake_provider_rejects_arguments_outside_production_tool_schema() -> None:
+    provider = eval_runner.FakeTurnProvider()
+    provider.start_turn(
+        "invalid-schema",
+        1,
+        {
+            "fake": {
+                "tool_calls": [
+                    {
+                        "name": "search_products",
+                        "arguments": {"queries": [], "legacy_route": True},
+                    }
+                ]
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="schema"):
+        provider(messages=[], tools=eval_runner.OPENAI_TOOLS)
+
+
 def test_fake_cli_writes_reproducible_private_evidence(tmp_path: Path) -> None:
     assert RUNNER_PATH.exists(), "history order eval runner is not implemented"
 

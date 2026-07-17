@@ -160,14 +160,12 @@ def test_jivo_webhook_processes_model_selected_product_lookup_flow(
 
     with build_client() as client:
         response = client.post("/webhooks/jivo/test-token", json=payload)
-
-    assert response.status_code == 200
-
-    messages = wait_for_db(
-        lambda session: session.query(Message).order_by(Message.id.asc()).all()
-        if session.query(Message).count() >= 4
-        else None
-    )
+        assert response.status_code == 200
+        messages = wait_for_db(
+            lambda session: session.query(Message).order_by(Message.id.asc()).all()
+            if session.query(Message).count() >= 4
+            else None
+        )
 
     assert len(messages) == 4
     assert messages[0].sender_role == "client"
@@ -211,17 +209,15 @@ def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env, monk
 
     with build_client() as client:
         response = client.post("/webhooks/jivo/test-token", json=payload)
-
-    assert response.status_code == 200
-
-    handoffs, messages = wait_for_db(
-        lambda session: (
-            session.query(Handoff).all(),
-            session.query(Message).order_by(Message.id.asc()).all(),
+        assert response.status_code == 200
+        handoffs, messages = wait_for_db(
+            lambda session: (
+                session.query(Handoff).all(),
+                session.query(Message).order_by(Message.id.asc()).all(),
+            )
+            if session.query(Handoff).count() >= 1 and session.query(Message).count() >= 4
+            else None
         )
-        if session.query(Handoff).count() >= 1 and session.query(Message).count() >= 4
-        else None
-    )
 
     assert len(handoffs) == 1
     assert handoffs[0].reason == "client_requested_manager"

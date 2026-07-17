@@ -21,13 +21,11 @@
                 "queries": [
                   {"query": "14.023л.", "requested_quantity": 2},
                   {"query": "14.023пр.", "requested_quantity": 5}
-                ],
-                "intent": "order",
-                "use_dialog_context": false
+                ]
               }
             }
           ],
-          "response": "Нашёл обе позиции: 2 левых и 5 правых. Как вам удобнее получить заказ?"
+          "response": "Нашёл обе позиции: 2 штуки 14.023л. и 5 штук 14.023пр. Как вам удобнее получить заказ?"
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
@@ -52,13 +50,11 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "14.023пр.", "requested_quantity": 7}],
-                "intent": "order",
-                "use_dialog_context": true
+                "queries": [{"query": "14.023пр.", "requested_quantity": 7}]
               }
             }
           ],
-          "response": "Исправил: 2 левых, 7 правых, получение самовывозом. Как планируете оплатить?"
+          "response": "Исправил: 2 штуки 14.023л., 7 штук 14.023пр., получение самовывозом. Как планируете оплатить?"
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
@@ -107,7 +103,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 2 шт. 14.023л., 7 шт. 14.023пр., самовывоз в пятницу, оплата по счёту, ИНН 7812345678, Иван, +7 900 123-45-67."
+                "summary": "Клиент подтвердил: 2 шт. 14.023л., 7 шт. 14.023пр., самовывоз в пятницу, оплата по счёту, ИНН 7812345678, Иван, +7 900 123-45-67.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -135,9 +132,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "Белая мебельная ручка 128 мм", "requested_quantity": 2}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "Белая мебельная ручка 128 мм", "requested_quantity": 2}]
               }
             }
           ],
@@ -190,7 +185,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 2 белые ручки 128 мм, доставка в Тверь на следующей неделе, оплата наличными, Анна, +7 911 222-33-44."
+                "summary": "Клиент подтвердил: 2 белые ручки 128 мм, доставка в Тверь на следующей неделе, оплата наличными, Анна, +7 911 222-33-44.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -218,9 +214,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "ABC-100", "requested_quantity": 3}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "ABC-100", "requested_quantity": 3}]
               }
             }
           ],
@@ -239,9 +233,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "10002", "requested_quantity": 3}],
-                "intent": "clarification",
-                "use_dialog_context": true
+                "queries": [{"query": "10002", "requested_quantity": 3}]
               }
             }
           ],
@@ -271,7 +263,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 3 штуки ABC-100, код 10002, самовывоз завтра, оплата наличными, Сергей, +7 912 300-40-50."
+                "summary": "Клиент подтвердил: 3 штуки ABC-100, код 10002, самовывоз завтра, оплата наличными, Сергей, +7 912 300-40-50.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -299,9 +292,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "ZZZ-404", "requested_quantity": 4}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "ZZZ-404", "requested_quantity": 4}]
               }
             }
           ],
@@ -320,9 +311,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}]
               }
             }
           ],
@@ -374,7 +363,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90."
+                "summary": "Клиент подтвердил: 4 штуки P-AM02/B-S, доставка в Казань до конца месяца, оплата по счёту, ИНН 1650123456, Олег, +7 903 700-80-90.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -402,13 +392,11 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "чёрные петли с доводчиком", "requested_quantity": 6}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "чёрные петли с доводчиком", "requested_quantity": 6}]
               }
             }
           ],
-          "response": "Точного совпадения не нашёл, но описание сохранил в заявке. Как вам удобнее получить заказ?"
+          "response": "Точного совпадения не нашёл, но учту это описание в разговоре для менеджера. Как вам удобнее получить заказ?"
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
@@ -453,7 +441,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 6 чёрных петель с доводчиком, доставка в Псков через две недели, оплата наличными, Мария, +7 921 555-66-77."
+                "summary": "Клиент подтвердил: 6 чёрных петель с доводчиком, доставка в Псков через две недели, оплата наличными, Мария, +7 921 555-66-77.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -483,9 +472,7 @@
                 "queries": [
                   {"query": "14.023пр.", "requested_quantity": 2},
                   {"query": "P-AM02/B-S", "requested_quantity": 50}
-                ],
-                "intent": "order",
-                "use_dialog_context": false
+                ]
               }
             }
           ],
@@ -532,7 +519,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: 2 штуки 14.023пр., самовывоз завтра, оплата наличными, Павел, +7 999 111-22-33."
+                "summary": "Клиент подтвердил: 2 штуки 14.023пр., самовывоз завтра, оплата наличными, Павел, +7 999 111-22-33.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -559,9 +547,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 2}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 2}]
               }
             }
           ],
@@ -590,9 +576,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}],
-                "intent": "order",
-                "use_dialog_context": true
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}]
               }
             }
           ],
@@ -619,7 +603,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил исправленный заказ: 4 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30."
+                "summary": "Клиент подтвердил исправленный заказ: 4 штуки P-AM02/B-S, доставка в Самару в понедельник, оплата наличными, Лев, +7 927 100-20-30.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -646,9 +631,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}]
               }
             }
           ],
@@ -688,7 +671,8 @@
               "name": "handoff_to_manager",
               "arguments": {
                 "reason": "order_creation",
-                "summary": "Клиент подтвердил: одна P-AM02/B-S, самовывоз завтра, оплата наличными, Игорь, +7 900 444-55-66."
+                "summary": "Клиент подтвердил: одна P-AM02/B-S, самовывоз завтра, оплата наличными, Игорь, +7 900 444-55-66.",
+                "customer_message": "Передаю подтверждённые данные заказа менеджеру."
               }
             }
           ]
@@ -715,9 +699,7 @@
             {
               "name": "search_products",
               "arguments": {
-                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}],
-                "intent": "order",
-                "use_dialog_context": false
+                "queries": [{"query": "P-AM02/B-S", "requested_quantity": 1}]
               }
             }
           ],

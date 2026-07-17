@@ -6,7 +6,11 @@ import httpx
 from core.assistant_service import AssistantService
 from core.turn_coordinator import GLOBAL_TURN_COORDINATOR
 from database.db import create_db_and_tables, session_scope
-from database.repositories import message_exists_by_external_event_id, reset_chat_context
+from database.repositories import (
+    delete_generated_messages_for_turn,
+    message_exists_by_external_event_id,
+    reset_chat_context,
+)
 from settings import get_settings
 
 
@@ -167,13 +171,22 @@ class TelegramDemoBot:
             )
 
         if assistant_reply.superseded or not assistant_reply.text:
+            with session_scope() as session:
+                delete_generated_messages_for_turn(session, external_chat_id, outbound_event_id)
             logger.info("Skipping superseded Telegram turn for chat %s", external_chat_id)
             return
         if not handle.is_current():
+            with session_scope() as session:
+                delete_generated_messages_for_turn(session, external_chat_id, outbound_event_id)
             logger.info("Skipping Telegram send for superseded chat %s", external_chat_id)
             return
 
-        self._send_text(chat_id, assistant_reply.text)
+        try:
+            self._send_text(chat_id, assistant_reply.text)
+        except Exception:
+            with session_scope() as session:
+                delete_generated_messages_for_turn(session, external_chat_id, outbound_event_id)
+            raise
 
     def _send_text(self, chat_id: str, text: str) -> None:
         payload = {"chat_id": chat_id, "text": text}

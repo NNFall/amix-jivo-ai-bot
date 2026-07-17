@@ -14,10 +14,11 @@ logger = logging.getLogger(__name__)
 class TurnHandle:
     chat_id: str
     generation: int
+    lifecycle: int
     _coordinator: ChatTurnCoordinator
 
     def is_current(self) -> bool:
-        return self._coordinator.is_current(self.chat_id, self.generation)
+        return self._coordinator.is_current(self.chat_id, self.generation, self.lifecycle)
 
 
 class ChatTurnCoordinator:
@@ -32,6 +33,7 @@ class ChatTurnCoordinator:
         self.default_delay_seconds = default_delay_seconds
         self._lock = threading.Lock()
         self._generations: dict[str, int] = {}
+        self._lifecycle = 0
 
     def submit(
         self,
@@ -45,7 +47,14 @@ class ChatTurnCoordinator:
             generation = self._generations.get(chat_id, 0) + 1
             self._generations[chat_id] = generation
 
-        handle = TurnHandle(chat_id=chat_id, generation=generation, _coordinator=self)
+            lifecycle = self._lifecycle
+
+        handle = TurnHandle(
+            chat_id=chat_id,
+            generation=generation,
+            lifecycle=lifecycle,
+            _coordinator=self,
+        )
         actual_delay = self.default_delay_seconds if delay_seconds is None else delay_seconds
         thread = threading.Thread(
             target=self._run,
@@ -56,14 +65,23 @@ class ChatTurnCoordinator:
         thread.start()
         return handle
 
-    def is_current(self, chat_id: str, generation: int) -> bool:
+    def is_current(self, chat_id: str, generation: int, lifecycle: int | None = None) -> bool:
         with self._lock:
-            return self._generations.get(chat_id) == generation
+            return (
+                (lifecycle is None or lifecycle == self._lifecycle)
+                and self._generations.get(chat_id) == generation
+            )
 
     def cancel(self, chat_id: str) -> None:
         """Invalidate every queued or running turn for a terminal chat."""
         with self._lock:
             self._generations[chat_id] = self._generations.get(chat_id, 0) + 1
+
+    def shutdown(self) -> None:
+        """Invalidate work owned by the current application lifecycle."""
+        with self._lock:
+            self._lifecycle += 1
+            self._generations.clear()
 
     def _run(
         self,
@@ -81,6 +99,10 @@ class ChatTurnCoordinator:
                 handle.chat_id,
                 handle.generation,
             )
+            with self._lock:
+                lifecycle_ended = handle.lifecycle != self._lifecycle
+            if lifecycle_ended:
+                return
             if on_superseded is not None:
                 try:
                     on_superseded()
