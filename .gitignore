@@ -22,6 +22,8 @@ data/incoming_xml/*
 !data/incoming_xml/.gitkeep
 data/processed_xml/*
 !data/processed_xml/.gitkeep
+outputs/
+DIALOG_EVALS.json
 
 .DS_Store
 Thumbs.db

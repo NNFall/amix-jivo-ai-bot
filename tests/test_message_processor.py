@@ -1,9 +1,11 @@
 import pytest
 
-from core.assistant_service import AssistantReply
+from core.assistant_service import AssistantReply, AssistantService
+from core.handoff_service import HandoffService
 from core.message_processor import MessageProcessor
 from database.db import session_scope
-from database.repositories import get_or_create_chat, get_or_create_customer, mark_chat_status
+from database.models import Chat, Handoff, JivoEvent, Message
+from database.repositories import append_message, get_or_create_chat, get_or_create_customer, mark_chat_status
 from jivo.schemas import JivoIncomingEvent
 
 
@@ -35,6 +37,64 @@ class _OperatorJoinedAssistant:
         return AssistantReply(text="Передаю вопрос менеджеру.", handoff_reason="client_requested_manager")
 
 
+class _PersistingAssistant:
+    @staticmethod
+    def handle_pending_client_messages(
+        session,
+        *,
+        external_chat_id: str,
+        outbound_event_id: str,
+        **kwargs,
+    ) -> AssistantReply:
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="assistant_tool_call",
+            text="",
+            payload={"turn_id": outbound_event_id, "tool_calls": []},
+        )
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="tool",
+            text="{}",
+            payload={"turn_id": outbound_event_id, "tool_name": "handoff_to_manager"},
+        )
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="bot",
+            text="Передаю вопрос менеджеру.",
+            external_event_id=outbound_event_id,
+            payload={"turn_id": outbound_event_id},
+        )
+        return AssistantReply(text="Передаю вопрос менеджеру.", handoff_reason="client_requested_manager")
+
+
+class _StalePersistingAssistant:
+    def __init__(self, handle: _MutableHandle) -> None:
+        self.handle = handle
+
+    def handle_pending_client_messages(
+        self,
+        session,
+        *,
+        external_chat_id: str,
+        outbound_event_id: str,
+        **kwargs,
+    ) -> AssistantReply:
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="bot",
+            text="Устаревший ответ",
+            external_event_id=outbound_event_id,
+            payload={"turn_id": outbound_event_id},
+        )
+        self.handle.current = False
+        return AssistantReply(text="Устаревший ответ")
+
+
 class _Jivo:
     def __init__(self, calls: list[str], *, fail_invite: bool = False, invite_result: bool = True) -> None:
         self.calls = calls
@@ -59,11 +119,68 @@ class _TurnCancelledDuringInviteJivo(_Jivo):
         return result
 
 
+class _RejectingSendJivo(_Jivo):
+    def send_text_message(self, **kwargs) -> bool:
+        self.calls.append("send")
+        return False
+
+
+class _AcceptingSendJivo(_Jivo):
+    def send_text_message(self, **kwargs) -> bool:
+        self.calls.append("send")
+        return True
+
+
+class _ReplyingAssistant:
+    @staticmethod
+    def record_client_message(session, **kwargs) -> str:
+        return AssistantService.record_client_message(_ReplyingAssistant(), session, **kwargs)
+
+    @staticmethod
+    def handle_pending_client_messages(
+        session,
+        *,
+        external_chat_id: str,
+        outbound_event_id: str,
+        **kwargs,
+    ) -> AssistantReply:
+        append_message(
+            session,
+            external_chat_id=external_chat_id,
+            sender_role="bot",
+            text="Ответ",
+            external_event_id=outbound_event_id,
+            payload={"turn_id": outbound_event_id},
+        )
+        return AssistantReply(text="Ответ")
+
+
+class _CapturingCoordinator:
+    def __init__(self) -> None:
+        self.callback = None
+        self.on_superseded = None
+
+    def submit(self, *, callback, on_superseded=None, **kwargs):
+        self.callback = callback
+        self.on_superseded = on_superseded
+
+    @staticmethod
+    def cancel(*args, **kwargs) -> None:
+        return None
+
+
+class _Notifier:
+    @staticmethod
+    def send_text(*args, **kwargs) -> bool:
+        return True
+
+
 def _processor(
     calls: list[str], *, fail_invite: bool = False, invite_result: bool = True
 ) -> MessageProcessor:
     processor = object.__new__(MessageProcessor)
     processor.assistant_service = _Assistant()
+    processor.handoff_service = HandoffService()
     processor.jivo_client = _Jivo(calls, fail_invite=fail_invite, invite_result=invite_result)
     processor._deliver_bot_reply = lambda *args, **kwargs: calls.append("send")
     return processor
@@ -85,6 +202,88 @@ def _create_chat() -> None:
         get_or_create_chat(session, "handoff-chat", customer.id)
 
 
+def _create_event_record() -> int:
+    event = _event()
+    with session_scope() as session:
+        record = JivoEvent(
+            external_event_id=event.id,
+            external_chat_id=event.chat_id,
+            external_client_id=event.client_id,
+            event_type=event.event,
+            payload=event.model_dump(mode="json"),
+        )
+        session.add(record)
+        session.flush()
+        return record.id
+
+
+def _deferred_processor(calls: list[str], *, accept_send: bool) -> MessageProcessor:
+    processor = object.__new__(MessageProcessor)
+    processor.turn_debounce_seconds = 0
+    processor.assistant_service = _ReplyingAssistant()
+    processor.handoff_service = HandoffService()
+    processor.jivo_client = _AcceptingSendJivo(calls) if accept_send else _RejectingSendJivo(calls)
+    processor.telegram_notifier = _Notifier()
+    return processor
+
+
+def test_client_event_is_completed_only_after_jivo_delivery(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    event_record_id = _create_event_record()
+    coordinator = _CapturingCoordinator()
+    monkeypatch.setattr("core.message_processor.GLOBAL_TURN_COORDINATOR", coordinator)
+    processor = _deferred_processor([], accept_send=True)
+
+    processor.process_event_record(event_record_id)
+
+    with session_scope() as session:
+        assert session.get(JivoEvent, event_record_id).status == "processing"
+
+    coordinator.callback(_CurrentHandle())
+
+    with session_scope() as session:
+        assert session.get(JivoEvent, event_record_id).status == "processed"
+
+
+def test_failed_jivo_delivery_marks_event_failed_and_discards_generated_turn(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    event_record_id = _create_event_record()
+    coordinator = _CapturingCoordinator()
+    monkeypatch.setattr("core.message_processor.GLOBAL_TURN_COORDINATOR", coordinator)
+    processor = _deferred_processor([], accept_send=False)
+
+    processor.process_event_record(event_record_id)
+    with pytest.raises(RuntimeError, match="message was not accepted"):
+        coordinator.callback(_CurrentHandle())
+
+    with session_scope() as session:
+        event = session.get(JivoEvent, event_record_id)
+        assert event.status == "failed"
+        assert event.error_text
+        assert [message.sender_role for message in session.query(Message).all()] == ["client"]
+
+
+def test_debounced_client_event_is_marked_superseded_without_generating_a_reply(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    event_record_id = _create_event_record()
+    coordinator = _CapturingCoordinator()
+    monkeypatch.setattr("core.message_processor.GLOBAL_TURN_COORDINATOR", coordinator)
+    processor = _deferred_processor([], accept_send=True)
+
+    processor.process_event_record(event_record_id)
+    coordinator.on_superseded()
+
+    with session_scope() as session:
+        assert session.get(JivoEvent, event_record_id).status == "superseded"
+        assert [message.sender_role for message in session.query(Message).all()] == ["client"]
+
+
 def test_manager_invite_happens_before_handoff_message(isolated_app_env) -> None:
     _create_chat()
     calls: list[str] = []
@@ -92,6 +291,9 @@ def test_manager_invite_happens_before_handoff_message(isolated_app_env) -> None
     _processor(calls)._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
 
     assert calls == ["invite", "send"]
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 1
+        assert session.query(Chat).one().status == "handoff_requested"
 
 
 def test_failed_manager_invite_does_not_send_false_handoff_promise(isolated_app_env) -> None:
@@ -102,6 +304,37 @@ def test_failed_manager_invite_does_not_send_false_handoff_promise(isolated_app_
         _processor(calls, fail_invite=True)._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
 
     assert calls == ["invite"]
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+        assert session.query(Chat).one().status == "active"
+
+
+def test_failed_manager_invite_discards_generated_turn_history(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = _processor(calls, fail_invite=True)
+    processor.assistant_service = _PersistingAssistant()
+
+    with pytest.raises(RuntimeError, match="invite failed"):
+        processor._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
+
+    with session_scope() as session:
+        assert session.query(Message).count() == 0
+        assert session.query(Chat).one().status == "active"
+
+
+def test_turn_that_becomes_stale_after_generation_is_rolled_back(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    handle = _MutableHandle()
+    processor = _processor(calls)
+    processor.assistant_service = _StalePersistingAssistant(handle)
+
+    processor._process_pending_client_turn(handle=handle, event=_event())
+
+    assert calls == []
+    with session_scope() as session:
+        assert session.query(Message).count() == 0
 
 
 def test_rejected_manager_invite_does_not_send_false_handoff_promise(isolated_app_env) -> None:
@@ -114,6 +347,9 @@ def test_rejected_manager_invite_does_not_send_false_handoff_promise(isolated_ap
         )
 
     assert calls == ["invite"]
+    with session_scope() as session:
+        assert session.query(Handoff).count() == 0
+        assert session.query(Chat).one().status == "active"
 
 
 def test_operator_joined_while_model_was_running_prevents_invite_and_send(isolated_app_env) -> None:
@@ -137,3 +373,33 @@ def test_operator_joined_during_invite_prevents_handoff_message(isolated_app_env
     processor._process_pending_client_turn(handle=handle, event=_event())
 
     assert calls == ["invite"]
+
+
+def test_rejected_jivo_message_send_is_reported_as_failure(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = object.__new__(MessageProcessor)
+    processor.jivo_client = _RejectingSendJivo(calls)
+
+    with session_scope() as session:
+        with pytest.raises(RuntimeError, match="message was not accepted"):
+            processor._deliver_bot_reply(session, event=_event(), text="Ответ")
+
+    assert calls == ["send"]
+
+
+def test_stale_turn_is_checked_inside_delivery_boundary(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = object.__new__(MessageProcessor)
+    processor.jivo_client = _RejectingSendJivo(calls)
+
+    with session_scope() as session:
+        processor._deliver_bot_reply(
+            session,
+            event=_event(),
+            text="Устаревший ответ",
+            is_turn_current=lambda: False,
+        )
+
+    assert calls == []

@@ -12,19 +12,11 @@ import httpx
 from openai import OpenAI
 
 from llm.audit_log import LLMAuditLogger, cost_to_dict, estimate_cost, extract_usage_stats, usage_to_dict
-from llm.prompts import build_llm_messages
-from llm.tools import trim_text
 
 
 logger = logging.getLogger(__name__)
 
 GOOGLE_AI_PROVIDERS = {"google", "google_ai", "google_ai_studio", "gemini"}
-GOOGLE_TOOL_RESULT_FINAL_INSTRUCTION = (
-    "Сформулируй короткий ответ клиенту по результату функции. "
-    "Не вызывай новые функции и не добавляй факты, которых нет в истории или результате функции."
-)
-
-
 @dataclass(slots=True)
 class ToolCall:
     name: str
@@ -89,17 +81,6 @@ class OpenAIService:
         self.client = None
         if self.provider == "openai" and self.openai_api_key:
             self.client = OpenAI(api_key=self.openai_api_key)
-
-    def generate_reply(self, customer_text: str, transcript: str) -> str | None:
-        if not self.enabled:
-            return None
-        messages = build_llm_messages(
-            transcript=trim_text(transcript),
-            customer_text=customer_text,
-            product_lookup_result=None,
-        )
-        turn = self.run_messages(messages=messages)
-        return turn.text
 
     def run_messages(
         self,
@@ -231,8 +212,7 @@ class OpenAIService:
 
     @classmethod
     def _prepare_messages_for_google(cls, messages: list[dict]) -> list[dict]:
-        prepared = cls._merge_system_messages_for_google(messages)
-        return cls._append_google_final_instruction_after_tool_result(prepared)
+        return cls._merge_system_messages_for_google(messages)
 
     @staticmethod
     def _merge_system_messages_for_google(messages: list[dict]) -> list[dict]:
@@ -255,20 +235,6 @@ class OpenAIService:
             "content": "\n\n---\n\n".join(system_parts),
         }
         return [merged_system, *non_system_messages]
-
-    @staticmethod
-    def _append_google_final_instruction_after_tool_result(messages: list[dict]) -> list[dict]:
-        """Keep tool results chronological and avoid Google's final functionResponse-only 400."""
-        if not messages or messages[-1].get("role") != "tool":
-            return messages
-
-        return [
-            *messages,
-            {
-                "role": "user",
-                "content": GOOGLE_TOOL_RESULT_FINAL_INSTRUCTION,
-            },
-        ]
 
     def _run_via_openai_compatible_http(
         self,
@@ -308,9 +274,9 @@ class OpenAIService:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
-        if enable_web_search and not tools:
-            payload.setdefault("tools", [])
-            payload["tools"] = [*payload["tools"], {"type": "web_search"}]
+        # AMIX product truth comes only from the two local tools. Provider web
+        # search must never expand that boundary, including no-tool final turns.
+        del enable_web_search
 
         headers = {
             "Authorization": f"Bearer {api_key}",

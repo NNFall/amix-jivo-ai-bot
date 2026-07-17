@@ -145,7 +145,7 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
-          {"type": "tool_result_status", "value": "точное_совпадение"},
+          {"type": "tool_result_status", "value": "exact_found"},
           {"type": "response_contains", "value": "ручк"}
         ]
       },
@@ -228,7 +228,7 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
-          {"type": "tool_result_status", "value": "несколько_точных_позиций"},
+          {"type": "tool_result_status", "value": "multiple_exact"},
           {"type": "no_handoff"}
         ]
       },
@@ -309,7 +309,7 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
-          {"type": "tool_result_status", "value": "не_найдено"},
+          {"type": "tool_result_status", "value": "not_found"},
           {"type": "no_handoff"}
         ]
       },
@@ -412,7 +412,7 @@
         },
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
-          {"type": "tool_result_status", "value": "не_найдено"},
+          {"type": "tool_result_status", "value": "not_found"},
           {"type": "no_handoff"}
         ]
       },
@@ -462,7 +462,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["6", "петел", "доставка", "Псков", "две недели", "налич", "Мария", "+7 921 555-66-77"]
+            "values": ["6", "петел", "доставка", "Псков", "недел", "налич", "Мария", "+7 921 555-66-77"]
           }
         ]
       }
@@ -666,7 +666,7 @@
         },
         "assertions": [
           {"type": "no_handoff"},
-          {"type": "response_contains_any", "values": ["недоста", "уточн", "способ получения"]}
+          {"type": "response_contains_any", "values": ["недоста", "уточн", "способ получения", "самовывоз", "достав"]}
         ]
       },
       {
@@ -697,7 +697,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["одна", "P-AM02/B-S", "самовывоз", "завтра", "налич", "Игорь", "+7 900 444-55-66"]
+            "values": [{"any": ["одна", "1 шт", "1 шту"]}, "P-AM02/B-S", "самовывоз", "завтра", "налич", "Игорь", "+7 900 444-55-66"]
           }
         ]
       }

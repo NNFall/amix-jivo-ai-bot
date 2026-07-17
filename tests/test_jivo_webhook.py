@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from database.db import session_scope
 from database.models import Chat, Handoff, JivoEvent, Message, Product
 from jivo.client import JivoClient
+from llm.openai_client import LLMTurnResult, OpenAIService, ToolCall
 from main import create_application
 
 
@@ -57,10 +58,75 @@ def test_jivo_webhook_deduplicates_event(isolated_app_env) -> None:
         events = session.query(JivoEvent).all()
 
     assert len(events) == 1
-    assert events[0].status == "processed"
+    assert events[0].status == "processing"
 
 
-def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
+def test_jivo_webhook_retries_a_previously_failed_event(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    payload = {
+        "id": "event-retry",
+        "event": "CLIENT_MESSAGE",
+        "chat_id": "chat-retry",
+        "client_id": "client-retry",
+        "message": {"type": "TEXT", "text": "Проверьте товар"},
+    }
+    with session_scope() as session:
+        session.add(
+            JivoEvent(
+                external_event_id=payload["id"],
+                external_chat_id=payload["chat_id"],
+                external_client_id=payload["client_id"],
+                event_type=payload["event"],
+                status="failed",
+                error_text="temporary error",
+                payload=payload,
+            )
+        )
+
+    processed: list[int] = []
+    monkeypatch.setattr("api.jivo_webhook.process_event_record", processed.append)
+
+    with build_client() as client:
+        response = client.post("/webhooks/jivo/test-token", json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "accepted": True, "duplicate": False}
+    assert len(processed) == 1
+    with session_scope() as session:
+        event = session.query(JivoEvent).one()
+        assert event.status == "received"
+        assert event.error_text is None
+
+
+def test_jivo_webhook_processes_model_selected_product_lookup_flow(
+    isolated_app_env,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(OpenAIService, "_is_enabled", lambda self: True)
+    monkeypatch.setattr(JivoClient, "send_text_message", lambda self, event, text: True)
+
+    def fake_run_messages(self, *, messages, tools=None, tool_choice="auto"):
+        assert [tool["function"]["name"] for tool in tools] == [
+            "search_products",
+            "handoff_to_manager",
+        ]
+        assert tool_choice == "auto"
+        if messages[-1]["role"] == "tool":
+            return LLMTurnResult(text="Да, товар AB-123 найден.", tool_calls=[])
+        return LLMTurnResult(
+            text=None,
+            tool_calls=[
+                ToolCall(
+                    name="search_products",
+                    arguments={"queries": [{"query": "AB-123"}]},
+                    call_id="call_product_lookup",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(OpenAIService, "run_messages", fake_run_messages)
     with session_scope() as session:
         session.add(
             Product(
@@ -107,16 +173,34 @@ def test_jivo_webhook_processes_product_lookup_flow(isolated_app_env) -> None:
     assert messages[0].sender_role == "client"
     assert "AB-123" in messages[0].text
     assert [message.sender_role for message in messages] == ["client", "assistant_tool_call", "tool", "bot"]
-    assert messages[1].payload["source"] == "backend_prelookup_tool_call"
-    assert messages[2].payload["source"] == "backend_prelookup_tool_result"
-    assert "Да, нашёл AB-123." in messages[3].text
+    assert messages[1].payload["source"] == "llm_tool_call"
+    assert messages[2].payload["source"] == "tool_result"
+    assert "AB-123 найден" in messages[3].text
     assert "5 шт" not in messages[3].text
-    assert "точный остаток" in messages[3].text.lower()
 
 
 def test_jivo_webhook_handoff_flow_creates_handoff_record(isolated_app_env, monkeypatch) -> None:
+    monkeypatch.setattr(OpenAIService, "_is_enabled", lambda self: True)
     monkeypatch.setattr(JivoClient, "invite_agent", lambda self, event, reason: True)
     monkeypatch.setattr(JivoClient, "send_text_message", lambda self, event, text: True)
+
+    def fake_run_messages(self, *, messages, tools=None, tool_choice="auto"):
+        return LLMTurnResult(
+            text=None,
+            tool_calls=[
+                ToolCall(
+                    name="handoff_to_manager",
+                    arguments={
+                        "reason": "client_requested_manager",
+                        "summary": "Клиент попросил подключить менеджера для подбора.",
+                        "customer_message": "Передаю вопрос менеджеру. Он подключится к диалогу.",
+                    },
+                    call_id="call_handoff",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(OpenAIService, "run_messages", fake_run_messages)
     payload = {
         "id": "event-3",
         "event": "CLIENT_MESSAGE",

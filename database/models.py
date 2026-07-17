@@ -112,16 +112,6 @@ class Handoff(Base):
     )
 
 
-class OrderDraft(Base, TimestampMixin):
-    __tablename__ = "order_drafts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    chat_id: Mapped[int] = mapped_column(ForeignKey("chats.id"), unique=True, index=True)
-    status: Mapped[str] = mapped_column(String(64), default="collecting", nullable=False)
-    data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
 class LLMCall(Base):
     __tablename__ = "llm_calls"
 

@@ -38,6 +38,7 @@ class ChatTurnCoordinator:
         *,
         chat_id: str,
         callback: Callable[[TurnHandle], None],
+        on_superseded: Callable[[], None] | None = None,
         delay_seconds: float | None = None,
     ) -> TurnHandle:
         with self._lock:
@@ -48,7 +49,7 @@ class ChatTurnCoordinator:
         actual_delay = self.default_delay_seconds if delay_seconds is None else delay_seconds
         thread = threading.Thread(
             target=self._run,
-            args=(handle, callback, actual_delay),
+            args=(handle, callback, on_superseded, actual_delay),
             daemon=True,
             name=f"chat-turn-{chat_id}-{generation}",
         )
@@ -68,6 +69,7 @@ class ChatTurnCoordinator:
         self,
         handle: TurnHandle,
         callback: Callable[[TurnHandle], None],
+        on_superseded: Callable[[], None] | None,
         delay_seconds: float,
     ) -> None:
         if delay_seconds > 0:
@@ -79,6 +81,15 @@ class ChatTurnCoordinator:
                 handle.chat_id,
                 handle.generation,
             )
+            if on_superseded is not None:
+                try:
+                    on_superseded()
+                except Exception:
+                    logger.exception(
+                        "Failed to finalize superseded chat turn chat_id=%s generation=%s",
+                        handle.chat_id,
+                        handle.generation,
+                    )
             return
 
         try:

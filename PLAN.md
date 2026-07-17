@@ -1,5 +1,24 @@
 # PLAN
 
+## Update 2026-07-17 (Model-Driven Two-Tool Candidate)
+
+- Status: local implementation and deterministic dialog verification pass; independent reviews and isolated live Gemini verification on the VPS are in progress. Production services have not been restarted.
+- Runtime boundary: the backend no longer classifies customer language with keyword lists, regex intent rules, prelookup routes or hidden order state. Gemini receives the complete chronological user/assistant/tool history and may call only `search_products` or `handoff_to_manager`.
+- Product boundary: backend code only executes the model-supplied search, normalizes catalog identifiers and compares an explicitly supplied per-product quantity with stock.
+- Jivo reliability: a client event is finalized only after the background turn is delivered; superseded turns are recorded separately; failed delivery removes the undelivered generated turn and permits a later retry of the same event.
+- Local verification: `python -m pytest -q` -> `124 passed`; dialog regression -> `PASS=9 FAIL=0`; fake history-order evaluation with three repetitions -> `27/27` scenarios and `123/123` turns; compile and diff checks passed.
+- Evidence: local ignored files `outputs/history-order-fake.json` and `outputs/history-order-fake.md`; tracked concise report `DIALOG_EVALS.md`.
+- Remaining gate: resolve independent review findings, run repeated real Gemini scenarios in an isolated VPS copy/database, then deploy and verify Jivo only if every blocking check passes.
+
+## Update 2026-07-16 (Live V6 Hardening In Progress)
+
+- Status: live Gemini v6 failed 6 of 18 scenario runs; production services remain on the previous loaded revision and must not be restarted yet.
+- Fixed locally after v6: natural customer-name recognition, preservation of customer-requested quantities, removal of premature "order completed" wording, manager handoff summary sourced from the exact customer-confirmed bot summary, and forced `search_products` retry for new product facts.
+- Current hardening scope: manager-request negation, premature handoff claims, correction messages that start with "yes", invoice/payment false positives, broader exact-stock redaction, two-tool enforcement for Kie, Jivo send failures, and stronger chronological-history eval assertions.
+- Constraints: exactly two model tools (`search_products`, `handoff_to_manager`); no order-state tool or hidden order aggregate; complete chronological history is the only order memory.
+- Verification gate: focused red/green tests, full local suite, repeated fake eval, dialog regression, repeated real Gemini eval on VPS, then independent review of the exact candidate commit.
+- Deployment gate: merge/restart only after every blocking live and review finding is closed; preserve production SQLite `-shm` and `-wal` files.
+
 ## Update 2026-07-16 (History-Driven Order Flow)
 
 - Status: implementation stabilized locally; server verification, repeated live Gemini evaluation and final review of the exact commit remain before deployment.
@@ -1312,4 +1331,3 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Системный промпт заказа сокращён до общего history-driven сценария без скрытого черновика и узких примеров.
 - Локальная проверка: `python -m pytest -q` -> `163 passed`; `compileall` и `git diff --check` прошли.
 - Следующий шаг: новый версионированный многоходовый eval, повторные реальные прогоны Gemini, независимое ревью и деплой на VPS.
-

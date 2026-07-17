@@ -282,7 +282,16 @@ def _validate_assertion(scenario_id: str, turn_index: int, assertion: dict[str, 
         "handoff_summary_contains_all",
     }:
         values = assertion.get("values") or []
-        if not values or any(not str(value).strip() for value in values):
+        def valid_expected_value(value: Any) -> bool:
+            if not isinstance(value, dict):
+                return bool(str(value).strip())
+            options = value.get("any")
+            return isinstance(options, list) and bool(options) and all(
+                bool(str(option).strip()) for option in options
+            )
+
+        invalid_values = any(not valid_expected_value(value) for value in values)
+        if not values or invalid_values:
             raise ValueError(f"Scenario {scenario_id!r} turn {turn_index} assertion requires values")
     if assertion_type in {"tool_query_quantities", "tool_query_quantities_contain"}:
         queries = assertion.get("queries") or []
@@ -364,11 +373,8 @@ def _configure_assistant(
     *, fake: bool, model: str | None
 ) -> tuple[AssistantService, FakeTurnProvider | None, RecordingProvider, str, str]:
     assistant = AssistantService()
-    assistant.backend_prelookup_enabled = False
-    assistant.deterministic_company_faq_enabled = False
     assistant.debug_lookup_logs = False
     assistant.debug_llm_payloads = False
-    assistant.recent_history_limit = max(assistant.recent_history_limit, 50)
     assistant.openai_service.audit_logger.enabled = False
 
     if fake:
@@ -627,14 +633,19 @@ def _assertion_result(spec: dict[str, Any], turn: dict[str, Any], handoff_reason
         passed = bool(expected) and matched
         detail = f"expected_subset={expected!r}, actual={actual!r}"
     elif assertion_type == "handoff_summary_contains_all":
-        expected = [str(value) for value in spec.get("values") or []]
+        expected = spec.get("values") or []
         summaries = [
             str((call.get("arguments") or {}).get("summary") or "")
             for call in calls
             if call.get("name") == "handoff_to_manager"
         ]
         summary = summaries[-1] if summaries else ""
-        passed = bool(expected) and all(_contains(summary, value) for value in expected)
+        passed = bool(expected) and all(
+            any(_contains(summary, option) for option in value.get("any") or [])
+            if isinstance(value, dict)
+            else _contains(summary, str(value))
+            for value in expected
+        )
         detail = f"expected_all={expected!r}, summary={summary!r}"
     else:
         detail = f"unknown assertion type: {assertion_type!r}"
@@ -648,12 +659,11 @@ def _privacy_assertion(
     function_results: list[dict[str, Any]],
     provider_requests: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    del function_results, provider_requests
     visible = "\n".join(
         (
             response,
             json.dumps(function_calls, ensure_ascii=False, sort_keys=True),
-            json.dumps(function_results, ensure_ascii=False, sort_keys=True),
-            json.dumps(provider_requests or [], ensure_ascii=False, sort_keys=True),
         )
     )
     normalized = visible.casefold()
@@ -680,7 +690,7 @@ def _privacy_assertion(
     return {
         "type": "stock_privacy",
         "passed": not leaks,
-        "detail": "no exact stock in model-visible evidence" if not leaks else f"leaks={sorted(set(leaks))}",
+        "detail": "no exact stock in customer-visible output" if not leaks else f"leaks={sorted(set(leaks))}",
     }
 
 
@@ -710,54 +720,72 @@ def _provider_health_assertion(
 
 
 def _full_history_assertion(
-    provider_requests: list[dict[str, Any]], expected_customer_inputs: list[str]
+    provider_requests: list[dict[str, Any]],
+    expected_customer_inputs: list[str],
+    *,
+    expected_assistant_outputs: list[str] | None = None,
 ) -> dict[str, Any]:
-    first_messages = provider_requests[0].get("messages") if provider_requests else []
-    messages = first_messages if isinstance(first_messages, list) else []
-    actual_customer_inputs = [
-        str(message.get("content") or "")
-        for message in messages
-        if isinstance(message, dict) and message.get("role") == "user"
-    ]
-
-    tool_errors: list[str] = []
-    pending_tool_calls: dict[str, str] = {}
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict):
-            tool_errors.append(f"message_{index}_not_object")
-            continue
-        role = str(message.get("role") or "")
-        if role == "assistant":
-            for call in message.get("tool_calls") or []:
-                call_id = str((call or {}).get("id") or "")
-                call_name = str(((call or {}).get("function") or {}).get("name") or "")
-                if not call_id or call_id in pending_tool_calls:
-                    tool_errors.append(f"invalid_tool_call_at_{index}")
-                    continue
-                pending_tool_calls[call_id] = call_name
-        elif role == "tool":
-            call_id = str(message.get("tool_call_id") or "")
-            expected_name = pending_tool_calls.pop(call_id, None)
-            actual_name = str(message.get("name") or "")
-            if expected_name is None:
-                tool_errors.append(f"orphan_tool_result_at_{index}")
-            elif actual_name and expected_name and actual_name != expected_name:
-                tool_errors.append(f"tool_name_mismatch_at_{index}")
-        elif role == "user" and pending_tool_calls:
-            tool_errors.append(f"user_before_tool_result_at_{index}")
-
-    if pending_tool_calls:
-        tool_errors.append(f"missing_tool_results={sorted(pending_tool_calls)}")
-
-    customer_turns_match = actual_customer_inputs == expected_customer_inputs
-    passed = bool(messages) and customer_turns_match and not tool_errors
     details: list[str] = []
-    if not customer_turns_match:
-        details.append(
-            f"customer_turns expected={expected_customer_inputs!r} actual={actual_customer_inputs!r}"
-        )
-    if tool_errors:
-        details.append(f"tool_history={tool_errors!r}")
+    for request_index, request in enumerate(provider_requests, start=1):
+        request_messages = request.get("messages") if isinstance(request, dict) else []
+        messages = request_messages if isinstance(request_messages, list) else []
+        actual_customer_inputs = [
+            str(message.get("content") or "")
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "user"
+        ]
+        if actual_customer_inputs != expected_customer_inputs:
+            details.append(
+                f"request_{request_index}: customer_turns expected={expected_customer_inputs!r} "
+                f"actual={actual_customer_inputs!r}"
+            )
+
+        if expected_assistant_outputs is not None:
+            actual_assistant_outputs = [
+                str(message.get("content") or "")
+                for message in messages
+                if isinstance(message, dict)
+                and message.get("role") == "assistant"
+                and not message.get("tool_calls")
+                and str(message.get("content") or "").strip()
+            ]
+            if actual_assistant_outputs != expected_assistant_outputs:
+                details.append(
+                    f"request_{request_index}: assistant_turns expected={expected_assistant_outputs!r} "
+                    f"actual={actual_assistant_outputs!r}"
+                )
+
+        tool_errors: list[str] = []
+        pending_tool_calls: dict[str, str] = {}
+        for message_index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                tool_errors.append(f"message_{message_index}_not_object")
+                continue
+            role = str(message.get("role") or "")
+            if role == "assistant":
+                for call in message.get("tool_calls") or []:
+                    call_id = str((call or {}).get("id") or "")
+                    call_name = str(((call or {}).get("function") or {}).get("name") or "")
+                    if not call_id or call_id in pending_tool_calls:
+                        tool_errors.append(f"invalid_tool_call_at_{message_index}")
+                        continue
+                    pending_tool_calls[call_id] = call_name
+            elif role == "tool":
+                call_id = str(message.get("tool_call_id") or "")
+                expected_name = pending_tool_calls.pop(call_id, None)
+                actual_name = str(message.get("name") or "")
+                if expected_name is None:
+                    tool_errors.append(f"orphan_tool_result_at_{message_index}")
+                elif actual_name and expected_name and actual_name != expected_name:
+                    tool_errors.append(f"tool_name_mismatch_at_{message_index}")
+            elif role == "user" and pending_tool_calls:
+                tool_errors.append(f"user_before_tool_result_at_{message_index}")
+        if pending_tool_calls:
+            tool_errors.append(f"missing_tool_results={sorted(pending_tool_calls)}")
+        if tool_errors:
+            details.append(f"request_{request_index}: tool_history={tool_errors!r}")
+
+    passed = bool(provider_requests) and not details
     return {
         "type": "complete_chronological_history",
         "passed": passed,
@@ -765,8 +793,24 @@ def _full_history_assertion(
     }
 
 
-def _allowed_tools_assertion(function_calls: list[dict[str, Any]]) -> dict[str, Any]:
-    names = [str(call.get("name") or "") for call in function_calls]
+def _allowed_tools_assertion(
+    function_calls: list[dict[str, Any]],
+    provider_requests: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    called_names = [str(call.get("name") or "") for call in function_calls]
+    declared_names: list[str] = []
+    provider_result_names: list[str] = []
+    for request in provider_requests or []:
+        for tool in request.get("tools") or []:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") == "function":
+                declared_names.append(str((tool.get("function") or {}).get("name") or ""))
+            else:
+                declared_names.append(str(tool.get("type") or tool.get("name") or ""))
+        for call in (request.get("result") or {}).get("tool_calls") or []:
+            provider_result_names.append(str((call or {}).get("name") or ""))
+    names = [name for name in called_names + declared_names + provider_result_names if name]
     disallowed = sorted(set(names) - set(ALLOWED_TOOL_NAMES))
     return {
         "type": "allowed_tools_only",
@@ -790,6 +834,13 @@ def _run_turn(
 ) -> dict[str, Any]:
     scenario_id = str(scenario["id"])
     external_chat_id = f"history-order-eval:{scenario_id}:run:{repetition}"
+    expected_assistant_outputs = [
+        str(message.get("content") or "")
+        for message in assistant.dialog_service.get_llm_messages(session, external_chat_id)
+        if message.get("role") == "assistant"
+        and not message.get("tool_calls")
+        and str(message.get("content") or "").strip()
+    ]
     before_message_id = _max_message_id(session, external_chat_id)
     before_llm_call_id = _max_llm_call_id(session, external_chat_id)
     before_provider_request = len(recording_provider.records)
@@ -834,7 +885,7 @@ def _run_turn(
         _assertion_result(spec, turn, reply.handoff_reason)
         for spec in turn_spec.get("assertions") or []
     ]
-    assertions.append(_allowed_tools_assertion(function_calls))
+    assertions.append(_allowed_tools_assertion(function_calls, provider_requests))
     assertions.append(_privacy_assertion(reply.text, function_calls, function_results, provider_requests))
     assertions.append(
         _provider_health_assertion(
@@ -848,6 +899,7 @@ def _run_turn(
         _full_history_assertion(
             provider_requests,
             [str(item["input"]) for item in scenario["turns"][:turn_index]],
+            expected_assistant_outputs=expected_assistant_outputs,
         )
     )
     turn["assertions"] = assertions

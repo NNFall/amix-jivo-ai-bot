@@ -21,6 +21,13 @@ def create_event_if_new(session, event):
         select(JivoEvent).where(JivoEvent.external_event_id == event.id)
     )
     if existing is not None:
+        if existing.status == "failed":
+            existing.status = "received"
+            existing.error_text = None
+            existing.payload = event.model_dump(mode="json")
+            session.add(existing)
+            session.flush()
+            return existing, True
         return existing, False
 
     entity = JivoEvent(
@@ -41,11 +48,17 @@ def get_stored_event(session, event_record_id: int) -> JivoEvent | None:
 
 def mark_event_processing(session, event_record: JivoEvent) -> None:
     event_record.status = "processing"
+    event_record.error_text = None
     session.add(event_record)
 
 
 def mark_event_processed(session, event_record: JivoEvent) -> None:
     event_record.status = "processed"
+    session.add(event_record)
+
+
+def mark_event_superseded(session, event_record: JivoEvent) -> None:
+    event_record.status = "superseded"
     session.add(event_record)
 
 

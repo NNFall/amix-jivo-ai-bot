@@ -1,3 +1,20 @@
+# Iteration 68 - model-driven two-tool simplification and Jivo lifecycle (2026-07-17)
+
+- Removed the remaining backend semantic routing architecture: no customer-language keyword lists, regex intent classification, prelookup response routes, `active_product`, `product_memory`, `pending_clarification` or order-draft function remain in the active runtime.
+- Kept exactly two model tools: `search_products` and `handoff_to_manager`.
+- Replaced partial/merged context with the complete persisted chronological dialog, including assistant function calls and function results in their original positions.
+- Kept backend product work limited to executing model-supplied queries, catalog-identifier normalization and per-product quantity availability comparison.
+- Simplified the system prompt into generalized policies for factual grounding, stock privacy, natural order collection, corrections, complete summary, explicit confirmation and manager handoff.
+- Removed alternate product/company prompt builders, the old `llm/tools.py` compatibility layer, deleted settings switches for backend prelookup/FAQ rewriting and removed the unused `OrderDraft` ORM model without touching the production database table.
+- Reworked dialog/evaluation scripts so they call `AssistantService` and observe actual chronological tool history rather than preclassifying customer text in the harness.
+- Hardened Jivo background processing: client events stay in progress until delivery, superseded turns receive their own terminal status, failed sends discard only generated undelivered history, failed events can be retried, and a Jivo handoff is persisted only after `INVITE_AGENT` succeeds.
+- Preserved LLM usage records across later outbound failures while rolling back stale assistant/tool/handoff side effects.
+- Corrected Google tool continuation so function calls and function responses remain chronological and the model can make another tool call instead of receiving an artificial user instruction.
+- TDD evidence: the new event-lifecycle and failed-delivery tests failed against the prior implementation, then passed after the minimal transport fix.
+- Local verification: `python -m pytest -q` -> `124 passed`; `python scripts/run_dialog_regression_eval.py` -> `PASS=9 FAIL=0`; fake history-order evaluation repeated three times -> `PASS`, 27/27 scenarios and 123/123 turns; `python -m compileall` passed; `git diff --check` reported only line-ending warnings.
+- Local full reports: `outputs/history-order-fake.json` and `outputs/history-order-fake.md`; these are ignored from Git to avoid committing multi-megabyte transcripts.
+- Started three independent read-only reviews for architecture, prompt/transcript quality and Jivo concurrency. Production services remain unchanged pending live VPS verification and review closure.
+
 # Iteration 67 - final history-order guards and reproducible local gate (2026-07-16)
 
 - Re-audited the live v5 transcripts and independent findings instead of accepting the earlier partial pass.

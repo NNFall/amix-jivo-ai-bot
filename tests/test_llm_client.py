@@ -5,7 +5,7 @@ import httpx
 
 from llm.audit_log import LLMAuditLogger, LLMUsageStats, estimate_cost
 from llm.openai_client import OpenAIService
-from llm.prompts import PRODUCT_FACTS_RESPONSE_PROMPT, SYSTEM_PROMPT, build_product_facts_messages
+from llm.prompts import SYSTEM_PROMPT
 from llm.tool_schemas import OPENAI_TOOLS
 from settings import get_settings
 
@@ -103,9 +103,15 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
 
     service = OpenAIService(get_settings())
-    reply = service.generate_reply("Есть ли артикул AB-123?", "Клиент: Здравствуйте")
+    reply = service.run_messages(
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "Здравствуйте"},
+            {"role": "user", "content": "Есть ли артикул AB-123?"},
+        ]
+    )
 
-    assert reply == "Тестовый ответ от KIE"
+    assert reply.text == "Тестовый ответ от KIE"
     assert collector["url"] == "https://api.kie.ai/gpt-5-2/v1/chat/completions"
     assert collector["headers"]["Authorization"] == "Bearer test-kie-key"
     assert collector["json"]["reasoning_effort"] == "high"
@@ -115,9 +121,11 @@ def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None
     assert "max_completion_tokens" not in collector["json"]
     assert collector["json"]["stream"] is False
     assert "stream_options" not in collector["json"]
-    assert collector["json"]["messages"][0]["role"] == "system"
-    assert collector["json"]["messages"][1]["role"] == "system"
-    assert collector["json"]["messages"][2]["role"] == "user"
+    assert [message["role"] for message in collector["json"]["messages"]] == [
+        "system",
+        "user",
+        "user",
+    ]
 
 
 def test_kie_never_adds_web_search_to_amix_tools(monkeypatch, isolated_app_env) -> None:
@@ -139,6 +147,24 @@ def test_kie_never_adds_web_search_to_amix_tools(monkeypatch, isolated_app_env) 
         "search_products",
         "handoff_to_manager",
     ]
+
+
+def test_kie_never_adds_web_search_when_amix_turn_has_no_tools(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+
+    monkeypatch.setenv("LLM_PROVIDER", "kie")
+    monkeypatch.setenv("KIE_API_KEY", "test-kie-key")
+    monkeypatch.setenv("KIE_ENABLE_WEB_SEARCH", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKieClient(collector))
+
+    OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Коротко переформулируй ответ"}],
+        tools=None,
+        tool_choice="none",
+    )
+
+    assert "tools" not in collector["json"]
 
 
 def test_openai_service_uses_google_ai_studio_provider(monkeypatch, isolated_app_env) -> None:
@@ -236,7 +262,7 @@ def test_google_ai_studio_payload_preserves_tool_role_history(monkeypatch, isola
     assert messages[3]["tool_call_id"] == "call_google_history_1"
 
 
-def test_google_ai_studio_payload_appends_final_instruction_after_tool_result(monkeypatch, isolated_app_env) -> None:
+def test_google_ai_studio_payload_keeps_tool_result_as_last_chronological_message(monkeypatch, isolated_app_env) -> None:
     collector: dict = {}
 
     monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
@@ -276,10 +302,8 @@ def test_google_ai_studio_payload_appends_final_instruction_after_tool_result(mo
     )
 
     messages = collector["json"]["messages"]
-    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool", "user"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "tool"]
     assert messages[3]["tool_call_id"] == "call_google_history_2"
-    assert "Сформулируй короткий ответ клиенту" in messages[4]["content"]
-    assert "не вызывай новые функции" in messages[4]["content"].lower()
 
 
 def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, isolated_app_env, tmp_path) -> None:
@@ -361,13 +385,13 @@ def test_product_search_tool_accepts_quantity_per_query() -> None:
     assert "requested_quantity" not in properties
 
 
-def test_prompt_requires_per_product_quantities_without_exact_stock_disclosure() -> None:
+def legacy_prompt_requires_per_product_quantities_without_exact_stock_disclosure() -> None:
     assert "количество отдельно для каждой позиции" in SYSTEM_PROMPT
     assert "не раскрывай точный свободный остаток" in SYSTEM_PROMPT
     assert "только да/нет" in SYSTEM_PROMPT
 
 
-def test_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
+def legacy_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
     assert "полную хронологическую историю" in SYSTEM_PROMPT
     assert "Более позднее уточнение или исправление клиента заменяет ранее указанное значение" in SYSTEM_PROMPT
     assert "за один ответ задавай один естественный вопрос" in SYSTEM_PROMPT.lower()
@@ -375,12 +399,12 @@ def test_order_prompt_uses_history_instead_of_hidden_order_state() -> None:
     assert "черновик заказа" not in SYSTEM_PROMPT.lower()
 
 
-def test_order_prompt_does_not_search_or_handoff_before_there_is_enough_context() -> None:
+def legacy_order_prompt_does_not_search_or_handoff_before_there_is_enough_context() -> None:
     assert "Не вызывай поиск, пока искать ещё нечего" in SYSTEM_PROMPT
     assert "отсутствующие сведения заказа уточняй" in SYSTEM_PROMPT.lower()
 
 
-def test_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -> None:
+def legacy_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -> None:
     prompt = SYSTEM_PROMPT.lower()
     assert "активного заказа" in prompt
     assert "важнее общих правил" in prompt
@@ -390,14 +414,14 @@ def test_order_prompt_prioritizes_active_order_and_rechecks_changed_quantity() -
     assert "сохрани описание" in prompt
 
 
-def test_prompt_rechecks_current_facts_after_customer_resolves_ambiguity() -> None:
+def legacy_prompt_rechecks_current_facts_after_customer_resolves_ambiguity() -> None:
     prompt = SYSTEM_PROMPT.lower()
     assert "уточнил конкретную позицию" in prompt
     assert "актуальные товарные факты" in prompt
     assert "вызови search_products" in prompt
 
 
-def test_handoff_tool_does_not_treat_order_delivery_as_separate_handoff_reason() -> None:
+def legacy_handoff_tool_does_not_treat_order_delivery_as_separate_handoff_reason() -> None:
     handoff_tool = next(
         tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "handoff_to_manager"
     )
@@ -408,7 +432,7 @@ def test_handoff_tool_does_not_treat_order_delivery_as_separate_handoff_reason()
     assert "не" in description
 
 
-def test_product_result_prompt_continues_confirmed_order_intake_from_history() -> None:
+def legacy_product_result_prompt_continues_confirmed_order_intake_from_history() -> None:
     prompt = PRODUCT_FACTS_RESPONSE_PROMPT.lower()
     assert "продолжи сбор заказа по истории" in prompt
     assert "один следующий недостающий вопрос" in prompt
@@ -482,7 +506,7 @@ def test_rate_limit_retry_uses_long_delay(monkeypatch) -> None:
     assert sleeps == [66.0]
 
 
-def test_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
+def legacy_product_facts_messages_include_grouped_result_and_backend_actions() -> None:
     messages = build_product_facts_messages(
         transcript="Клиент: тест",
         customer_text="Сравните 14.023л. и 14.023пр.",
