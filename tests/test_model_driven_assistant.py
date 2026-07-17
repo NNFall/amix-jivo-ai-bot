@@ -174,6 +174,8 @@ def test_single_prompt_owns_dialog_order_and_handoff_semantics() -> None:
     assert "не блокирует сбор заявки" in prompt
     assert "не заменяй его своим предположением" in prompt
     assert "не больше двух связанных вопросов" in prompt
+    assert "считай это поле собранным" in prompt
+    assert "не проверяешь реализуемость сочетания условий" in prompt
     assert "update_order_draft" not in prompt
     assert "order_draft" not in prompt
 
