@@ -306,6 +306,41 @@ def test_google_ai_studio_payload_keeps_tool_result_as_last_chronological_messag
     assert messages[3]["tool_call_id"] == "call_google_history_2"
 
 
+def test_google_tool_call_thought_signature_survives_history_round_trip(isolated_app_env) -> None:
+    service = OpenAIService(get_settings())
+    signature = "encrypted-google-thought-signature"
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "call_google_signature_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_products",
+                                "arguments": '{"queries":[{"query":"14.023pr"}]}',
+                            },
+                            "extra_content": {
+                                "google": {
+                                    "thought_signature": signature,
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    calls = service._extract_kie_tool_calls(response)
+    history_message = service.build_assistant_tool_call_message(calls)
+
+    assert history_message["tool_calls"][0]["extra_content"] == {
+        "google": {"thought_signature": signature}
+    }
+
+
 def test_google_ai_studio_audit_log_records_payload_usage_and_cost(monkeypatch, isolated_app_env, tmp_path) -> None:
     collector: dict = {}
     audit_path = tmp_path / "llm_audit_recent.json"

@@ -22,6 +22,7 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
     call_id: str | None = None
+    thought_signature: str | None = None
 
 
 @dataclass(slots=True)
@@ -731,7 +732,19 @@ class OpenAIService:
                 arguments = arguments_raw
             else:
                 arguments = self._safe_json_loads(str(arguments_raw or ""))
-            parsed.append(ToolCall(name=name, arguments=arguments, call_id=call.get("id")))
+            extra_content = call.get("extra_content") or {}
+            google_metadata = extra_content.get("google") if isinstance(extra_content, dict) else {}
+            thought_signature = (
+                google_metadata.get("thought_signature") if isinstance(google_metadata, dict) else None
+            )
+            parsed.append(
+                ToolCall(
+                    name=name,
+                    arguments=arguments,
+                    call_id=call.get("id"),
+                    thought_signature=thought_signature if isinstance(thought_signature, str) else None,
+                )
+            )
         return parsed
 
     @staticmethod
@@ -768,20 +781,26 @@ class OpenAIService:
 
     @staticmethod
     def build_assistant_tool_call_message(tool_calls: list[ToolCall]) -> dict[str, Any]:
+        formatted_calls: list[dict[str, Any]] = []
+        for call in tool_calls:
+            formatted_call: dict[str, Any] = {
+                "id": call.call_id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": dumps(call.arguments, ensure_ascii=False),
+                },
+            }
+            if call.thought_signature:
+                formatted_call["extra_content"] = {
+                    "google": {"thought_signature": call.thought_signature}
+                }
+            formatted_calls.append(formatted_call)
+
         return {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {
-                    "id": call.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": call.name,
-                        "arguments": dumps(call.arguments, ensure_ascii=False),
-                    },
-                }
-                for call in tool_calls
-            ],
+            "tool_calls": formatted_calls,
         }
 
     @staticmethod

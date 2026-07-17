@@ -76,6 +76,7 @@ def test_every_model_round_receives_only_two_tools_and_chronological_result(isol
                         name="search_products",
                         arguments={"queries": [{"query": "14.023пр", "requested_quantity": 2}]},
                         call_id="search-770",
+                        thought_signature="encrypted-google-signature",
                     )
                 ],
             )
@@ -105,6 +106,9 @@ def test_every_model_round_receives_only_two_tools_and_chronological_result(isol
     assert all(_tool_names(request["tools"]) == ["search_products", "handoff_to_manager"] for request in requests)
     second_dialog = [message for message in requests[1]["messages"] if message["role"] != "system"]
     assert [message["role"] for message in second_dialog] == ["user", "assistant", "tool"]
+    assert second_dialog[1]["tool_calls"][0]["extra_content"] == {
+        "google": {"thought_signature": "encrypted-google-signature"}
+    }
     tool_payload = json.loads(second_dialog[-1]["content"])
     product = tool_payload["result"]["results"][0]["exact_matches"][0]
     assert product["stock"] == "220.000"
