@@ -2352,3 +2352,11 @@
   - `outputs/amix-mixed-live-be3db6e.md` / `.json`;
   - `outputs/amix-free-live-5d3851a.md` / `.json`.
 - Дополнительный запуск независимых агентов в этой итерации не стартовал из-за исчерпанного лимита agent threads. Ранее выполненный независимый аудит уже выявил и помог исправить гонки handoff, откат транзакций, удаление устаревшей истории, повтор failed-событий и восстановление незавершённых событий.
+- Production deploy:
+  - перед обновлением `/root/amix` находился на `a0c56bb`, оба сервиса были активны; незакоммиченными оставались только рабочие `data/amix_jivo.db-wal` и `data/amix_jivo.db-shm`;
+  - выполнены `git fetch` и `git merge --ff-only` до `060e107`, без `reset`, удаления или перезаписи данных;
+  - зависимости синхронизированы из `requirements.txt`;
+  - серверный `./.venv/bin/python -m pytest -q` -> `133 passed`;
+  - перезапущены `amix-api.service` и `amix-telegram-demo.service`, оба -> `active/running`;
+  - `http://127.0.0.1:8010/health` и `https://amix.cifresh.ru/health` -> `{"status":"ok"}`;
+  - журнал обоих сервисов после перезапуска не содержит `error`, `exception`, `traceback` или `failed`.
