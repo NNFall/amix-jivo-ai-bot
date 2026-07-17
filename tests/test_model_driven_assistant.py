@@ -171,6 +171,9 @@ def test_single_prompt_owns_dialog_order_and_handoff_semantics() -> None:
     assert "точный свободный остаток" in prompt
     assert "reason=order_creation" in prompt
     assert "явного подтверждения" in prompt
+    assert "не блокирует сбор заявки" in prompt
+    assert "не заменяй его своим предположением" in prompt
+    assert "не больше двух связанных вопросов" in prompt
     assert "update_order_draft" not in prompt
     assert "order_draft" not in prompt
 

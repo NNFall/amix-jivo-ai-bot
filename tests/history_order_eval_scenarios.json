@@ -229,18 +229,10 @@
       {
         "input": "Код 10002.",
         "fake": {
-          "tool_calls": [
-            {
-              "name": "search_products",
-              "arguments": {
-                "queries": [{"query": "10002", "requested_quantity": 3}]
-              }
-            }
-          ],
           "response": "Уточнил позицию с кодом 10002. Три штуки доступны. Как будете получать и оплачивать заказ?"
         },
         "assertions": [
-          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_tool_called"},
           {"type": "no_handoff"},
           {"type": "response_contains", "value": "10002"}
         ]
