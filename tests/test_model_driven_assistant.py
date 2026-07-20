@@ -181,6 +181,20 @@ def test_single_prompt_owns_dialog_order_and_handoff_semantics() -> None:
     assert "order_draft" not in prompt
 
 
+def test_prompt_requires_natural_varied_conversation_without_scripted_fillers() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+
+    assert "реагируй на смысл сообщения" in prompt
+    assert "варьируй начала фраз и ритм" in prompt
+    assert "не повторяй одни и те же вводные" in prompt
+    assert "разговорные связки и частицы" in prompt
+    assert "не вставляй их механически" in prompt
+    assert "словами-паразитами" in prompt
+    assert "подстраивай длину и тон" in prompt
+    assert "не зеркаль вопрос клиента" in prompt
+    assert "через ясный полезный ответ" in prompt
+
+
 def test_prompt_builder_only_combines_policy_and_chronological_history() -> None:
     messages = build_llm_messages(
         dialog_messages=[
