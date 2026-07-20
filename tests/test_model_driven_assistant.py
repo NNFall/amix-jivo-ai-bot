@@ -193,6 +193,10 @@ def test_prompt_requires_natural_varied_conversation_without_scripted_fillers() 
     assert "подстраивай длину и тон" in prompt
     assert "не зеркаль вопрос клиента" in prompt
     assert "через ясный полезный ответ" in prompt
+    assert "не подтверждай каждое полученное поле" in prompt
+    assert "с одного ближайшего шага" in prompt
+    assert "не перечисляй сразу все оставшиеся вопросы" in prompt
+    assert "одинаковую структуру" in prompt
 
 
 def test_prompt_builder_only_combines_policy_and_chronological_history() -> None:
