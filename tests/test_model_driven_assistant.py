@@ -199,6 +199,21 @@ def test_prompt_requires_natural_varied_conversation_without_scripted_fillers() 
     assert "одинаковую структуру" in prompt
     assert "служебное подтверждение уже понятного ответа чаще пропускай" in prompt
     assert "одно сообщение - один шаг разговора" in prompt
+    assert "в большинстве ответов используй одну-две" in prompt
+    assert "естественные разговорные связки или частицы" in prompt
+    assert "понял вас" in prompt
+    assert "не повторяй одну и ту же связку" in prompt
+
+
+def test_prompt_keeps_each_unfinished_order_turn_actionable() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+
+    assert "клиент не должен угадывать" in prompt
+    assert "заканчивай сообщение одним ясным следующим вопросом" in prompt
+    assert "не больше двух тесно связанных сведений" in prompt
+    assert "назвал только общую категорию товара" in prompt
+    assert "сначала уточни, какой именно вариант" in prompt
+    assert "не вызывай широкий поиск" in prompt
 
 
 def test_prompt_builder_only_combines_policy_and_chronological_history() -> None:

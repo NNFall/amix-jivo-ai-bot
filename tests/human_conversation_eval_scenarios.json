@@ -1,0 +1,185 @@
+[
+  {
+    "id": "vague_handles_order",
+    "title": "Заказ ручек с естественными уточнениями",
+    "covers": ["vague_product", "order_intake", "confirmation", "handoff"],
+    "turns": [
+      {
+        "input": "Мне ручки нужны, хочу заказать.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["какие", "уточните", "подскажите"]}
+        ]
+      },
+      {
+        "input": "Белые мебельные, межцентровое 128 мм. Нужно 2 штуки.",
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_result_status", "value": "exact_found"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["2", "количество", "есть"]}
+        ]
+      },
+      {
+        "input": "Да, давайте оформлять.",
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["получ", "достав", "самовывоз"]}
+        ]
+      },
+      {
+        "input": "Доставка в Псков.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["когда", "срок", "оплат"]}
+        ]
+      },
+      {
+        "input": "На следующей неделе, наличными.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон", "зовут"]}
+        ]
+      },
+      {
+        "input": "Марина, +7 921 555-40-30.",
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["ручк", "2", "Псков", "Марина"]},
+          {"type": "response_contains_any", "values": ["верно", "правильно"]}
+        ]
+      },
+      {
+        "input": "Да, теперь всё верно.",
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"},
+          {"type": "handoff_summary_contains_all", "values": ["ручк", "2", "Псков", "следующ", "налич", "Марина", "+7 921 555-40-30"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "article_order_with_contact_correction",
+    "title": "Заказ по артикулу с исправлением телефона",
+    "covers": ["article", "order_intake", "correction", "confirmation", "handoff"],
+    "turns": [
+      {
+        "input": "Да мне бы 14.023пр, 3 штуки. Заказать хочу.",
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_query_quantities_contain", "queries": [{"query": "14.023пр", "requested_quantity": 3}]},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["получ", "достав", "самовывоз"]}
+        ]
+      },
+      {
+        "input": "Сам заберу.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["когда", "срок", "оплат"]}
+        ]
+      },
+      {
+        "input": "Тогда в пятницу, картой.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон", "зовут"]}
+        ]
+      },
+      {
+        "input": "Сергей, +7 912 300-40-50.",
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["14.023пр", "3", "самовывоз", "пятниц", "Сергей"]},
+          {"type": "response_contains_any", "values": ["верно", "правильно"]}
+        ]
+      },
+      {
+        "input": "Стоп, номер другой: +7 912 300-40-51.",
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains", "value": "+7 912 300-40-51"},
+          {"type": "response_contains_any", "values": ["верно", "правильно", "подтверд"]}
+        ]
+      },
+      {
+        "input": "Вот теперь да.",
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"},
+          {"type": "handoff_summary_contains_all", "values": ["14.023пр", "3", "самовывоз", "пятниц", "карт", "Сергей", "+7 912 300-40-51"]}
+        ]
+      }
+    ]
+  },
+  {
+    "id": "missing_product_then_invoice_order",
+    "title": "Исправление ненайденного кода и заказ по счёту",
+    "covers": ["missing_product", "correction", "invoice", "confirmation", "handoff"],
+    "turns": [
+      {
+        "input": "Хочу заказать ZZZ-404, 4 штуки.",
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["код", "артикул", "название"]}
+        ]
+      },
+      {
+        "input": "А, код не тот. P-AM02/B-S, тоже 4 штуки.",
+        "assertions": [
+          {"type": "tool_called", "name": "search_products"},
+          {"type": "tool_query_quantities_contain", "queries": [{"query": "P-AM02/B-S", "requested_quantity": 4}]},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["получ", "достав", "самовывоз"]}
+        ]
+      },
+      {
+        "input": "Доставка в Казань, до конца месяца.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["оплат", "рассчит"]}
+        ]
+      },
+      {
+        "input": "По счёту.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains", "value": "ИНН"}
+        ]
+      },
+      {
+        "input": "ИНН 1650123456.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["имя", "телефон", "зовут"]}
+        ]
+      },
+      {
+        "input": "Олег, +7 903 700-80-90.",
+        "assertions": [
+          {"type": "no_handoff"},
+          {"type": "response_contains_all", "values": ["P-AM02/B-S", "4", "Казань", "1650123456", "Олег"]},
+          {"type": "response_contains_any", "values": ["верно", "правильно"]}
+        ]
+      },
+      {
+        "input": "Да, всё так.",
+        "assertions": [
+          {"type": "tool_called", "name": "handoff_to_manager"},
+          {"type": "handoff_reason", "value": "order_creation"},
+          {"type": "handoff_summary_contains_all", "values": ["P-AM02/B-S", "4", "Казань", "месяц", "счёт", "1650123456", "Олег", "+7 903 700-80-90"]}
+        ]
+      }
+    ]
+  }
+]
