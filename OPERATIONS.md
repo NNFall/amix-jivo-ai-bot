@@ -1,3 +1,16 @@
+# Iteration 70 - literal human conversation evaluation (2026-07-20)
+
+- Corrected the reporting problem where long literal bot responses had been replaced with editorial summaries such as "showed the final order".
+- Added explicit generalized prompt rules for frequent but varied Russian conversational particles and for one clear next question on every unfinished order turn.
+- Added three human-conversation scenarios where vague product descriptions are clarified before search and order fields are collected over multiple turns.
+- Found that reordered descriptive words could miss an otherwise exact product. Added a failing regression and made catalog matching order-independent for queries with at least three normalized descriptive tokens.
+- Kept runtime architecture unchanged: Gemini still owns dialog decisions and the only tools remain `search_products` and `handoff_to_manager`.
+- Full local and server verification -> `136 passed`; compileall and diff checks passed.
+- Real VPS run: 3 dialogs, 20 customer turns, 24 Gemini calls, 93 966 tokens, 31.114 seconds provider latency, estimated 2.9911 RUB.
+- The strict scenario oracle reported `18/20`; manual transcript review showed one expectation assumed a particular valid field order and another required an uninflected contact name. No runtime tool or handoff failure occurred.
+- Literal reports saved as `outputs/amix-human-conversation-live-351e1c3.md` and `.json`.
+- Production fast-forwarded to `351e1c3`; `amix-api.service` and `amix-telegram-demo.service` are active, both health checks return `ok`, and no fresh error entries appeared after restart.
+
 # Iteration 69 - natural conversational tone evaluation (2026-07-20)
 
 - Kept the architecture model-driven: no customer-language dictionaries, regex routing, response templates or new functions were added.
