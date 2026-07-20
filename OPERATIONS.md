@@ -1,3 +1,15 @@
+# Iteration 69 - natural conversational tone evaluation (2026-07-20)
+
+- Kept the architecture model-driven: no customer-language dictionaries, regex routing, response templates or new functions were added.
+- Asked an independent agent to review Russian first-line chat tone. Its main recommendation was to use simple syntax, variable rhythm and useful direct answers rather than mechanically inserting conversational filler.
+- Added generalized prompt rules to react to the meaning of the message, vary sentence openings, avoid mirrored questions and formal empathy, skip unnecessary field acknowledgements, and move through order intake one natural step at a time.
+- Added a focused prompt regression test with a verified red-green cycle.
+- Local and isolated VPS target verification: `python -m pytest tests/test_model_driven_assistant.py tests/test_llm_client.py -q` -> `27 passed`.
+- Ran three real multi-turn dialogs through Google AI Studio `gemini-3.1-flash-lite` in an isolated VPS worktree. Final result: `3/3` scenarios, `18/18` turns, `PASS`.
+- The final live run used 23 Gemini calls, 86 348 tokens, 28.532 seconds of provider latency and an estimated 2.6991 RUB.
+- Saved readable and machine-readable evidence locally as `outputs/amix-human-live-0d6779d.md` and `outputs/amix-human-live-0d6779d.json`.
+- Production deploy is recorded after the final fast-forward and health checks below.
+
 # Iteration 68 - model-driven two-tool simplification and Jivo lifecycle (2026-07-17)
 
 - Removed the remaining backend semantic routing architecture: no customer-language keyword lists, regex intent classification, prelookup response routes, `active_product`, `product_memory`, `pending_clarification` or order-draft function remain in the active runtime.
