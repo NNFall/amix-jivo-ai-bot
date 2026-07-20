@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
+import re
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 
 from database.models import (
     Chat,
@@ -14,6 +15,19 @@ from database.models import (
     ProductImport,
 )
 from products.article_utils import build_normalized_article_variants, normalize_article
+
+
+DESCRIPTION_TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]+")
+
+
+def _description_tokens(query: str) -> list[str]:
+    tokens: list[str] = []
+    for raw_token in DESCRIPTION_TOKEN_RE.findall(query):
+        token = normalize_article(raw_token)
+        if len(token) < 2 or token in tokens:
+            continue
+        tokens.append(token)
+    return tokens
 
 
 def create_event_if_new(session, event):
@@ -354,6 +368,19 @@ def lookup_products(session, query: str, exact_limit: int = 20, similar_limit: i
     exact_matches = session.scalars(
         select(Product).where(or_(*exact_clauses)).order_by(Product.article.asc(), Product.code.asc()).limit(exact_limit)
     ).all()
+
+    description_tokens = _description_tokens(query_clean)
+    if not exact_matches and len(description_tokens) >= 3:
+        exact_matches = session.scalars(
+            select(Product)
+            .where(
+                and_(
+                    *(Product.normalized_article.like(f"%{token}%") for token in description_tokens)
+                )
+            )
+            .order_by(Product.article.asc(), Product.code.asc())
+            .limit(exact_limit)
+        ).all()
 
     exact_ids = {product.id for product in exact_matches}
     similar_clauses = []

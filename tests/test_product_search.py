@@ -107,6 +107,27 @@ def test_search_products_structured_treats_compact_split_article_as_exact() -> N
     assert result["exact_matches"][0]["code"] == "22608"
 
 
+def test_search_products_structured_matches_description_words_in_any_order() -> None:
+    with build_session() as session:
+        session.add(
+            Product(
+                code="5001",
+                article="Белая мебельная ручка 128 мм",
+                normalized_article="БЕЛАЯМЕБЕЛЬНАЯРУЧКА128ММ",
+                raw_payload={},
+            )
+        )
+        session.commit()
+
+        result = search_products_structured(
+            session,
+            query="ручка мебельная 128 мм белая",
+        )
+
+    assert result["status"] == "exact_found"
+    assert result["exact_matches"][0]["code"] == "5001"
+
+
 def test_search_products_structured_ignores_sentence_punctuation_around_code() -> None:
     with build_session() as session:
         session.add(
