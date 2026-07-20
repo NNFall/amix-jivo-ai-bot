@@ -197,6 +197,8 @@ def test_prompt_requires_natural_varied_conversation_without_scripted_fillers() 
     assert "с одного ближайшего шага" in prompt
     assert "не перечисляй сразу все оставшиеся вопросы" in prompt
     assert "одинаковую структуру" in prompt
+    assert "служебное подтверждение уже понятного ответа чаще пропускай" in prompt
+    assert "одно сообщение - один шаг разговора" in prompt
 
 
 def test_prompt_builder_only_combines_policy_and_chronological_history() -> None:
