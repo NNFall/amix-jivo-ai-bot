@@ -29,15 +29,15 @@
         ]
       },
       {
-        "input": "Доставка в Псков.",
+        "input": "Доставка в Псков на следующей неделе.",
         "assertions": [
           {"type": "no_tool_called"},
           {"type": "no_handoff"},
-          {"type": "response_contains_any", "values": ["когда", "срок", "оплат"]}
+          {"type": "response_contains_any", "values": ["оплат", "рассчит"]}
         ]
       },
       {
-        "input": "На следующей неделе, наличными.",
+        "input": "Наличными.",
         "assertions": [
           {"type": "no_tool_called"},
           {"type": "no_handoff"},
@@ -81,19 +81,19 @@
         "assertions": [
           {"type": "no_tool_called"},
           {"type": "no_handoff"},
-          {"type": "response_contains_any", "values": ["когда", "срок", "оплат"]}
-        ]
-      },
-      {
-        "input": "Тогда в пятницу, картой.",
-        "assertions": [
-          {"type": "no_tool_called"},
-          {"type": "no_handoff"},
           {"type": "response_contains_any", "values": ["имя", "телефон", "зовут"]}
         ]
       },
       {
         "input": "Сергей, +7 912 300-40-50.",
+        "assertions": [
+          {"type": "no_tool_called"},
+          {"type": "no_handoff"},
+          {"type": "response_contains_any", "values": ["когда", "срок", "оплат"]}
+        ]
+      },
+      {
+        "input": "Тогда в пятницу, картой.",
         "assertions": [
           {"type": "no_handoff"},
           {"type": "response_contains_all", "values": ["14.023пр", "3", "самовывоз", "пятниц", "Сергей"]},

@@ -214,6 +214,9 @@ def test_prompt_keeps_each_unfinished_order_turn_actionable() -> None:
     assert "назвал только общую категорию товара" in prompt
     assert "сначала уточни, какой именно вариант" in prompt
     assert "не вызывай широкий поиск" in prompt
+    assert "не утверждай, что товар уже отложен" in prompt
+    assert "задавай открытый вопрос о способе оплаты" in prompt
+    assert "не перечисляй и не ограничивай варианты оплаты" in prompt
 
 
 def test_prompt_builder_only_combines_policy_and_chronological_history() -> None:
