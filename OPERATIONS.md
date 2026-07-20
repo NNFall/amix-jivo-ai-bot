@@ -8,7 +8,9 @@
 - Ran three real multi-turn dialogs through Google AI Studio `gemini-3.1-flash-lite` in an isolated VPS worktree. Final result: `3/3` scenarios, `18/18` turns, `PASS`.
 - The final live run used 23 Gemini calls, 86 348 tokens, 28.532 seconds of provider latency and an estimated 2.6991 RUB.
 - Saved readable and machine-readable evidence locally as `outputs/amix-human-live-0d6779d.md` and `outputs/amix-human-live-0d6779d.json`.
-- Production deploy is recorded after the final fast-forward and health checks below.
+- Production `/root/amix` was fast-forwarded from `b3e2e5c` through `9c58060`; only the existing SQLite WAL/SHM files were left untouched.
+- Server target tests -> `27 passed`; `amix-api.service` and `amix-telegram-demo.service` restarted and are `active`.
+- Internal and public `/health` returned `{"status":"ok"}`. Startup logs show successful XML refresh and contain no new error, exception, traceback or failed entries.
 
 # Iteration 68 - model-driven two-tool simplification and Jivo lifecycle (2026-07-17)
 
