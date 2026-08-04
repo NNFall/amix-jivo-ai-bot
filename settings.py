@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     google_ai_stream: bool = False
     google_ai_http_connect_timeout_seconds: int = 10
     google_ai_http_read_timeout_seconds: int = 180
-    google_ai_retry_max_attempts: int = 4
-    google_ai_retry_total_timeout_seconds: int = 120
+    google_ai_retry_max_attempts: int = 6
+    google_ai_retry_total_timeout_seconds: int = 420
     google_ai_min_request_interval_seconds: float = 13.0
     google_ai_rate_limit_retry_delay_seconds: float = 65.0
     assistant_debug_lookup_logs: bool = False

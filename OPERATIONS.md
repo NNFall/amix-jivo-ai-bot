@@ -2387,3 +2387,23 @@
   - перезапущены `amix-api.service` и `amix-telegram-demo.service`, оба -> `active/running`;
   - `http://127.0.0.1:8010/health` и `https://amix.cifresh.ru/health` -> `{"status":"ok"}`;
   - журнал обоих сервисов после перезапуска не содержит `error`, `exception`, `traceback` или `failed`.
+
+## Итерация 58 - ротация ключа Gemini и retry для бесплатного тарифа
+
+- Проверены все ссылки на `GOOGLE_AI_API_KEY`: реальный ключ отсутствует в репозитории и хранится только в защищённом `/root/amix/.env`; systemd читает тот же файл и не содержит дополнительной копии ключа.
+- До изменения production новый ключ проверен отдельным запросом к официальному Google AI OpenAI-compatible endpoint: HTTP 200.
+- Серверный `.env` обновлён атомарно без сохранения резервной копии со старым секретом:
+  - `GOOGLE_AI_API_KEY` заменён ровно один раз;
+  - старое значение после записи отсутствует;
+  - `GOOGLE_AI_RETRY_MAX_ATTEMPTS=6`;
+  - `GOOGLE_AI_RETRY_TOTAL_TIMEOUT_SECONDS=420`;
+  - `GOOGLE_AI_RATE_LIMIT_RETRY_DELAY_SECONDS=65`.
+- Значения по умолчанию синхронизированы в `settings.py` и `.env.example`; сам ключ в код и пример окружения не добавлялся.
+- Проверки:
+  - `python -m pytest -q` -> `136 passed`;
+  - `python -m compileall -q api core database jivo llm products scripts` -> успешно;
+  - отдельная проверка `Settings(_env_file=None)` -> `6 / 420 / 65`;
+  - реальный вызов через серверный `OpenAIService` -> `error_type=None`, ответ `OK`, 149 токенов;
+  - `amix-api.service` и `amix-telegram-demo.service` -> `active`;
+  - внутренний и внешний `/health` -> `{"status":"ok"}`;
+  - свежий journal после перезапуска не содержит `error`, `exception`, `traceback` или `failed`.
