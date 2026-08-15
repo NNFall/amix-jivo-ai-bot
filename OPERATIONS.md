@@ -2407,3 +2407,29 @@
   - `amix-api.service` и `amix-telegram-demo.service` -> `active`;
   - внутренний и внешний `/health` -> `{"status":"ok"}`;
   - свежий journal после перезапуска не содержит `error`, `exception`, `traceback` или `failed`.
+
+# 2026-08-15 - проверка production Gemini и сравнение с Kaigo Luna/Sol
+
+- Изучены актуальные документы Kaigo Codex Text API: `/docs/`, `/llms.txt`, `/openapi.json`; подтверждены text-only stateless формат, модели `gpt-5.6-luna` и `gpt-5.6-sol`, параметр `reasoning_effort` и ограничения повторных запросов.
+- Секрет Kaigo использовался только как временная переменная процесса на VPS, после прогона удалён из shell-окружения; в `.env`, исходники, JSON/Markdown-отчёты и Git он не записывался.
+- До сравнения проверен production-контур:
+  - `amix-api.service` и `amix-telegram-demo.service` активны;
+  - локальный и публичный `/health` вернули `{"status":"ok"}`;
+  - рабочий `OpenAIService` через `google_ai_studio` / `gemini-3.1-flash-lite` вернул `OK` примерно за 0,97 с;
+  - пять audit-записей за последние 24 часа успешны, HTTP 429 и ошибки отсутствуют;
+  - в journal за 24 часа нет `429`, `rate_limit` или `quota`.
+- Добавлен воспроизводимый text-only стенд `scripts/compare_text_models.py` и тесты `tests/test_compare_text_models.py`.
+- На VPS выполнены 12 реальных обращений: четыре одинаковые синтетические ситуации для Gemini, Luna low и Sol low. Production-настройки и Jivo-сервисы не переключались и не перезапускались.
+- Результаты сохранены локально в `outputs/model-comparison-2026-08-15/`:
+  - `results.json` — полные ответы и метрики;
+  - `report.md` — читаемое сравнение;
+  - `assessment.md` — ручная критическая оценка и вывод.
+- Независимая проверка выявила ограничения первоначальной формальной оценки; оценщик уточнён, а в отчёте разделены wall-time и provider duration.
+- Итог выборки: Gemini — наиболее живой стиль, Luna — минимальная задержка, Sol — наиболее аккуратный буквальный результат. Kaigo не поддерживает native function calls, поэтому без backend-оркестратора не заменяет текущий Gemini-контур.
+- Проверки:
+  - `python -m pytest tests/test_compare_text_models.py -q` -> `4 passed` после финальной доработки;
+  - `python -m compileall -q scripts/compare_text_models.py tests/test_compare_text_models.py` -> успешно;
+  - первый финальный `python -m pytest -q` -> `1 failed, 139 passed`: существующий subprocess-тест `test_fake_cli_writes_reproducible_private_evidence` превысил таймаут 60 с;
+  - изолированный повтор этого теста -> `1 passed` за 7,85 с, сам subprocess занял 6,41 с;
+  - повторный полный `python -m pytest -q` без параллельной нагрузки -> `140 passed` за 24,93 с;
+  - `git diff --check` -> ошибок diff не обнаружено, только предупреждение Git о будущей нормализации LF/CRLF в `PLAN.md`.

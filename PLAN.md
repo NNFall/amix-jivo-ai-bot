@@ -1395,3 +1395,16 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Новый ключ отдельно проверен официальным Google AI endpoint, затем через рабочий `OpenAIService`: запрос выполнен без ошибки, модель вернула ожидаемый ответ.
 - Локально `python -m pytest -q` -> `136 passed`; проверены `compileall`, значения настроек и `git diff --check`.
 - `amix-api.service` и `amix-telegram-demo.service` перезапущены и активны; внутренний и внешний `/health` возвращают `{"status":"ok"}`, свежий journal не содержит ошибок.
+
+## Обновление 2026-08-15 - сравнение Gemini и Kaigo Codex Text API
+
+- Статус: завершено.
+- Production Gemini проверен через рабочий `OpenAIService`, состояние сервисов, healthcheck и недавние ошибки/HTTP 429: модель отвечает, признаков исчерпания квоты за последние сутки нет.
+- LLM-провайдер production не менялся; Kaigo-токен не сохранён в `.env`, репозитории или отчёте.
+- На VPS прогнаны одинаковые синтетические диалоговые ситуации через:
+  - production `gemini-3.1-flash-lite`;
+  - `gpt-5.6-luna` с `reasoning_effort=low`;
+  - `gpt-5.6-sol` с `reasoning_effort=low`.
+- Сохранены буквальные ответы, формальные проверки, ручная критическая оценка, wall-time, provider duration и usage tokens.
+- На этой выборке Luna быстрее, Sol аккуратнее по буквальному смыслу, Gemini живее по стилю; один прогон четырёх ситуаций не считается проверкой стабильности.
+- Kaigo `/v1/respond` является stateless text-only API без native function calls, поэтому Luna и Sol нельзя подключить вместо production Gemini без отдельного backend-оркестратора `search_products` и `handoff_to_manager`.
