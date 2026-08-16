@@ -150,6 +150,7 @@ def _configure_kaigo(monkeypatch) -> None:
     monkeypatch.setenv("KAIGO_MODEL", "gpt-5.6-sol")
     monkeypatch.setenv("KAIGO_REASONING_EFFORT", "low")
     monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("KAIGO_MIN_REQUEST_INTERVAL_SECONDS", "0")
     get_settings.cache_clear()
 
 

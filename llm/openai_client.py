@@ -103,6 +103,7 @@ class OpenAIService:
         self.kaigo_http_read_timeout_seconds = settings.kaigo_http_read_timeout_seconds
         self.kaigo_retry_max_attempts = settings.kaigo_retry_max_attempts
         self.kaigo_retry_total_timeout_seconds = settings.kaigo_retry_total_timeout_seconds
+        self.kaigo_min_request_interval_seconds = settings.kaigo_min_request_interval_seconds
         self.audit_logger = LLMAuditLogger(
             enabled=settings.llm_audit_log_enabled,
             path=settings.llm_audit_log_path,
@@ -165,6 +166,10 @@ class OpenAIService:
         )
         with httpx.Client(timeout=timeout) as client:
             for attempt in range(1, max(1, self.kaigo_retry_max_attempts) + 1):
+                self._throttle_provider_request(
+                    provider_key=f"kaigo:{self.kaigo_model}",
+                    min_interval_seconds=self.kaigo_min_request_interval_seconds,
+                )
                 request_prompt = prompt
                 if protocol_correction_used:
                     request_prompt = f"{prompt}\n\n{KAIGO_PROTOCOL_CORRECTION}"

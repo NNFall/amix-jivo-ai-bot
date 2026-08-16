@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     kaigo_http_read_timeout_seconds: int = 900
     kaigo_retry_max_attempts: int = 3
     kaigo_retry_total_timeout_seconds: int = 300
+    kaigo_min_request_interval_seconds: float = 6.2
     assistant_debug_lookup_logs: bool = False
     assistant_debug_llm_payloads: bool = False
     assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"
