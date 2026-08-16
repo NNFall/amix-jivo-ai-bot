@@ -135,9 +135,9 @@ class DummyKaigoClient:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def post(self, url: str, headers: dict, json: dict):
+    def post(self, url: str, headers: dict, json: dict, timeout=None):
         self.collector.setdefault("requests", []).append(
-            {"url": url, "headers": headers, "json": json}
+            {"url": url, "headers": headers, "json": json, "timeout": timeout}
         )
         index = min(len(self.collector["requests"]) - 1, len(self.responses) - 1)
         return self.responses[index]
@@ -196,12 +196,14 @@ def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, is
     assert request["headers"]["Authorization"] == "Bearer test-kaigo-key"
     assert request["json"]["model"] == "gpt-5.6-sol"
     assert request["json"]["reasoning_effort"] == "low"
+    assert request["timeout"].read <= 300
     assert "Главная инструкция AMIX" in request["json"]["system_prompt"]
     assert "search_products" in request["json"]["system_prompt"]
     assert "handoff_to_manager" in request["json"]["system_prompt"]
     assert "Сначала примени правила основного системного промпта" in request["json"]["system_prompt"]
     assert "Не заменяй обязательную функцию уточняющим вопросом" in request["json"]["system_prompt"]
     assert "единственный допустимый ответ — tool_call search_products" in request["json"]["system_prompt"]
+    assert "обязательный handoff всегда важнее поиска" in request["json"]["system_prompt"]
     assert '"role": "assistant"' in request["json"]["prompt"]
     assert '"role": "tool"' in request["json"]["prompt"]
     assert request["json"]["prompt"].index('"role": "assistant"') < request["json"]["prompt"].index('"role": "tool"')

@@ -44,8 +44,9 @@ KAIGO_PROTOCOL_TEMPLATE = """
 - Возвращай assistant только когда функция не нужна и все факты для ответа уже есть в переданной истории или системной справке.
 
 Это обязательные правила маршрутизации, а не рекомендации:
+- применяй их строго сверху вниз: обязательный handoff всегда важнее поиска, даже если в том же сообщении назван новый товар;
 - если последнее сообщение просит подобрать, выбрать или порекомендовать товар, единственный допустимый ответ — tool_call handoff_to_manager;
-- если последнее сообщение вводит новый товар, код, артикул или название товара, даже без отдельного вопроса, и по нему ещё нет актуального результата функции, единственный допустимый ответ — tool_call search_products.
+- только если handoff не требуется, а последнее сообщение вводит новый товар, код, артикул или название товара, даже без отдельного вопроса, и по нему ещё нет актуального результата функции, единственный допустимый ответ — tool_call search_products.
 Текстовый assistant или уточняющий вопрос вместо требуемого tool_call считается нарушением протокола.
 """.strip()
 
@@ -183,6 +184,18 @@ class OpenAIService:
                     provider_key=f"kaigo:{self.kaigo_model}",
                     min_interval_seconds=self.kaigo_min_request_interval_seconds,
                 )
+                remaining_seconds = self._remaining_retry_seconds(
+                    started_at=started_at,
+                    retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                )
+                if remaining_seconds <= 0:
+                    last_error_type = "timeout"
+                    last_retryable = False
+                    break
+                request_timeout = httpx.Timeout(
+                    min(float(self.kaigo_http_read_timeout_seconds), remaining_seconds),
+                    connect=min(float(self.kaigo_http_connect_timeout_seconds), remaining_seconds),
+                )
                 request_prompt = prompt
                 if protocol_correction_used:
                     request_prompt = f"{prompt}\n\n{KAIGO_PROTOCOL_CORRECTION}"
@@ -201,6 +214,7 @@ class OpenAIService:
                             "Content-Type": "application/json",
                         },
                         json=payload,
+                        timeout=request_timeout,
                     )
                 except httpx.TimeoutException as exc:
                     last_error_type = "timeout"
@@ -228,7 +242,13 @@ class OpenAIService:
                         retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
                     ):
                         break
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_retry(
+                        attempt,
+                        max_delay_seconds=self._remaining_retry_seconds(
+                            started_at=started_at,
+                            retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                        ),
+                    )
                     continue
                 except httpx.HTTPError as exc:
                     last_error_type = "network_error"
@@ -256,7 +276,13 @@ class OpenAIService:
                         retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
                     ):
                         break
-                    self._sleep_before_retry(attempt)
+                    self._sleep_before_retry(
+                        attempt,
+                        max_delay_seconds=self._remaining_retry_seconds(
+                            started_at=started_at,
+                            retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                        ),
+                    )
                     continue
 
                 data = self._safe_response_json(response)
@@ -286,7 +312,14 @@ class OpenAIService:
                         retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
                     ):
                         break
-                    self._sleep_before_kaigo_retry(response=response, attempt=attempt)
+                    self._sleep_before_kaigo_retry(
+                        response=response,
+                        attempt=attempt,
+                        max_delay_seconds=self._remaining_retry_seconds(
+                            started_at=started_at,
+                            retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                        ),
+                    )
                     continue
 
                 raw_output = data.get("output_text")
@@ -494,13 +527,18 @@ class OpenAIService:
         return str(getattr(response, "text", ""))[:500]
 
     @staticmethod
-    def _sleep_before_kaigo_retry(*, response, attempt: int) -> None:
+    def _sleep_before_kaigo_retry(
+        *,
+        response,
+        attempt: int,
+        max_delay_seconds: float,
+    ) -> None:
         retry_after = getattr(response, "headers", {}).get("Retry-After")
         try:
             delay = float(retry_after)
         except (TypeError, ValueError):
             delay = min(30.0, 7.0 * attempt)
-        time.sleep(max(0.0, min(delay, 30.0)))
+        time.sleep(max(0.0, min(delay, 30.0, max_delay_seconds)))
 
     def _run_via_openai(
         self,
@@ -923,9 +961,15 @@ class OpenAIService:
         return (time.monotonic() - started_at) < retry_total_timeout_seconds
 
     @staticmethod
-    def _sleep_before_retry(attempt: int) -> None:
+    def _sleep_before_retry(attempt: int, *, max_delay_seconds: float | None = None) -> None:
         delay = min(40.0, 2.0 * (2 ** (attempt - 1))) + random.uniform(0, 2)
+        if max_delay_seconds is not None:
+            delay = min(delay, max(0.0, max_delay_seconds))
         time.sleep(delay)
+
+    @staticmethod
+    def _remaining_retry_seconds(*, started_at: float, retry_total_timeout_seconds: int) -> float:
+        return max(0.0, float(retry_total_timeout_seconds) - (time.monotonic() - started_at))
 
     @classmethod
     def _throttle_provider_request(cls, *, provider_key: str, min_interval_seconds: float) -> None:
