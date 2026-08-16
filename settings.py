@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     google_ai_retry_total_timeout_seconds: int = 420
     google_ai_min_request_interval_seconds: float = 13.0
     google_ai_rate_limit_retry_delay_seconds: float = 65.0
+    kaigo_api_key: str | None = None
+    kaigo_api_url: str = "https://kaigo.space/codex-api/v1/respond"
+    kaigo_model: str = "gpt-5.6-sol"
+    kaigo_reasoning_effort: str = "low"
+    kaigo_http_connect_timeout_seconds: int = 20
+    kaigo_http_read_timeout_seconds: int = 900
+    kaigo_retry_max_attempts: int = 3
+    kaigo_retry_total_timeout_seconds: int = 300
     assistant_debug_lookup_logs: bool = False
     assistant_debug_llm_payloads: bool = False
     assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"

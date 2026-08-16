@@ -573,6 +573,8 @@ class AssistantService:
     def _active_llm_model(self) -> str | None:
         if self.openai_service.provider in {"google", "google_ai", "google_ai_studio", "gemini"}:
             return self.openai_service.google_ai_model
+        if self.openai_service.provider in {"kaigo", "kaigo_codex", "codex_text"}:
+            return self.openai_service.kaigo_model
         if self.openai_service.provider == "kie":
             return self.openai_service.kie_chat_model_path
         return self.openai_service.model

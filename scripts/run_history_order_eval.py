@@ -28,7 +28,7 @@ import core.assistant_service as assistant_module
 import database.db as db_module
 from core.assistant_service import AssistantService
 from database.models import Base, Chat, LLMCall, Message, Product
-from llm.openai_client import LLMTurnResult, ToolCall
+from llm.openai_client import GOOGLE_AI_PROVIDERS, KAIGO_PROVIDERS, LLMTurnResult, ToolCall
 from llm.prompts import SYSTEM_PROMPT
 from llm.tool_schemas import OPENAI_TOOLS
 from products.article_utils import normalize_article
@@ -398,19 +398,33 @@ def _configure_assistant(
         assistant.openai_service.run_messages = recording_provider
         return assistant, fake_provider, recording_provider, "fake", FAKE_MODEL
 
-    if not assistant.openai_service.google_ai_api_key:
-        raise RuntimeError("GOOGLE_AI_API_KEY is required for live Gemini mode; use --fake for offline mode")
-    assistant.openai_service.provider = "google_ai"
-    if model:
-        assistant.openai_service.google_ai_model = model
-    assistant.openai_service.google_ai_min_request_interval_seconds = min(
-        assistant.openai_service.google_ai_min_request_interval_seconds,
-        1.0,
-    )
+    provider = assistant.openai_service.provider
+    if not assistant.openai_service.enabled:
+        raise RuntimeError(
+            f"Credentials are required for live {provider!r} mode; use --fake for offline mode"
+        )
+    if provider in GOOGLE_AI_PROVIDERS:
+        if model:
+            assistant.openai_service.google_ai_model = model
+        assistant.openai_service.google_ai_min_request_interval_seconds = min(
+            assistant.openai_service.google_ai_min_request_interval_seconds,
+            1.0,
+        )
+        model_name = assistant.openai_service.google_ai_model
+    elif provider in KAIGO_PROVIDERS:
+        if model:
+            assistant.openai_service.kaigo_model = model
+        model_name = assistant.openai_service.kaigo_model
+    elif provider == "kie":
+        model_name = assistant.openai_service.kie_chat_model_path
+    else:
+        if model:
+            assistant.openai_service.model = model
+        model_name = assistant.openai_service.model
     assistant.openai_service.enabled = True
     recording_provider = RecordingProvider(assistant.openai_service.run_messages)
     assistant.openai_service.run_messages = recording_provider
-    return assistant, None, recording_provider, "google_ai", assistant.openai_service.google_ai_model
+    return assistant, None, recording_provider, provider, model_name
 
 
 def _max_message_id(session, external_chat_id: str) -> int:
@@ -1077,7 +1091,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--markdown-output", type=Path)
-    parser.add_argument("--model", help="Gemini model override for live mode")
+    parser.add_argument("--model", help="Model override for live mode")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--fake", action="store_true", help="Use the deterministic offline provider")
     return parser

@@ -90,6 +90,235 @@ class DummyKieClient:
         return self.response
 
 
+class DummyKaigoResponse:
+    def __init__(
+        self,
+        output_text: str,
+        *,
+        status_code: int = 200,
+        response_json: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.output_text = output_text
+        self.text = output_text
+        self.response_json = response_json
+        self.headers = headers or {}
+
+    @property
+    def is_success(self) -> bool:
+        return 200 <= self.status_code < 300
+
+    def json(self) -> dict:
+        if self.response_json is not None:
+            return self.response_json
+        return {
+            "output_text": self.output_text,
+            "usage": {
+                "input_tokens": 900,
+                "cached_input_tokens": 100,
+                "output_tokens": 40,
+            },
+            "duration_ms": 1234,
+            "request_id": "kaigo-test-request",
+        }
+
+
+class DummyKaigoClient:
+    def __init__(self, collector: dict, responses: list[DummyKaigoResponse]) -> None:
+        self.collector = collector
+        self.responses = responses
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def post(self, url: str, headers: dict, json: dict):
+        self.collector.setdefault("requests", []).append(
+            {"url": url, "headers": headers, "json": json}
+        )
+        index = min(len(self.collector["requests"]) - 1, len(self.responses) - 1)
+        return self.responses[index]
+
+
+def _configure_kaigo(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "kaigo")
+    monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_MODEL", "gpt-5.6-sol")
+    monkeypatch.setenv("KAIGO_REASONING_EFFORT", "low")
+    monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "2")
+    get_settings.cache_clear()
+
+
+def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    response = DummyKaigoResponse('{"type":"assistant","text":"Такое количество доступно."}')
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    service = OpenAIService(get_settings())
+    turn = service.run_messages(
+        messages=[
+            {"role": "system", "content": "Главная инструкция AMIX"},
+            {"role": "user", "content": "Проверьте код 770"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-old",
+                        "type": "function",
+                        "function": {
+                            "name": "search_products",
+                            "arguments": '{"queries":[{"query":"770"}]}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-old",
+                "name": "search_products",
+                "content": '{"status":"ok","requested_quantity_available":true}',
+            },
+            {"role": "user", "content": "Мне нужно 2 штуки"},
+        ],
+        tools=OPENAI_TOOLS,
+        tool_choice="auto",
+    )
+
+    request = collector["requests"][0]
+    assert request["url"] == "https://kaigo.space/codex-api/v1/respond"
+    assert request["headers"]["Authorization"] == "Bearer test-kaigo-key"
+    assert request["json"]["model"] == "gpt-5.6-sol"
+    assert request["json"]["reasoning_effort"] == "low"
+    assert "Главная инструкция AMIX" in request["json"]["system_prompt"]
+    assert "search_products" in request["json"]["system_prompt"]
+    assert "handoff_to_manager" in request["json"]["system_prompt"]
+    assert '"role": "assistant"' in request["json"]["prompt"]
+    assert '"role": "tool"' in request["json"]["prompt"]
+    assert request["json"]["prompt"].index('"role": "assistant"') < request["json"]["prompt"].index('"role": "tool"')
+    assert turn.text == "Такое количество доступно."
+    assert turn.tool_calls == []
+    assert turn.usage == {"prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940}
+    assert turn.latency_ms == 1234
+
+
+def test_kaigo_parses_search_products_tool_call(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    response = DummyKaigoResponse(
+        '{"type":"tool_call","name":"search_products","arguments":'
+        '{"queries":[{"query":"770","requested_quantity":2}]}}'
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Код 770, две штуки"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert turn.text is None
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0].name == "search_products"
+    assert turn.tool_calls[0].arguments == {
+        "queries": [{"query": "770", "requested_quantity": 2}]
+    }
+
+
+def test_kaigo_parses_handoff_tool_call(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    response = DummyKaigoResponse(
+        '{"type":"tool_call","name":"handoff_to_manager","arguments":'
+        '{"reason":"client_requested_manager","summary":"Клиент просит менеджера.",'
+        '"customer_message":"Передаю вопрос менеджеру."}}'
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Позовите менеджера"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0].name == "handoff_to_manager"
+    assert turn.tool_calls[0].arguments["reason"] == "client_requested_manager"
+
+
+def test_kaigo_retries_invalid_protocol_once_and_accepts_correction(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    responses = [
+        DummyKaigoResponse("Сейчас проверю товар."),
+        DummyKaigoResponse(
+            '{"type":"tool_call","name":"search_products",'
+            '"arguments":{"queries":[{"query":"770"}]}}'
+        ),
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, responses))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Проверьте 770"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(collector["requests"]) == 2
+    assert "Предыдущий ответ нарушил обязательный JSON-формат" in collector["requests"][1]["json"]["prompt"]
+    assert turn.tool_calls[0].name == "search_products"
+
+
+def test_kaigo_never_executes_unknown_tool(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    response = DummyKaigoResponse(
+        '{"type":"tool_call","name":"delete_products","arguments":{}}'
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response, response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Удалите товар"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(collector["requests"]) == 2
+    assert turn.tool_calls == []
+    assert turn.text is None
+    assert turn.error_type == "invalid_tool_protocol"
+
+
+def test_kaigo_retries_rate_limit_and_returns_next_response(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_kaigo(monkeypatch)
+    responses = [
+        DummyKaigoResponse(
+            "rate limited",
+            status_code=429,
+            response_json={
+                "error": {
+                    "type": "rate_limited",
+                    "message": "Too many requests",
+                }
+            },
+            headers={"Retry-After": "0"},
+        ),
+        DummyKaigoResponse('{"type":"assistant","text":"Проверил, всё доступно."}'),
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, responses))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Проверьте наличие"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(collector["requests"]) == 2
+    assert turn.text == "Проверил, всё доступно."
+    assert turn.error_type is None
+
+
 def test_openai_service_uses_kie_provider(monkeypatch, isolated_app_env) -> None:
     collector: dict = {}
 

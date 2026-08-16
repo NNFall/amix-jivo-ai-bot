@@ -17,6 +17,31 @@ from llm.audit_log import LLMAuditLogger, cost_to_dict, estimate_cost, extract_u
 logger = logging.getLogger(__name__)
 
 GOOGLE_AI_PROVIDERS = {"google", "google_ai", "google_ai_studio", "gemini"}
+KAIGO_PROVIDERS = {"kaigo", "kaigo_codex", "codex_text"}
+
+KAIGO_PROTOCOL_TEMPLATE = """
+ТЕХНИЧЕСКИЙ ПРОТОКОЛ ОТВЕТА
+Для этого канала каждый твой ответ должен быть ровно одним JSON-объектом без markdown, пояснений и текста до или после JSON.
+
+Если клиенту можно ответить без функции:
+{{"type":"assistant","text":"готовый естественный ответ клиенту"}}
+
+Если нужна функция:
+{{"type":"tool_call","name":"имя функции","arguments":{{...}}}}
+
+За один ответ вызывай не более одной функции. После результата функции ты получишь обновлённую полную историю и снова выберешь: ответить клиенту или вызвать следующую функцию.
+Нельзя писать, что функция выполнена, пока её результата нет в истории. Нельзя вызывать функции, которых нет ниже.
+
+ДОСТУПНЫЕ ФУНКЦИИ
+{tools_json}
+""".strip()
+
+KAIGO_PROTOCOL_CORRECTION = (
+    "Предыдущий ответ нарушил обязательный JSON-формат или содержал недопустимый вызов. "
+    "Верни только один корректный JSON-объект по техническому протоколу."
+)
+
+
 @dataclass(slots=True)
 class ToolCall:
     name: str
@@ -70,6 +95,14 @@ class OpenAIService:
         self.google_ai_retry_total_timeout_seconds = settings.google_ai_retry_total_timeout_seconds
         self.google_ai_min_request_interval_seconds = settings.google_ai_min_request_interval_seconds
         self.google_ai_rate_limit_retry_delay_seconds = settings.google_ai_rate_limit_retry_delay_seconds
+        self.kaigo_api_key = settings.kaigo_api_key
+        self.kaigo_api_url = settings.kaigo_api_url
+        self.kaigo_model = settings.kaigo_model
+        self.kaigo_reasoning_effort = settings.kaigo_reasoning_effort
+        self.kaigo_http_connect_timeout_seconds = settings.kaigo_http_connect_timeout_seconds
+        self.kaigo_http_read_timeout_seconds = settings.kaigo_http_read_timeout_seconds
+        self.kaigo_retry_max_attempts = settings.kaigo_retry_max_attempts
+        self.kaigo_retry_total_timeout_seconds = settings.kaigo_retry_total_timeout_seconds
         self.audit_logger = LLMAuditLogger(
             enabled=settings.llm_audit_log_enabled,
             path=settings.llm_audit_log_path,
@@ -97,6 +130,8 @@ class OpenAIService:
             return self._run_via_kie(messages=messages, tools=tools, tool_choice=tool_choice)
         if self.provider in GOOGLE_AI_PROVIDERS:
             return self._run_via_google_ai_studio(messages=messages, tools=tools, tool_choice=tool_choice)
+        if self.provider in KAIGO_PROVIDERS:
+            return self._run_via_kaigo(messages=messages, tools=tools)
         return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
@@ -104,7 +139,350 @@ class OpenAIService:
             return bool(self.kie_api_key)
         if self.provider in GOOGLE_AI_PROVIDERS:
             return bool(self.google_ai_api_key)
+        if self.provider in KAIGO_PROVIDERS:
+            return bool(self.kaigo_api_key)
         return bool(self.openai_api_key)
+
+    def _run_via_kaigo(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+    ) -> LLMTurnResult:
+        if not self.kaigo_api_key:
+            return LLMTurnResult(text=None, tool_calls=[])
+
+        system_prompt, prompt = self._prepare_kaigo_prompt(messages=messages, tools=tools)
+        allowed_tools = self._kaigo_allowed_tools(tools)
+        started_at = time.monotonic()
+        protocol_correction_used = False
+        last_error_type: str | None = None
+        last_retryable = False
+
+        timeout = httpx.Timeout(
+            self.kaigo_http_read_timeout_seconds,
+            connect=self.kaigo_http_connect_timeout_seconds,
+        )
+        with httpx.Client(timeout=timeout) as client:
+            for attempt in range(1, max(1, self.kaigo_retry_max_attempts) + 1):
+                request_prompt = prompt
+                if protocol_correction_used:
+                    request_prompt = f"{prompt}\n\n{KAIGO_PROTOCOL_CORRECTION}"
+                payload = {
+                    "model": self.kaigo_model,
+                    "reasoning_effort": self.kaigo_reasoning_effort,
+                    "system_prompt": system_prompt,
+                    "prompt": request_prompt,
+                }
+                request_started_at = time.monotonic()
+                try:
+                    response = client.post(
+                        self.kaigo_api_url,
+                        headers={
+                            "Authorization": f"Bearer {self.kaigo_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+                except httpx.TimeoutException as exc:
+                    last_error_type = "timeout"
+                    last_retryable = True
+                    self._write_provider_audit(
+                        provider_name="Kaigo Codex Text API",
+                        url=self.kaigo_api_url,
+                        payload=payload,
+                        model=self.kaigo_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=None,
+                        response_json=None,
+                        error_type=last_error_type,
+                        retryable=True,
+                        error_text=str(exc),
+                        text=None,
+                        tool_calls=[],
+                    )
+                    if not self._should_retry_provider(
+                        retryable=True,
+                        attempt=attempt,
+                        started_at=started_at,
+                        retry_max_attempts=self.kaigo_retry_max_attempts,
+                        retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                    ):
+                        break
+                    self._sleep_before_retry(attempt)
+                    continue
+                except httpx.HTTPError as exc:
+                    last_error_type = "network_error"
+                    last_retryable = True
+                    self._write_provider_audit(
+                        provider_name="Kaigo Codex Text API",
+                        url=self.kaigo_api_url,
+                        payload=payload,
+                        model=self.kaigo_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=None,
+                        response_json=None,
+                        error_type=last_error_type,
+                        retryable=True,
+                        error_text=str(exc),
+                        text=None,
+                        tool_calls=[],
+                    )
+                    if not self._should_retry_provider(
+                        retryable=True,
+                        attempt=attempt,
+                        started_at=started_at,
+                        retry_max_attempts=self.kaigo_retry_max_attempts,
+                        retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                    ):
+                        break
+                    self._sleep_before_retry(attempt)
+                    continue
+
+                data = self._safe_response_json(response)
+                http_status = getattr(response, "status_code", None)
+                if not 200 <= int(http_status or 0) < 300:
+                    last_error_type, last_retryable = self._kaigo_http_error(data, http_status)
+                    self._write_provider_audit(
+                        provider_name="Kaigo Codex Text API",
+                        url=self.kaigo_api_url,
+                        payload=payload,
+                        model=self.kaigo_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=http_status,
+                        response_json=data,
+                        error_type=last_error_type,
+                        retryable=last_retryable,
+                        error_text=self._kaigo_error_message(data, response),
+                        text=None,
+                        tool_calls=[],
+                    )
+                    if not self._should_retry_provider(
+                        retryable=last_retryable,
+                        attempt=attempt,
+                        started_at=started_at,
+                        retry_max_attempts=self.kaigo_retry_max_attempts,
+                        retry_total_timeout_seconds=self.kaigo_retry_total_timeout_seconds,
+                    ):
+                        break
+                    self._sleep_before_kaigo_retry(response=response, attempt=attempt)
+                    continue
+
+                raw_output = data.get("output_text")
+                raw_output = raw_output.strip() if isinstance(raw_output, str) else ""
+                text, tool_calls, protocol_error = self._parse_kaigo_output(
+                    raw_output,
+                    allowed_tools=allowed_tools,
+                )
+                usage = self._kaigo_usage(data)
+                latency_ms = self._optional_positive_int(data.get("duration_ms")) or self._latency_ms(
+                    request_started_at
+                )
+                if protocol_error:
+                    last_error_type = "invalid_tool_protocol"
+                    last_retryable = not protocol_correction_used
+                    self._write_provider_audit(
+                        provider_name="Kaigo Codex Text API",
+                        url=self.kaigo_api_url,
+                        payload=payload,
+                        model=self.kaigo_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=http_status,
+                        response_json=data,
+                        error_type=last_error_type,
+                        retryable=last_retryable,
+                        error_text=protocol_error,
+                        text=None,
+                        tool_calls=[],
+                        latency_ms=latency_ms,
+                        usage=usage,
+                    )
+                    if protocol_correction_used or attempt >= max(1, self.kaigo_retry_max_attempts):
+                        break
+                    protocol_correction_used = True
+                    continue
+
+                self._write_provider_audit(
+                    provider_name="Kaigo Codex Text API",
+                    url=self.kaigo_api_url,
+                    payload=payload,
+                    model=self.kaigo_model,
+                    attempt=attempt,
+                    started_at=request_started_at,
+                    http_status=http_status,
+                    response_json=data,
+                    error_type=None,
+                    retryable=False,
+                    error_text=None,
+                    text=text,
+                    tool_calls=tool_calls,
+                    latency_ms=latency_ms,
+                    usage=usage,
+                )
+                return LLMTurnResult(
+                    text=text,
+                    tool_calls=tool_calls,
+                    usage=usage,
+                    cost=cost_to_dict(
+                        estimate_cost(
+                            provider=self.provider,
+                            model=self.kaigo_model,
+                            usage=extract_usage_stats({"usage": usage}),
+                            usd_to_rub=self.llm_cost_usd_to_rub,
+                        )
+                    ),
+                    latency_ms=latency_ms,
+                )
+
+        return LLMTurnResult(
+            text=None,
+            tool_calls=[],
+            error_type=last_error_type or "provider_error",
+            retryable=last_retryable,
+        )
+
+    @staticmethod
+    def _prepare_kaigo_prompt(
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+    ) -> tuple[str, str]:
+        system_parts = [
+            str(message.get("content") or "").strip()
+            for message in messages
+            if message.get("role") == "system" and str(message.get("content") or "").strip()
+        ]
+        dialog_messages = [message for message in messages if message.get("role") != "system"]
+        tools_json = dumps(tools or [], ensure_ascii=False, separators=(",", ":"))
+        protocol = KAIGO_PROTOCOL_TEMPLATE.format(tools_json=tools_json)
+        system_prompt = "\n\n".join([*system_parts, protocol]).strip()
+        prompt = (
+            "ПОЛНАЯ ХРОНОЛОГИЧЕСКАЯ ИСТОРИЯ ДИАЛОГА В JSON\n"
+            + dumps(dialog_messages, ensure_ascii=False, indent=2)
+            + "\n\nОтветь на последнее актуальное сообщение клиента по системной инструкции."
+        )
+        return system_prompt, prompt
+
+    @staticmethod
+    def _kaigo_allowed_tools(tools: list[dict] | None) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for tool in tools or []:
+            function = tool.get("function") if isinstance(tool, dict) else None
+            if not isinstance(function, dict):
+                continue
+            name = str(function.get("name") or "").strip()
+            if name:
+                result[name] = function
+        return result
+
+    @classmethod
+    def _parse_kaigo_output(
+        cls,
+        raw_output: str,
+        *,
+        allowed_tools: dict[str, dict[str, Any]],
+    ) -> tuple[str | None, list[ToolCall], str | None]:
+        try:
+            envelope = loads(cls._strip_json_fence(raw_output))
+        except (JSONDecodeError, TypeError):
+            return None, [], "Ответ не является одним JSON-объектом."
+        if not isinstance(envelope, dict):
+            return None, [], "Корневое значение должно быть JSON-объектом."
+
+        response_type = str(envelope.get("type") or "").strip()
+        if response_type == "assistant":
+            text = envelope.get("text")
+            if not isinstance(text, str) or not text.strip():
+                return None, [], "Для assistant требуется непустое поле text."
+            return text.strip(), [], None
+
+        if response_type != "tool_call":
+            return None, [], "Поле type должно быть assistant или tool_call."
+        name = str(envelope.get("name") or "").strip()
+        function = allowed_tools.get(name)
+        if function is None:
+            return None, [], "Запрошена неизвестная или недоступная функция."
+        arguments = envelope.get("arguments")
+        if not isinstance(arguments, dict):
+            return None, [], "Поле arguments должно быть JSON-объектом."
+        required = ((function.get("parameters") or {}).get("required") or [])
+        missing = [key for key in required if key not in arguments]
+        if missing:
+            return None, [], f"Не переданы обязательные аргументы: {', '.join(missing)}."
+        return None, [ToolCall(name=name, arguments=arguments)], None
+
+    @staticmethod
+    def _strip_json_fence(value: str) -> str:
+        stripped = value.strip()
+        if stripped.startswith("```") and stripped.endswith("```"):
+            lines = stripped.splitlines()
+            if len(lines) >= 3:
+                return "\n".join(lines[1:-1]).strip()
+        return stripped
+
+    @staticmethod
+    def _safe_response_json(response) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except (ValueError, JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _kaigo_usage(data: dict[str, Any]) -> dict[str, int]:
+        raw = data.get("usage") or {}
+        prompt_tokens = OpenAIService._optional_positive_int(raw.get("input_tokens")) or 0
+        completion_tokens = OpenAIService._optional_positive_int(raw.get("output_tokens")) or 0
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+
+    @staticmethod
+    def _optional_positive_int(value: Any) -> int | None:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
+
+    @staticmethod
+    def _kaigo_http_error(data: dict[str, Any], http_status: int | None) -> tuple[str, bool]:
+        error = data.get("error") if isinstance(data, dict) else None
+        provider_type = str(error.get("type") or "") if isinstance(error, dict) else ""
+        if provider_type:
+            error_type = provider_type
+        else:
+            error_type = f"http_{http_status}" if http_status else "provider_error"
+        retryable = http_status in {429, 502, 503, 504} or error_type in {
+            "busy",
+            "rate_limited",
+            "provider_error",
+            "codex_unavailable",
+            "timeout",
+        }
+        return error_type, retryable
+
+    @staticmethod
+    def _kaigo_error_message(data: dict[str, Any], response) -> str:
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        return str(getattr(response, "text", ""))[:500]
+
+    @staticmethod
+    def _sleep_before_kaigo_retry(*, response, attempt: int) -> None:
+        retry_after = getattr(response, "headers", {}).get("Retry-After")
+        try:
+            delay = float(retry_after)
+        except (TypeError, ValueError):
+            delay = min(30.0, 7.0 * attempt)
+        time.sleep(max(0.0, min(delay, 30.0)))
 
     def _run_via_openai(
         self,
