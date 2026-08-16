@@ -1425,3 +1425,13 @@ LLM-слой работает через `kie.ai` с моделью `gpt-5-2`, �
 - Production-код обновлён до `1446a8a`: `kaigo` / `gpt-5.6-sol` / `low`; оба сервиса активны, внутренний и внешний health -> HTTP 200, свежих ошибок нет.
 - Локальный и серверный полный pytest -> `146 passed`.
 - По независимому review устранены два высоких граничных риска: handoff получил приоритет над поиском при смешанном намерении, а каждый HTTP-запрос и backoff теперь ограничены оставшимся общим retry-бюджетом.
+
+## Обновление 2026-08-16 - проверка Antigravity native function calling
+
+- Статус: in progress.
+- Сравнить `gemini-3.7-flash-low`, `gemini-3.7-flash-medium` и `gemini-3.7-flash-high` через новый Antigravity API с production `gpt-5.6-sol` на одинаковых AMIX-диалогах.
+- Сохранить ровно две функции `search_products` и `handoff_to_manager`; не добавлять backend-routing, шаблоны или отдельное состояние заказа.
+- Использовать нативные client tools Antigravity, но отключить его встроенные read-only tools в AMIX, чтобы товарные факты оставались только в XML-каталоге.
+- Live-probe подтвердил первый native `search_products` за 2,034 секунды и финальный ответ после `role=tool` за 1,477 секунды.
+- Зафиксирован transport-нюанс API: исторический `assistant.tool_calls` сейчас даёт HTTP 400, а соответствующий `role=tool` принимается; полная исходная история функций продолжает храниться в SQLite AMIX.
+- Production переключать только после unit-тестов, одинакового model comparison, полного history-order eval, серверной проверки и сохранения быстрого отката на Sol.
