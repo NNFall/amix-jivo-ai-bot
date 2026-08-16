@@ -28,7 +28,13 @@ import core.assistant_service as assistant_module
 import database.db as db_module
 from core.assistant_service import AssistantService
 from database.models import Base, Chat, LLMCall, Message, Product
-from llm.openai_client import GOOGLE_AI_PROVIDERS, KAIGO_PROVIDERS, LLMTurnResult, ToolCall
+from llm.openai_client import (
+    ANTIGRAVITY_PROVIDERS,
+    GOOGLE_AI_PROVIDERS,
+    KAIGO_PROVIDERS,
+    LLMTurnResult,
+    ToolCall,
+)
 from llm.prompts import SYSTEM_PROMPT
 from llm.tool_schemas import OPENAI_TOOLS
 from products.article_utils import normalize_article
@@ -415,6 +421,13 @@ def _configure_assistant(
         if model:
             assistant.openai_service.kaigo_model = model
         model_name = assistant.openai_service.kaigo_model
+    elif provider in ANTIGRAVITY_PROVIDERS:
+        if model:
+            assistant.openai_service.antigravity_model = model
+            suffix = model.rsplit("-", 1)[-1]
+            if suffix in {"low", "medium", "high"}:
+                assistant.openai_service.antigravity_reasoning_effort = suffix
+        model_name = assistant.openai_service.antigravity_model
     elif provider == "kie":
         model_name = assistant.openai_service.kie_chat_model_path
     else:

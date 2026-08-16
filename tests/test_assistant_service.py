@@ -104,6 +104,42 @@ def test_stale_turn_discards_reply_but_keeps_usage(isolated_app_env) -> None:
         assert session.query(Message).filter(Message.sender_role == "bot").count() == 0
 
 
+def test_antigravity_usage_is_persisted_with_model_and_thinking_tokens(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.provider = "antigravity"
+    service.openai_service.antigravity_model = "gemini-3.7-flash-low"
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Проверил, товар есть в наличии.",
+        tool_calls=[],
+        usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 130},
+        latency_ms=2400,
+    )
+
+    with session_scope() as session:
+        service.handle_client_message(
+            session,
+            external_chat_id="telegram:antigravity-usage",
+            external_client_id="telegram-user:antigravity-usage",
+            customer_name="Клиент",
+            customer_text="Проверьте товар",
+            inbound_event_id="antigravity-usage-in",
+            outbound_event_id="antigravity-usage-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    with session_scope() as session:
+        call = session.query(LLMCall).one()
+        assert call.provider == "antigravity"
+        assert call.model == "gemini-3.7-flash-low"
+        assert call.prompt_tokens == 100
+        assert call.completion_tokens == 20
+        assert call.thinking_tokens == 10
+        assert call.total_tokens == 130
+        assert call.latency_ms == 2400
+
+
 def test_stale_turn_rolls_back_tool_messages_and_handoff_side_effects(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

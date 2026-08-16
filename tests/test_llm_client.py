@@ -154,6 +154,241 @@ def _configure_kaigo(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def _configure_antigravity(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "antigravity")
+    monkeypatch.setenv("ANTIGRAVITY_API_KEY", "test-antigravity-key")
+    monkeypatch.setenv(
+        "ANTIGRAVITY_API_URL",
+        "https://kaigo.space/antigravity-api/v1/respond",
+    )
+    monkeypatch.setenv("ANTIGRAVITY_MODEL", "gemini-3.7-flash-low")
+    monkeypatch.setenv("ANTIGRAVITY_REASONING_EFFORT", "low")
+    monkeypatch.setenv("ANTIGRAVITY_NATIVE_TOOLS", "read_only")
+    monkeypatch.setenv("ANTIGRAVITY_RETRY_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("ANTIGRAVITY_MIN_REQUEST_INTERVAL_SECONDS", "0")
+    get_settings.cache_clear()
+
+
+def test_antigravity_payload_uses_native_client_tools_and_supported_history(
+    monkeypatch,
+    isolated_app_env,
+) -> None:
+    collector: dict = {}
+    _configure_antigravity(monkeypatch)
+    response = DummyKaigoResponse(
+        "Такое количество доступно.",
+        response_json={
+            "output_text": "Такое количество доступно.",
+            "tool_calls": [],
+            "usage": {
+                "input_tokens": 900,
+                "output_tokens": 40,
+                "thinking_tokens": 25,
+                "total_tokens": 940,
+            },
+            "duration_ms": 1234,
+        },
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[
+            {"role": "system", "content": "Главная инструкция AMIX"},
+            {"role": "user", "content": "Проверьте код 770"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-old",
+                        "type": "function",
+                        "function": {
+                            "name": "search_products",
+                            "arguments": '{"queries":[{"query":"770"}]}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-old",
+                "name": "search_products",
+                "content": '{"status":"ok","requested_quantity_available":true}',
+            },
+            {"role": "user", "content": "Мне нужно 2 штуки"},
+        ],
+        tools=OPENAI_TOOLS,
+        tool_choice="auto",
+    )
+
+    request = collector["requests"][0]
+    assert request["url"] == "https://kaigo.space/antigravity-api/v1/respond"
+    assert request["headers"]["Authorization"] == "Bearer test-antigravity-key"
+    assert request["json"]["model"] == "gemini-3.7-flash-low"
+    assert request["json"]["reasoning_effort"] == "low"
+    assert request["json"]["system_prompt"] == "Главная инструкция AMIX"
+    assert request["json"]["native_tools"] == "none"
+    assert request["json"]["tool_choice"] == "auto"
+    assert [tool["function"]["name"] for tool in request["json"]["tools"]] == [
+        "search_products",
+        "handoff_to_manager",
+    ]
+    assert [message["role"] for message in request["json"]["messages"]] == [
+        "user",
+        "tool",
+        "user",
+    ]
+    assert request["json"]["messages"][1]["tool_call_id"] == "call-old"
+    assert turn.text == "Такое количество доступно."
+    assert turn.tool_calls == []
+    assert turn.usage == {
+        "prompt_tokens": 900,
+        "completion_tokens": 15,
+        "thinking_tokens": 25,
+        "total_tokens": 940,
+    }
+    assert turn.latency_ms == 1234
+
+
+def test_antigravity_parses_native_search_products_tool_call(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_antigravity(monkeypatch)
+    response = DummyKaigoResponse(
+        "",
+        response_json={
+            "output_text": None,
+            "tool_calls": [
+                {
+                    "id": "call-antigravity-1",
+                    "type": "function",
+                    "function": {
+                        "name": "search_products",
+                        "arguments": {
+                            "queries": [{"query": "770", "requested_quantity": 2}]
+                        },
+                    },
+                }
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            "duration_ms": 500,
+        },
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Код 770, две штуки"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert turn.text is None
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0].call_id == "call-antigravity-1"
+    assert turn.tool_calls[0].name == "search_products"
+    assert turn.tool_calls[0].arguments == {
+        "queries": [{"query": "770", "requested_quantity": 2}]
+    }
+
+
+def test_antigravity_retries_busy_response(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_antigravity(monkeypatch)
+    responses = [
+        DummyKaigoResponse(
+            "busy",
+            status_code=429,
+            response_json={"error": {"code": "busy", "message": "Server is busy"}},
+            headers={"Retry-After": "0"},
+        ),
+        DummyKaigoResponse(
+            "Проверил, всё доступно.",
+            response_json={
+                "output_text": "Проверил, всё доступно.",
+                "tool_calls": [],
+                "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                "duration_ms": 300,
+            },
+        ),
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, responses))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Проверьте наличие"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(collector["requests"]) == 2
+    assert turn.text == "Проверил, всё доступно."
+    assert turn.error_type is None
+
+
+def test_antigravity_retries_http_500_response(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_antigravity(monkeypatch)
+    responses = [
+        DummyKaigoResponse(
+            "internal error",
+            status_code=500,
+            response_json={"error": {"code": "internal_error", "message": "Temporary failure"}},
+            headers={"Retry-After": "0"},
+        ),
+        DummyKaigoResponse(
+            "Повторный запрос выполнен.",
+            response_json={
+                "output_text": "Повторный запрос выполнен.",
+                "tool_calls": [],
+                "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                "duration_ms": 300,
+            },
+        ),
+    ]
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, responses))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Повторите запрос"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(collector["requests"]) == 2
+    assert turn.text == "Повторный запрос выполнен."
+
+
+def test_antigravity_parses_native_handoff_tool_call(monkeypatch, isolated_app_env) -> None:
+    collector: dict = {}
+    _configure_antigravity(monkeypatch)
+    response = DummyKaigoResponse(
+        "",
+        response_json={
+            "output_text": None,
+            "tool_calls": [
+                {
+                    "id": "call-antigravity-handoff",
+                    "type": "function",
+                    "function": {
+                        "name": "handoff_to_manager",
+                        "arguments": {
+                            "reason": "client_requested_manager",
+                            "summary": "Клиент просит менеджера.",
+                            "customer_message": "Передаю вопрос менеджеру.",
+                        },
+                    },
+                }
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            "duration_ms": 500,
+        },
+    )
+    monkeypatch.setattr(httpx, "Client", lambda timeout: DummyKaigoClient(collector, [response]))
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[{"role": "user", "content": "Позовите менеджера"}],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0].name == "handoff_to_manager"
+    assert turn.tool_calls[0].arguments["reason"] == "client_requested_manager"
+
+
 def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, isolated_app_env) -> None:
     collector: dict = {}
     _configure_kaigo(monkeypatch)

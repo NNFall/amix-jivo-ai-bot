@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_AI_PROVIDERS = {"google", "google_ai", "google_ai_studio", "gemini"}
 KAIGO_PROVIDERS = {"kaigo", "kaigo_codex", "codex_text"}
+ANTIGRAVITY_PROVIDERS = {"antigravity", "antigravity_api"}
 
 KAIGO_PROTOCOL_TEMPLATE = """
 ТЕХНИЧЕСКИЙ ПРОТОКОЛ ОТВЕТА
@@ -118,6 +119,17 @@ class OpenAIService:
         self.kaigo_retry_max_attempts = settings.kaigo_retry_max_attempts
         self.kaigo_retry_total_timeout_seconds = settings.kaigo_retry_total_timeout_seconds
         self.kaigo_min_request_interval_seconds = settings.kaigo_min_request_interval_seconds
+        self.antigravity_api_key = settings.antigravity_api_key
+        self.antigravity_api_url = settings.antigravity_api_url
+        self.antigravity_model = settings.antigravity_model
+        self.antigravity_reasoning_effort = settings.antigravity_reasoning_effort
+        # AMIX product facts must come only from the two declared client tools.
+        self.antigravity_native_tools = "none"
+        self.antigravity_http_connect_timeout_seconds = settings.antigravity_http_connect_timeout_seconds
+        self.antigravity_http_read_timeout_seconds = settings.antigravity_http_read_timeout_seconds
+        self.antigravity_retry_max_attempts = settings.antigravity_retry_max_attempts
+        self.antigravity_retry_total_timeout_seconds = settings.antigravity_retry_total_timeout_seconds
+        self.antigravity_min_request_interval_seconds = settings.antigravity_min_request_interval_seconds
         self.audit_logger = LLMAuditLogger(
             enabled=settings.llm_audit_log_enabled,
             path=settings.llm_audit_log_path,
@@ -147,6 +159,12 @@ class OpenAIService:
             return self._run_via_google_ai_studio(messages=messages, tools=tools, tool_choice=tool_choice)
         if self.provider in KAIGO_PROVIDERS:
             return self._run_via_kaigo(messages=messages, tools=tools)
+        if self.provider in ANTIGRAVITY_PROVIDERS:
+            return self._run_via_antigravity(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
         return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
@@ -156,7 +174,308 @@ class OpenAIService:
             return bool(self.google_ai_api_key)
         if self.provider in KAIGO_PROVIDERS:
             return bool(self.kaigo_api_key)
+        if self.provider in ANTIGRAVITY_PROVIDERS:
+            return bool(self.antigravity_api_key)
         return bool(self.openai_api_key)
+
+    def _run_via_antigravity(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        tool_choice: str | dict[str, Any],
+    ) -> LLMTurnResult:
+        if not self.antigravity_api_key:
+            return LLMTurnResult(text=None, tool_calls=[])
+
+        system_prompt, dialog_messages = self._prepare_antigravity_messages(messages)
+        allowed_tools = self._kaigo_allowed_tools(tools)
+        started_at = time.monotonic()
+        last_error_type: str | None = None
+        last_retryable = False
+
+        timeout = httpx.Timeout(
+            self.antigravity_http_read_timeout_seconds,
+            connect=self.antigravity_http_connect_timeout_seconds,
+        )
+        with httpx.Client(timeout=timeout) as client:
+            for attempt in range(1, max(1, self.antigravity_retry_max_attempts) + 1):
+                self._throttle_provider_request(
+                    provider_key=f"antigravity:{self.antigravity_model}",
+                    min_interval_seconds=self.antigravity_min_request_interval_seconds,
+                )
+                remaining_seconds = self._remaining_retry_seconds(
+                    started_at=started_at,
+                    retry_total_timeout_seconds=self.antigravity_retry_total_timeout_seconds,
+                )
+                if remaining_seconds <= 0:
+                    last_error_type = "timeout"
+                    last_retryable = False
+                    break
+
+                payload: dict[str, Any] = {
+                    "model": self.antigravity_model,
+                    "reasoning_effort": self.antigravity_reasoning_effort,
+                    "system_prompt": system_prompt,
+                    "messages": dialog_messages,
+                    "native_tools": self.antigravity_native_tools,
+                }
+                if tools:
+                    payload["tools"] = tools
+                    payload["tool_choice"] = tool_choice
+
+                request_timeout = httpx.Timeout(
+                    min(float(self.antigravity_http_read_timeout_seconds), remaining_seconds),
+                    connect=min(float(self.antigravity_http_connect_timeout_seconds), remaining_seconds),
+                )
+                request_started_at = time.monotonic()
+                response = None
+                try:
+                    response = client.post(
+                        self.antigravity_api_url,
+                        headers={
+                            "Authorization": f"Bearer {self.antigravity_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                        timeout=request_timeout,
+                    )
+                except httpx.TimeoutException as exc:
+                    last_error_type = "timeout"
+                    last_retryable = True
+                    self._write_provider_audit(
+                        provider_name="Antigravity Text API",
+                        url=self.antigravity_api_url,
+                        payload=payload,
+                        model=self.antigravity_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=None,
+                        response_json=None,
+                        error_type=last_error_type,
+                        retryable=True,
+                        error_text=str(exc),
+                        text=None,
+                        tool_calls=[],
+                    )
+                except httpx.HTTPError as exc:
+                    last_error_type = "network_error"
+                    last_retryable = True
+                    self._write_provider_audit(
+                        provider_name="Antigravity Text API",
+                        url=self.antigravity_api_url,
+                        payload=payload,
+                        model=self.antigravity_model,
+                        attempt=attempt,
+                        started_at=request_started_at,
+                        http_status=None,
+                        response_json=None,
+                        error_type=last_error_type,
+                        retryable=True,
+                        error_text=str(exc),
+                        text=None,
+                        tool_calls=[],
+                    )
+                else:
+                    data = self._safe_response_json(response)
+                    http_status = getattr(response, "status_code", None)
+                    if not 200 <= int(http_status or 0) < 300:
+                        last_error_type, last_retryable = self._kaigo_http_error(data, http_status)
+                        self._write_provider_audit(
+                            provider_name="Antigravity Text API",
+                            url=self.antigravity_api_url,
+                            payload=payload,
+                            model=self.antigravity_model,
+                            attempt=attempt,
+                            started_at=request_started_at,
+                            http_status=http_status,
+                            response_json=data,
+                            error_type=last_error_type,
+                            retryable=last_retryable,
+                            error_text=self._kaigo_error_message(data, response),
+                            text=None,
+                            tool_calls=[],
+                        )
+                    else:
+                        text = data.get("output_text")
+                        text = text.strip() if isinstance(text, str) and text.strip() else None
+                        tool_calls, protocol_error = self._parse_antigravity_tool_calls(
+                            data.get("tool_calls"),
+                            allowed_tools=allowed_tools,
+                        )
+                        usage = self._antigravity_usage(data)
+                        latency_ms = self._optional_positive_int(data.get("duration_ms")) or self._latency_ms(
+                            request_started_at
+                        )
+                        if not protocol_error and (text or tool_calls):
+                            self._write_provider_audit(
+                                provider_name="Antigravity Text API",
+                                url=self.antigravity_api_url,
+                                payload=payload,
+                                model=self.antigravity_model,
+                                attempt=attempt,
+                                started_at=request_started_at,
+                                http_status=http_status,
+                                response_json=data,
+                                error_type=None,
+                                retryable=False,
+                                error_text=None,
+                                text=text,
+                                tool_calls=tool_calls,
+                                latency_ms=latency_ms,
+                                usage=usage,
+                            )
+                            return LLMTurnResult(
+                                text=text,
+                                tool_calls=tool_calls,
+                                usage=usage,
+                                cost=cost_to_dict(
+                                    estimate_cost(
+                                        provider=self.provider,
+                                        model=self.antigravity_model,
+                                        usage=extract_usage_stats({"usage": usage}),
+                                        usd_to_rub=self.llm_cost_usd_to_rub,
+                                    )
+                                ),
+                                latency_ms=latency_ms,
+                            )
+
+                        last_error_type = "invalid_tool_protocol" if protocol_error else "empty_response"
+                        last_retryable = True
+                        self._write_provider_audit(
+                            provider_name="Antigravity Text API",
+                            url=self.antigravity_api_url,
+                            payload=payload,
+                            model=self.antigravity_model,
+                            attempt=attempt,
+                            started_at=request_started_at,
+                            http_status=http_status,
+                            response_json=data,
+                            error_type=last_error_type,
+                            retryable=True,
+                            error_text=protocol_error or "Provider returned no text or tool calls.",
+                            text=None,
+                            tool_calls=[],
+                            latency_ms=latency_ms,
+                            usage=usage,
+                        )
+
+                if not self._should_retry_provider(
+                    retryable=last_retryable,
+                    attempt=attempt,
+                    started_at=started_at,
+                    retry_max_attempts=self.antigravity_retry_max_attempts,
+                    retry_total_timeout_seconds=self.antigravity_retry_total_timeout_seconds,
+                ):
+                    break
+                self._sleep_before_kaigo_retry(
+                    response=response,
+                    attempt=attempt,
+                    max_delay_seconds=self._remaining_retry_seconds(
+                        started_at=started_at,
+                        retry_total_timeout_seconds=self.antigravity_retry_total_timeout_seconds,
+                    ),
+                )
+
+        return LLMTurnResult(
+            text=None,
+            tool_calls=[],
+            error_type=last_error_type or "provider_error",
+            retryable=last_retryable,
+        )
+
+    @staticmethod
+    def _prepare_antigravity_messages(messages: list[dict]) -> tuple[str, list[dict[str, Any]]]:
+        system_prompt = "\n\n".join(
+            str(message.get("content") or "").strip()
+            for message in messages
+            if message.get("role") == "system" and str(message.get("content") or "").strip()
+        )
+        dialog_messages: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "")
+            if role == "system":
+                continue
+            if role == "assistant" and message.get("tool_calls"):
+                content = str(message.get("content") or "").strip()
+                if content:
+                    dialog_messages.append({"role": "assistant", "content": content})
+                continue
+            if role in {"user", "assistant"}:
+                dialog_messages.append({"role": role, "content": str(message.get("content") or "")})
+                continue
+            if role == "tool":
+                converted: dict[str, Any] = {
+                    "role": "tool",
+                    "content": str(message.get("content") or ""),
+                }
+                if message.get("tool_call_id"):
+                    converted["tool_call_id"] = message["tool_call_id"]
+                if message.get("name"):
+                    converted["name"] = message["name"]
+                dialog_messages.append(converted)
+        return system_prompt, dialog_messages
+
+    @classmethod
+    def _parse_antigravity_tool_calls(
+        cls,
+        raw_calls: Any,
+        *,
+        allowed_tools: dict[str, dict[str, Any]],
+    ) -> tuple[list[ToolCall], str | None]:
+        if raw_calls in (None, []):
+            return [], None
+        if not isinstance(raw_calls, list):
+            return [], "Поле tool_calls должно быть массивом."
+
+        result: list[ToolCall] = []
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                return [], "Каждый вызов функции должен быть объектом."
+            function = raw_call.get("function")
+            if not isinstance(function, dict):
+                return [], "В вызове функции отсутствует объект function."
+            name = str(function.get("name") or "").strip()
+            schema = allowed_tools.get(name)
+            if schema is None:
+                return [], "Запрошена неизвестная или недоступная функция."
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = loads(arguments)
+                except (JSONDecodeError, TypeError):
+                    return [], "Аргументы функции содержат некорректный JSON."
+            if not isinstance(arguments, dict):
+                return [], "Аргументы функции должны быть объектом."
+            required = ((schema.get("parameters") or {}).get("required") or [])
+            missing = [key for key in required if key not in arguments]
+            if missing:
+                return [], f"Не переданы обязательные аргументы: {', '.join(missing)}."
+            result.append(
+                ToolCall(
+                    name=name,
+                    arguments=arguments,
+                    call_id=str(raw_call.get("id") or "").strip() or None,
+                )
+            )
+        return result, None
+
+    @staticmethod
+    def _antigravity_usage(data: dict[str, Any]) -> dict[str, int]:
+        raw = data.get("usage") or {}
+        prompt_tokens = OpenAIService._optional_positive_int(raw.get("input_tokens")) or 0
+        output_tokens = OpenAIService._optional_positive_int(raw.get("output_tokens")) or 0
+        thinking_tokens = OpenAIService._optional_positive_int(raw.get("thinking_tokens")) or 0
+        completion_tokens = max(0, output_tokens - thinking_tokens)
+        total_tokens = OpenAIService._optional_positive_int(raw.get("total_tokens"))
+        if total_tokens is None:
+            total_tokens = prompt_tokens + output_tokens
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "thinking_tokens": thinking_tokens,
+            "total_tokens": total_tokens,
+        }
 
     def _run_via_kaigo(
         self,
@@ -510,7 +829,7 @@ class OpenAIService:
             error_type = provider_type
         else:
             error_type = f"http_{http_status}" if http_status else "provider_error"
-        retryable = http_status in {429, 502, 503, 504} or error_type in {
+        retryable = http_status in {429, 500, 502, 503, 504} or error_type in {
             "busy",
             "rate_limited",
             "provider_error",

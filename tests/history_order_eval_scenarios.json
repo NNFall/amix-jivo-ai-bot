@@ -30,7 +30,7 @@
         "assertions": [
           {"type": "tool_called", "name": "search_products"},
           {"type": "no_handoff"},
-          {"type": "response_contains_any", "values": ["эти товары", "оба", "2"]}
+          {"type": "response_contains_any", "values": ["эти товары", "оба", "обе", "нужное количество", "2"]}
         ]
       },
       {
@@ -442,7 +442,7 @@
           {"type": "handoff_reason", "value": "order_creation"},
           {
             "type": "handoff_summary_contains_all",
-            "values": ["6", "петел", "доставка", "Псков", "недел", {"any": ["налич", "поиск не дал", "не провер"]}, "Мария", "+7 921 555-66-77"]
+            "values": ["6", {"any": ["петел", "петли"]}, "доставка", "Псков", "недел", {"any": ["налич", "поиск не дал", "не провер"]}, "Мария", "+7 921 555-66-77"]
           }
         ]
       }

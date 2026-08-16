@@ -575,6 +575,8 @@ class AssistantService:
             return self.openai_service.google_ai_model
         if self.openai_service.provider in {"kaigo", "kaigo_codex", "codex_text"}:
             return self.openai_service.kaigo_model
+        if self.openai_service.provider in {"antigravity", "antigravity_api"}:
+            return self.openai_service.antigravity_model
         if self.openai_service.provider == "kie":
             return self.openai_service.kie_chat_model_path
         return self.openai_service.model

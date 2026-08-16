@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     kaigo_retry_max_attempts: int = 3
     kaigo_retry_total_timeout_seconds: int = 300
     kaigo_min_request_interval_seconds: float = 6.2
+    antigravity_api_key: str | None = None
+    antigravity_api_url: str = "https://kaigo.space/antigravity-api/v1/respond"
+    antigravity_model: str = "gemini-3.7-flash-low"
+    antigravity_reasoning_effort: str = "low"
+    antigravity_native_tools: str = "none"
+    antigravity_http_connect_timeout_seconds: int = 20
+    antigravity_http_read_timeout_seconds: int = 900
+    antigravity_retry_max_attempts: int = 3
+    antigravity_retry_total_timeout_seconds: int = 300
+    antigravity_min_request_interval_seconds: float = 0.0
     assistant_debug_lookup_logs: bool = False
     assistant_debug_llm_payloads: bool = False
     assistant_debug_llm_payloads_path: str = "data/logs/llm_debug.jsonl"

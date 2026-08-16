@@ -1,5 +1,16 @@
 # PLAN
 
+## Update 2026-08-17 (Antigravity Gemini 3.7 Flash Candidate)
+
+- Status: implementation, model comparison, full live dialog evaluation and independent review passed locally; rollback-safe VPS deployment is the remaining gate.
+- Provider: added the Antigravity Text API as an isolated LLM provider using native two-stage function calling with exactly `search_products` and `handoff_to_manager`; Antigravity built-in tools are forcibly disabled.
+- Compatibility: complete user/assistant/tool history is retained, while historical assistant tool-call transport objects are omitted because the Antigravity endpoint rejects that input shape; chronological tool results remain in the request and the full source history remains in SQLite.
+- Model decision: `gemini-3.7-flash-low` is the selected candidate. Medium and high were slower on the same scenarios without a functional gain; low followed the AMIX dialog policy more consistently than the current Sol comparison run.
+- Live evidence: final low run passed `9/9` scenarios and `41/41` turns across `54/54` successful provider calls; repeated invoice flow passed `3/3` scenarios and `18/18` turns; post-fix live smoke passed `1/1` scenario and `2/2` turns with a real product tool call.
+- Reliability: retryable Antigravity failures include busy/rate-limit/network/timeout and HTTP 5xx responses; token accounting separates answer tokens from thinking tokens and persists provider/model/usage/latency in SQLite.
+- Local verification: `python -m pytest -q` -> `153 passed`; compile, diff and secret checks passed; independent re-review found no P0-P2 issues.
+- Remaining gate: commit and push the candidate, back up the server environment, deploy the exact revision, switch the provider atomically, restart services, and verify internal/public health plus fresh journals.
+
 ## Update 2026-07-17 (Model-Driven Two-Tool Candidate)
 
 - Status: local implementation and deterministic dialog verification pass; independent reviews and isolated live Gemini verification on the VPS are in progress. Production services have not been restarted.
