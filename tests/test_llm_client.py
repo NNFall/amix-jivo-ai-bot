@@ -199,6 +199,8 @@ def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, is
     assert "Главная инструкция AMIX" in request["json"]["system_prompt"]
     assert "search_products" in request["json"]["system_prompt"]
     assert "handoff_to_manager" in request["json"]["system_prompt"]
+    assert "Сначала примени правила основного системного промпта" in request["json"]["system_prompt"]
+    assert "Не заменяй обязательную функцию уточняющим вопросом" in request["json"]["system_prompt"]
     assert '"role": "assistant"' in request["json"]["prompt"]
     assert '"role": "tool"' in request["json"]["prompt"]
     assert request["json"]["prompt"].index('"role": "assistant"') < request["json"]["prompt"].index('"role": "tool"')
