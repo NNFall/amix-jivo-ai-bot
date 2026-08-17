@@ -73,9 +73,9 @@ class Settings(BaseSettings):
     antigravity_reasoning_effort: str = "low"
     antigravity_native_tools: str = "none"
     antigravity_http_connect_timeout_seconds: int = 20
-    antigravity_http_read_timeout_seconds: int = 900
+    antigravity_http_read_timeout_seconds: int = 20
     antigravity_retry_max_attempts: int = 3
-    antigravity_retry_total_timeout_seconds: int = 300
+    antigravity_retry_total_timeout_seconds: int = 90
     antigravity_min_request_interval_seconds: float = 0.0
     assistant_debug_lookup_logs: bool = False
     assistant_debug_llm_payloads: bool = False

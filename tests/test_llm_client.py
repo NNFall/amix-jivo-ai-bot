@@ -962,6 +962,17 @@ def test_sensitive_unbounded_debug_logs_are_disabled_by_default(monkeypatch) -> 
     assert settings.assistant_debug_llm_payloads is False
 
 
+def test_antigravity_default_timeout_budget_keeps_three_attempts_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("ANTIGRAVITY_HTTP_READ_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("ANTIGRAVITY_RETRY_TOTAL_TIMEOUT_SECONDS", raising=False)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.antigravity_http_read_timeout_seconds == 20
+    assert settings.antigravity_retry_total_timeout_seconds == 90
+
+
 def test_model_has_only_product_search_and_manager_handoff_tools() -> None:
     assert [tool["function"]["name"] for tool in OPENAI_TOOLS] == [
         "search_products",
