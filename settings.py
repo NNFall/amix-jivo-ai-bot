@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     antigravity_model: str = "gemini-3.7-flash-low"
     antigravity_reasoning_effort: str = "low"
     antigravity_native_tools: str = "none"
-    antigravity_http_connect_timeout_seconds: int = 20
-    antigravity_http_read_timeout_seconds: int = 20
+    antigravity_http_connect_timeout_seconds: int = 5
+    antigravity_http_read_timeout_seconds: int = 15
     antigravity_retry_max_attempts: int = 3
     antigravity_retry_total_timeout_seconds: int = 90
     antigravity_min_request_interval_seconds: float = 0.0

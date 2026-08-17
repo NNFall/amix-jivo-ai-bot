@@ -963,14 +963,22 @@ def test_sensitive_unbounded_debug_logs_are_disabled_by_default(monkeypatch) -> 
 
 
 def test_antigravity_default_timeout_budget_keeps_three_attempts_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("ANTIGRAVITY_HTTP_CONNECT_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("ANTIGRAVITY_HTTP_READ_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("ANTIGRAVITY_RETRY_TOTAL_TIMEOUT_SECONDS", raising=False)
     get_settings.cache_clear()
 
     settings = get_settings()
 
-    assert settings.antigravity_http_read_timeout_seconds == 20
+    assert settings.antigravity_http_connect_timeout_seconds == 5
+    assert settings.antigravity_http_read_timeout_seconds == 15
     assert settings.antigravity_retry_total_timeout_seconds == 90
+    worst_case_attempts = 3 * (
+        settings.antigravity_http_connect_timeout_seconds
+        + settings.antigravity_http_read_timeout_seconds
+    )
+    default_retry_delays = 7 + 14
+    assert worst_case_attempts + default_retry_delays <= settings.antigravity_retry_total_timeout_seconds
 
 
 def test_model_has_only_product_search_and_manager_handoff_tools() -> None:
