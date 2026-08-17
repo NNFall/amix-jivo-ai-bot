@@ -143,6 +143,25 @@ class DummyKaigoClient:
         return self.responses[index]
 
 
+class DummyProviderRouterClient:
+    def __init__(self, collector: dict, responses_by_url: dict[str, list[DummyKaigoResponse]]) -> None:
+        self.collector = collector
+        self.responses_by_url = responses_by_url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def post(self, url: str, headers: dict, json: dict, timeout=None):
+        self.collector.setdefault("requests", []).append(
+            {"url": url, "headers": headers, "json": json, "timeout": timeout}
+        )
+        responses = self.responses_by_url[url]
+        return responses.pop(0)
+
+
 def _configure_kaigo(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "kaigo")
     monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
@@ -350,6 +369,77 @@ def test_antigravity_retries_http_500_response(monkeypatch, isolated_app_env) ->
 
     assert len(collector["requests"]) == 2
     assert turn.text == "Повторный запрос выполнен."
+
+
+def test_antigravity_falls_back_to_sol_after_three_502_attempts(
+    monkeypatch,
+    isolated_app_env,
+    tmp_path,
+) -> None:
+    collector: dict = {}
+    audit_path = tmp_path / "failover_audit.json"
+    _configure_antigravity(monkeypatch)
+    monkeypatch.setenv("ANTIGRAVITY_RETRY_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_MODEL", "gpt-5.6-sol")
+    monkeypatch.setenv("KAIGO_REASONING_EFFORT", "low")
+    monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("KAIGO_MIN_REQUEST_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("LLM_AUDIT_LOG_ENABLED", "true")
+    monkeypatch.setenv("LLM_AUDIT_LOG_PATH", str(audit_path))
+    get_settings.cache_clear()
+    antigravity_url = "https://kaigo.space/antigravity-api/v1/respond"
+    kaigo_url = "https://kaigo.space/codex-api/v1/respond"
+    responses_by_url = {
+        antigravity_url: [
+            DummyKaigoResponse(
+                "bad gateway",
+                status_code=502,
+                response_json={"error": {"message": "Bad Gateway"}},
+                headers={"Retry-After": "0"},
+            )
+            for _ in range(3)
+        ],
+        kaigo_url: [
+            DummyKaigoResponse(
+                '{"type":"assistant","text":"Резервный ответ получен."}',
+                response_json={
+                    "output_text": '{"type":"assistant","text":"Резервный ответ получен."}',
+                    "usage": {"input_tokens": 120, "output_tokens": 20, "total_tokens": 140},
+                    "duration_ms": 700,
+                },
+            )
+        ],
+    }
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda timeout: DummyProviderRouterClient(collector, responses_by_url),
+    )
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[
+            {"role": "system", "content": "Инструкция AMIX"},
+            {"role": "user", "content": "Проверьте код 770"},
+        ],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert [request["url"] for request in collector["requests"]] == [
+        antigravity_url,
+        antigravity_url,
+        antigravity_url,
+        kaigo_url,
+    ]
+    assert turn.text == "Резервный ответ получен."
+    assert turn.tool_calls == []
+    assert turn.error_type is None
+    assert turn.provider == "kaigo"
+    assert turn.model == "gpt-5.6-sol"
+    assert turn.fallback_from_provider == "antigravity"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["entries"][-1]["provider"] == "kaigo"
 
 
 def test_antigravity_parses_native_handoff_tool_call(monkeypatch, isolated_app_env) -> None:

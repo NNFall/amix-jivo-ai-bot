@@ -429,14 +429,18 @@ class AssistantService:
         if total_tokens is not None:
             thinking_tokens = max(0, total_tokens - (prompt_tokens or 0) - (completion_tokens or 0))
         cost = turn.cost or {}
+        fallback_from_provider = str(turn.fallback_from_provider or "").strip()
+        status = turn.error_type or (
+            f"ok_fallback_from_{fallback_from_provider}" if fallback_from_provider else "ok"
+        )
         create_llm_call(
             session,
             external_chat_id=external_chat_id,
             request_id=request_id,
-            provider=self.openai_service.provider,
-            model=self._active_llm_model(),
+            provider=turn.provider or self.openai_service.provider,
+            model=turn.model or self._active_llm_model(),
             purpose="model_driven",
-            status=turn.error_type or "ok",
+            status=status,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             thinking_tokens=thinking_tokens,

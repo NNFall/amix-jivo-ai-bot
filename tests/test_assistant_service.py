@@ -140,6 +140,42 @@ def test_antigravity_usage_is_persisted_with_model_and_thinking_tokens(isolated_
         assert call.latency_ms == 2400
 
 
+def test_successful_sol_failover_is_persisted_with_actual_provider(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.provider = "antigravity"
+    service.openai_service.antigravity_model = "gemini-3.7-flash-low"
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text="Ответ получен через резервный сервис.",
+        tool_calls=[],
+        provider="kaigo",
+        model="gpt-5.6-sol",
+        fallback_from_provider="antigravity",
+        usage={"prompt_tokens": 90, "completion_tokens": 10, "total_tokens": 100},
+        latency_ms=3200,
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="telegram:sol-failover-usage",
+            external_client_id="telegram-user:sol-failover-usage",
+            customer_name="Клиент",
+            customer_text="Где вы находитесь?",
+            inbound_event_id="sol-failover-usage-in",
+            outbound_event_id="sol-failover-usage-out",
+            payload={},
+            handoff_mode="demo",
+        )
+
+    assert reply.text == "Ответ получен через резервный сервис."
+    with session_scope() as session:
+        call = session.query(LLMCall).one()
+        assert call.provider == "kaigo"
+        assert call.model == "gpt-5.6-sol"
+        assert call.status == "ok_fallback_from_antigravity"
+
+
 def test_stale_turn_rolls_back_tool_messages_and_handoff_side_effects(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

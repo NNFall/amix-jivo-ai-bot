@@ -74,6 +74,9 @@ class LLMTurnResult:
     usage: dict[str, Any] | None = None
     cost: dict[str, Any] | None = None
     latency_ms: int | None = None
+    provider: str | None = None
+    model: str | None = None
+    fallback_from_provider: str | None = None
 
 
 class OpenAIService:
@@ -158,13 +161,34 @@ class OpenAIService:
         if self.provider in GOOGLE_AI_PROVIDERS:
             return self._run_via_google_ai_studio(messages=messages, tools=tools, tool_choice=tool_choice)
         if self.provider in KAIGO_PROVIDERS:
-            return self._run_via_kaigo(messages=messages, tools=tools)
+            turn = self._run_via_kaigo(messages=messages, tools=tools)
+            turn.provider = "kaigo"
+            turn.model = self.kaigo_model
+            return turn
         if self.provider in ANTIGRAVITY_PROVIDERS:
-            return self._run_via_antigravity(
+            started_at = time.monotonic()
+            turn = self._run_via_antigravity(
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
             )
+            turn.provider = "antigravity"
+            turn.model = self.antigravity_model
+            if turn.text or turn.tool_calls or not self.kaigo_api_key:
+                return turn
+
+            logger.warning(
+                "Antigravity failed after %s attempts with %s; falling back to %s",
+                max(1, self.antigravity_retry_max_attempts),
+                turn.error_type or "provider_error",
+                self.kaigo_model,
+            )
+            fallback_turn = self._run_via_kaigo(messages=messages, tools=tools)
+            fallback_turn.provider = "kaigo"
+            fallback_turn.model = self.kaigo_model
+            fallback_turn.fallback_from_provider = "antigravity"
+            fallback_turn.latency_ms = self._latency_ms(started_at)
+            return fallback_turn
         return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
@@ -540,6 +564,7 @@ class OpenAIService:
                     last_retryable = True
                     self._write_provider_audit(
                         provider_name="Kaigo Codex Text API",
+                        provider="kaigo",
                         url=self.kaigo_api_url,
                         payload=payload,
                         model=self.kaigo_model,
@@ -574,6 +599,7 @@ class OpenAIService:
                     last_retryable = True
                     self._write_provider_audit(
                         provider_name="Kaigo Codex Text API",
+                        provider="kaigo",
                         url=self.kaigo_api_url,
                         payload=payload,
                         model=self.kaigo_model,
@@ -610,6 +636,7 @@ class OpenAIService:
                     last_error_type, last_retryable = self._kaigo_http_error(data, http_status)
                     self._write_provider_audit(
                         provider_name="Kaigo Codex Text API",
+                        provider="kaigo",
                         url=self.kaigo_api_url,
                         payload=payload,
                         model=self.kaigo_model,
@@ -656,6 +683,7 @@ class OpenAIService:
                     last_retryable = not protocol_correction_used
                     self._write_provider_audit(
                         provider_name="Kaigo Codex Text API",
+                        provider="kaigo",
                         url=self.kaigo_api_url,
                         payload=payload,
                         model=self.kaigo_model,
@@ -678,6 +706,7 @@ class OpenAIService:
 
                 self._write_provider_audit(
                     provider_name="Kaigo Codex Text API",
+                    provider="kaigo",
                     url=self.kaigo_api_url,
                     payload=payload,
                     model=self.kaigo_model,
@@ -699,7 +728,7 @@ class OpenAIService:
                     usage=usage,
                     cost=cost_to_dict(
                         estimate_cost(
-                            provider=self.provider,
+                            provider="kaigo",
                             model=self.kaigo_model,
                             usage=extract_usage_stats({"usage": usage}),
                             usd_to_rub=self.llm_cost_usd_to_rub,
@@ -1326,6 +1355,7 @@ class OpenAIService:
         self,
         *,
         provider_name: str,
+        provider: str | None = None,
         url: str,
         payload: dict[str, Any],
         model: str | None,
@@ -1343,9 +1373,10 @@ class OpenAIService:
         cost: dict[str, Any] | None = None,
     ) -> None:
         duration_ms = latency_ms if latency_ms is not None else self._latency_ms(started_at)
+        actual_provider = provider or self.provider
         self.audit_logger.write(
             {
-                "provider": self.provider,
+                "provider": actual_provider,
                 "provider_name": provider_name,
                 "model": model,
                 "endpoint": url,
@@ -1357,7 +1388,7 @@ class OpenAIService:
                 "cost": cost
                 or cost_to_dict(
                     estimate_cost(
-                        provider=self.provider,
+                        provider=actual_provider,
                         model=model,
                         usage=extract_usage_stats(response_json),
                         usd_to_rub=self.llm_cost_usd_to_rub,
