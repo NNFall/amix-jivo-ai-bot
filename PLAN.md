@@ -1,5 +1,14 @@
 # PLAN
 
+## Update 2026-08-17 (Antigravity Incident And Safe Rollback)
+
+- Status: production restored and verified on the previous `kaigo` / `gpt-5.6-sol` provider; Antigravity remains configured but is not active.
+- Root cause: the Antigravity endpoint intermittently returned three consecutive HTTP 502 responses for real Jivo turns. Five failed LLM calls produced three customer fallback replies during the day.
+- Evidence: AMIX services, database, XML import and Jivo event processing remained healthy; the same key and minimal payload alternated between timeout/502 and HTTP 200, while the Sol endpoint returned HTTP 200 consistently.
+- Recovery: backed up `.env`, changed only `LLM_PROVIDER` atomically, restarted both services, confirmed the loaded provider/model in both process environments, and passed a real two-turn product-search smoke.
+- Verification: API and Telegram services are active; internal health/readiness and public health return HTTP 200; fresh journals contain no warnings or errors.
+- Next decision: keep Sol active until Antigravity demonstrates stable availability, or add an explicit tested automatic provider failover before re-enabling it.
+
 ## Update 2026-08-17 (Antigravity Gemini 3.7 Flash Candidate)
 
 - Status: completed, independently reviewed, deployed to production and verified.
