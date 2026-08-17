@@ -7,7 +7,7 @@ from llm.audit_log import LLMAuditLogger, LLMUsageStats, estimate_cost
 from llm.openai_client import OpenAIService
 from llm.prompts import SYSTEM_PROMPT
 from llm.tool_schemas import OPENAI_TOOLS
-from settings import get_settings
+from settings import Settings, get_settings
 
 
 class DummyKieResponse:
@@ -966,9 +966,7 @@ def test_antigravity_default_timeout_budget_keeps_three_attempts_bounded(monkeyp
     monkeypatch.delenv("ANTIGRAVITY_HTTP_CONNECT_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("ANTIGRAVITY_HTTP_READ_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("ANTIGRAVITY_RETRY_TOTAL_TIMEOUT_SECONDS", raising=False)
-    get_settings.cache_clear()
-
-    settings = get_settings()
+    settings = Settings(_env_file=None)
 
     assert settings.antigravity_http_connect_timeout_seconds == 5
     assert settings.antigravity_http_read_timeout_seconds == 15
