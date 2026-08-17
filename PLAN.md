@@ -2,14 +2,14 @@
 
 ## Update 2026-08-17 (Antigravity Primary With Sol Failover)
 
-- Status: local implementation and independent review completed; production remains on `kaigo` / `gpt-5.6-sol` until the committed candidate passes VPS verification.
+- Status: completed, independently reviewed, deployed and verified in production.
 - Goal: use Antigravity as the primary provider, make three Antigravity attempts with retry delays, then automatically run the same model turn through `kaigo` / `gpt-5.6-sol` if all primary attempts fail.
 - Customer behavior: do not send the provider-delay fallback when Sol succeeds; use the existing safe fallback only when both providers fail.
 - Timeout budget: bound each primary attempt to 5 seconds for connection plus 15 seconds for response and the complete Antigravity retry phase to 90 seconds; three worst-case attempts plus 7/14-second pauses fit into 81 seconds before Sol is tried.
 - Observability: persist the actual provider/model that produced the answer and mark successful Sol recovery as an Antigravity failover.
 - Scope: no dialog-policy changes, keyword routing, hidden order state or additional model tools; retain only `search_products` and `handoff_to_manager`.
 - Local verification: focused red/green tests passed; full suite -> `155 passed`; compile, diff and exact two-tool checks passed; independent review found no blocking issues, and its audit-attribution finding was fixed with another red/green test.
-- Remaining gate: commit and push, server full tests, atomic configuration switch, service restart, real primary/fallback smoke, health/readiness and fresh journal checks.
+- Production verification: final server suite -> `156 passed`; both services loaded Antigravity primary with the bounded retry budget and Sol fallback; a live HTTP 429 incident completed twice through Sol, including a real `search_products` tool call; audit attribution, health/readiness and fresh journals passed.
 
 ## Update 2026-08-17 (Antigravity Incident And Safe Rollback)
 

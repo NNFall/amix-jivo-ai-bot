@@ -2583,3 +2583,17 @@
   - `python -m compileall -q .`, `git diff --check` и проверка ровно двух функций -> успешно;
   - искусственный отказ обоих провайдеров сохранил финальную безопасную ошибку -> `PASS`.
 - Production пока не переключался и продолжает работать через Sol до server-side проверки committed-кандидата.
+- Коммиты `e3cc46e`, `955c9ea`, `cbec0e9` и `ab03697` отправлены в GitHub; VPS обновлён fast-forward до `ab03697`, production SQLite WAL/SHM и локальные отчёты не затрагивались.
+- Первая server-side команда тестов использовала системный Python без `pytest`; проверка повторена рабочим `/root/amix/.venv/bin/python` из `ExecStart` сервиса.
+- Первый default-config тест на VPS прочитал production `.env` вместо кодовых defaults; тест изолирован через `Settings(_env_file=None)`, после чего локальный и финальный серверный полный прогон дали `156 passed`.
+- Перед переключением реальный принудительный failover на VPS успешно вызвал Sol: HTTP 200, `gpt-5.6-sol`, корректный адрес AMIX, общая latency 5 293 мс.
+- Создана защищённая rollback-копия `.env`; конфигурация обновлена атомарно и оба процесса подтвердили:
+  - primary `antigravity` / `gemini-3.7-flash-low` / `low`;
+  - connect/read/attempts/total budget -> `5/15/3/90`;
+  - резерв `kaigo` / `gpt-5.6-sol` / `low`.
+- Живой smoke после restart попал в фактический HTTP 429 Antigravity и подтвердил production failover:
+  - вопрос об адресе: три primary-ошибки, успешный ответ Sol за 29 312 мс;
+  - вопрос по коду 770: три primary-ошибки, Sol вернул реальный `search_products` за 30 113 мс;
+  - клиентский аварийный текст не использовался.
+- Последние восемь audit-записей корректно показывают две последовательности `3 x antigravity/http_429 -> kaigo/HTTP 200`, то есть исправлена фактическая подпись резервного провайдера.
+- Финальный production-контроль: `amix-api.service` и `amix-telegram-demo.service` -> `active`; внутренние `/health` и `/ready`, внешний `/health` -> HTTP 200; свежих systemd warning/error после restart нет.
