@@ -2,11 +2,12 @@
 
 ## Update 2026-08-28 (Production Response Quality Verification)
 
-- Status: prompt correction verified locally; production retest in progress.
+- Status: second generalized prompt correction verified locally; deployment and final production retest are in progress.
 - Scope: validate real Antigravity/fallback answers for company information, quantity availability, technical handoff and order intake without touching Jivo or production dialog history.
 - Initial findings: tools and factual grounding were correct, but standalone product questions sometimes triggered unsolicited order intake, and a direct company question included unrelated information.
-- Correction: add one generalized boundary between consultation and order intake; do not add unrelated facts or continue the dialog unless clarification is required or the client explicitly started an order.
-- Local verification: failing-first prompt invariant, focused prompt/LLM suite `44 passed`, full suite `158 passed`, compileall, diff check and exact two-tool assertion passed.
+- First production retest: order collection, final confirmation and handoff worked, but the model still started delivery questions after a standalone quantity check and mixed schedule into an address answer.
+- Correction: make consultation the default mode until the client explicitly starts an order; quantity alone cannot switch modes; company-reference answers must stay within the requested fact group.
+- Local verification: both new prompt invariants failed before the correction and passed after it; full suite `159 passed`, compileall and diff check passed.
 - Remaining: deploy the prompt-only change, rerun the failed live scenarios on a temporary production SQLite snapshot, inspect answers manually, then verify services and health.
 
 ## Update 2026-08-28 (Fast Antigravity With Two-Level Failover)

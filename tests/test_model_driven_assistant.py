@@ -211,6 +211,16 @@ def test_prompt_keeps_standalone_consultation_separate_from_order_intake() -> No
     assert "самостоятельный вопрос о товаре не означает намерение оформить заказ" in prompt
     assert "не начинай сбор заказа" in prompt
     assert "не добавляй сведения, о которых клиент не спрашивал" in prompt
+    assert "по умолчанию веди консультацию" in prompt
+    assert "названное количество само по себе не означает заказ" in prompt
+    assert "ответь по наличию и остановись" in prompt
+
+
+def test_prompt_limits_company_answers_to_the_requested_fact_group() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+
+    assert "отвечай только на запрошенную группу сведений" in prompt
+    assert "не смешивай разные группы справочных фактов" in prompt
 
 
 def test_prompt_keeps_each_unfinished_order_turn_actionable() -> None:
