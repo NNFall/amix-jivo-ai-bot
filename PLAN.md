@@ -1,5 +1,16 @@
 # PLAN
 
+## Update 2026-08-28 (Recurring Provider Outage Recovery)
+
+- Status: completed and verified in production on the already supported direct Google AI Studio provider.
+- Incident: the latest failed Jivo turn on 2026-08-27 exhausted three Antigravity attempts through read timeouts, then exhausted three Kaigo Sol attempts with HTTP 502 responses; the customer received the safe provider-delay reply.
+- Scope check: Jivo ingestion, SQLite persistence, both systemd services, public/internal health endpoints and automatic XML imports remained healthy; the failure was isolated to both external LLM providers.
+- Recovery: all configured providers were probed from the VPS without exposing keys; Antigravity and Sol returned HTTP 502 while direct Google completed successfully. A protected rollback copy was retained, `LLM_PROVIDER` was atomically switched to `google_ai_studio`, and both services were restarted with the intended provider/model loaded.
+- Live verification: a direct production-configured response completed in 1.28 seconds; an isolated copy of production SQLite reproduced the failed customer dialog, completed `Gemini -> search_products -> Gemini`, and recorded three successful model calls at 1.24-1.59 seconds without touching Jivo or production dialog rows.
+- Final verification: local and VPS suites both passed `156` tests; compile/diff and exact two-tool checks passed; both services are active, all three health/readiness probes return HTTP 200, fresh journals contain no warnings, and production runtime artifacts remain preserved.
+- Residual operations risk: the VPS root filesystem is at 91% usage with 2.7 GB free. This did not cause the incident, but disk cleanup should be scheduled separately before it becomes a service risk.
+- Architecture boundary: do not add keyword routing, hidden order state or additional model tools; keep exactly `search_products` and `handoff_to_manager`.
+
 ## Update 2026-08-17 (Antigravity Primary With Sol Failover)
 
 - Status: completed, independently reviewed, deployed and verified in production.
