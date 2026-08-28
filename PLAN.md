@@ -2,13 +2,14 @@
 
 ## Update 2026-08-28 (Production Response Quality Verification)
 
-- Status: second generalized prompt correction verified locally; deployment and final production retest are in progress.
+- Status: completed, deployed and verified on production configuration.
 - Scope: validate real Antigravity/fallback answers for company information, quantity availability, technical handoff and order intake without touching Jivo or production dialog history.
 - Initial findings: tools and factual grounding were correct, but standalone product questions sometimes triggered unsolicited order intake, and a direct company question included unrelated information.
 - First production retest: order collection, final confirmation and handoff worked, but the model still started delivery questions after a standalone quantity check and mixed schedule into an address answer.
 - Correction: make consultation the default mode until the client explicitly starts an order; quantity alone cannot switch modes; company-reference answers must stay within the requested fact group.
 - Local verification: both new prompt invariants failed before the correction and passed after it; full suite `159 passed`, compileall and diff check passed.
-- Remaining: deploy the prompt-only change, rerun the failed live scenarios on a temporary production SQLite snapshot, inspect answers manually, then verify services and health.
+- Final live evidence: standalone availability now ends after confirming the requested quantity; explicit order intent still starts order collection and product checks. The address answer remained factually correct but also included the accurate opening hours, which is accepted as harmless natural context rather than adding another restrictive rule.
+- Provider note: all final content turns completed through direct `gemini-3.1-flash-lite` because Antigravity returned 429/502 and Codex returned 400 during the isolated retest; the three-level failover kept the customer flow working, but primary-provider stability remains an external operational risk.
 
 ## Update 2026-08-28 (Fast Antigravity With Two-Level Failover)
 
