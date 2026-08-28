@@ -188,7 +188,24 @@ class OpenAIService:
             fallback_turn.model = self.kaigo_model
             fallback_turn.fallback_from_provider = "antigravity"
             fallback_turn.latency_ms = self._latency_ms(started_at)
-            return fallback_turn
+            if fallback_turn.text or fallback_turn.tool_calls or not self.google_ai_api_key:
+                return fallback_turn
+
+            logger.warning(
+                "Codex fallback failed with %s; falling back to direct %s",
+                fallback_turn.error_type or "provider_error",
+                self.google_ai_model,
+            )
+            direct_turn = self._run_via_google_ai_studio(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+            direct_turn.provider = "google_ai_studio"
+            direct_turn.model = self.google_ai_model
+            direct_turn.fallback_from_provider = "antigravity_and_kaigo"
+            direct_turn.latency_ms = self._latency_ms(started_at)
+            return direct_turn
         return self._run_via_openai(messages=messages, tools=tools, tool_choice=tool_choice)
 
     def _is_enabled(self) -> bool:
@@ -940,6 +957,7 @@ class OpenAIService:
         url = f"{self.kie_api_base_url}{self.kie_chat_model_path}"
         return self._run_via_openai_compatible_http(
             provider_name="KIE",
+            provider="kie",
             url=url,
             api_key=self.kie_api_key,
             messages=messages,
@@ -973,6 +991,7 @@ class OpenAIService:
         url = f"{self.google_ai_base_url}/chat/completions"
         return self._run_via_openai_compatible_http(
             provider_name="Google AI Studio",
+            provider="google_ai_studio",
             url=url,
             api_key=self.google_ai_api_key,
             messages=self._prepare_messages_for_google(messages),
@@ -1023,6 +1042,7 @@ class OpenAIService:
         self,
         *,
         provider_name: str,
+        provider: str,
         url: str,
         api_key: str,
         messages: list[dict],
@@ -1098,6 +1118,7 @@ class OpenAIService:
                 last_retryable = status_code in {429, 500, 502, 503, 504}
                 self._write_provider_audit(
                     provider_name=provider_name,
+                    provider=provider,
                     url=url,
                     payload=payload,
                     model=model,
@@ -1132,6 +1153,7 @@ class OpenAIService:
                 error_text = str(exc)
                 self._write_provider_audit(
                     provider_name=provider_name,
+                    provider=provider,
                     url=url,
                     payload=payload,
                     model=model,
@@ -1164,6 +1186,7 @@ class OpenAIService:
                 logger.exception("%s request failed", provider_name)
                 self._write_provider_audit(
                     provider_name=provider_name,
+                    provider=provider,
                     url=url,
                     payload=payload,
                     model=model,
@@ -1184,6 +1207,7 @@ class OpenAIService:
                 last_error_type, last_retryable = provider_error
                 self._write_provider_audit(
                     provider_name=provider_name,
+                    provider=provider,
                     url=url,
                     payload=payload,
                     model=model,
@@ -1220,6 +1244,7 @@ class OpenAIService:
                 last_retryable = True
                 self._write_provider_audit(
                     provider_name=provider_name,
+                    provider=provider,
                     url=url,
                     payload=payload,
                     model=model,
@@ -1250,7 +1275,7 @@ class OpenAIService:
                 return LLMTurnResult(text=None, tool_calls=[], error_type=last_error_type, retryable=last_retryable)
             usage = extract_usage_stats(data)
             cost = estimate_cost(
-                provider=self.provider,
+                provider=provider,
                 model=model,
                 usage=usage,
                 usd_to_rub=self.llm_cost_usd_to_rub,
@@ -1258,6 +1283,7 @@ class OpenAIService:
             latency_ms = self._latency_ms(attempt_started_at)
             self._write_provider_audit(
                 provider_name=provider_name,
+                provider=provider,
                 url=url,
                 payload=payload,
                 model=model,

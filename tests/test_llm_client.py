@@ -442,6 +442,88 @@ def test_antigravity_falls_back_to_sol_after_three_502_attempts(
     assert audit["entries"][-1]["provider"] == "kaigo"
 
 
+def test_antigravity_falls_back_to_direct_gemini_after_sol_failure(
+    monkeypatch,
+    isolated_app_env,
+    tmp_path,
+) -> None:
+    collector: dict = {}
+    audit_path = tmp_path / "three_provider_failover_audit.json"
+    _configure_antigravity(monkeypatch)
+    monkeypatch.setenv("ANTIGRAVITY_RETRY_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("KAIGO_MIN_REQUEST_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-google-key")
+    monkeypatch.setenv(
+        "GOOGLE_AI_BASE_URL",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+    )
+    monkeypatch.setenv("GOOGLE_AI_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("GOOGLE_AI_RETRY_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("GOOGLE_AI_MIN_REQUEST_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("LLM_AUDIT_LOG_ENABLED", "true")
+    monkeypatch.setenv("LLM_AUDIT_LOG_PATH", str(audit_path))
+    get_settings.cache_clear()
+    antigravity_url = "https://kaigo.space/antigravity-api/v1/respond"
+    kaigo_url = "https://kaigo.space/codex-api/v1/respond"
+    google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    responses_by_url = {
+        antigravity_url: [
+            DummyKaigoResponse(
+                "bad gateway",
+                status_code=502,
+                response_json={"error": {"message": "Bad Gateway"}},
+                headers={"Retry-After": "0"},
+            )
+            for _ in range(3)
+        ],
+        kaigo_url: [
+            DummyKaigoResponse(
+                "codex unavailable",
+                status_code=502,
+                response_json={
+                    "error": {
+                        "code": "codex_unavailable",
+                        "message": "Codex did not return a usable answer",
+                    }
+                },
+            )
+        ],
+        google_url: [DummyKieResponse()],
+    }
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda timeout: DummyProviderRouterClient(collector, responses_by_url),
+    )
+
+    turn = OpenAIService(get_settings()).run_messages(
+        messages=[
+            {"role": "system", "content": "Инструкция AMIX"},
+            {"role": "user", "content": "Проверьте код 770"},
+        ],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert [request["url"] for request in collector["requests"]] == [
+        antigravity_url,
+        antigravity_url,
+        antigravity_url,
+        kaigo_url,
+        google_url,
+    ]
+    assert turn.text == "Тестовый ответ от KIE"
+    assert turn.tool_calls == []
+    assert turn.error_type is None
+    assert turn.provider == "google_ai_studio"
+    assert turn.model == "gemini-3.1-flash-lite"
+    assert turn.fallback_from_provider == "antigravity_and_kaigo"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["entries"][-1]["provider"] == "google_ai_studio"
+
+
 def test_antigravity_parses_native_handoff_tool_call(monkeypatch, isolated_app_env) -> None:
     collector: dict = {}
     _configure_antigravity(monkeypatch)
@@ -968,6 +1050,7 @@ def test_antigravity_default_timeout_budget_keeps_three_attempts_bounded(monkeyp
     monkeypatch.delenv("ANTIGRAVITY_RETRY_TOTAL_TIMEOUT_SECONDS", raising=False)
     settings = Settings(_env_file=None)
 
+    assert settings.antigravity_model == "gemini-3.5-flash-low"
     assert settings.antigravity_http_connect_timeout_seconds == 5
     assert settings.antigravity_http_read_timeout_seconds == 15
     assert settings.antigravity_retry_total_timeout_seconds == 90

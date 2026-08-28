@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     kaigo_min_request_interval_seconds: float = 6.2
     antigravity_api_key: str | None = None
     antigravity_api_url: str = "https://kaigo.space/antigravity-api/v1/respond"
-    antigravity_model: str = "gemini-3.7-flash-low"
+    antigravity_model: str = "gemini-3.5-flash-low"
     antigravity_reasoning_effort: str = "low"
     antigravity_native_tools: str = "none"
     antigravity_http_connect_timeout_seconds: int = 5

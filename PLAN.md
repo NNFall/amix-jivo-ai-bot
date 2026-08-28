@@ -1,5 +1,16 @@
 # PLAN
 
+## Update 2026-08-28 (Fast Antigravity With Two-Level Failover)
+
+- Status: local implementation verified; production rollout and live verification in progress.
+- Goal: restore the fast Antigravity integration on a currently working Flash-low alias while retaining Codex Sol as the first fallback and direct Google AI Studio as the final safety fallback.
+- Model decision: use `gemini-3.5-flash-low`; its real `search_products` turn completed in 1.61-2.41 seconds, while `gemini-3.6-flash-low` took 22.46-43.91 seconds for the same turn and `gemini-3.7-flash-low` returned HTTP 429/502.
+- Provider evidence: the current Antigravity wrapper returns HTTP 502 on the final turn after a tool result for both 3.5 and 3.6; both Codex Luna and Sol return HTTP 502 `codex_unavailable`; direct `gemini-3.1-flash-lite` remains available and completed the control request in 1.24 seconds.
+- Required chain: Antigravity receives the same complete history and exactly two AMIX tools; after bounded primary failure, Codex receives the same history/tools through the existing protocol; after Codex failure, direct Gemini receives the same history/tools and must produce the final answer.
+- Safety: preserve the current direct-Gemini production rollback, do not add any model tool, keyword router or hidden dialog state, and do not switch services until automated tests plus isolated server function-calling checks pass.
+- Local verification: failing-first provider-chain and default-model tests are green; focused suite `44 passed`, full suite `157 passed`, compileall, diff check and exact two-tool assertion passed.
+- Remaining verification: server full suite, production-configured isolated dialog on a temporary SQLite copy, loaded process config, health/readiness, provider audit and fresh journals.
+
 ## Update 2026-08-28 (Recurring Provider Outage Recovery)
 
 - Status: completed and verified in production on the already supported direct Google AI Studio provider.
