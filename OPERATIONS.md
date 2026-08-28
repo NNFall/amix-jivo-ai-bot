@@ -2665,3 +2665,10 @@
   - production сразу возвращён на ранее проверенный `google_ai_studio`, оба сервиса и публичный health остались доступны.
 - Сырой ответ `gemini-3.5-flash-low` подтвердил, что Antigravity возвращает непустой `thought_signature` для вызова функции, но адаптер не переносил это поле в `ToolCall`.
 - Добавлен failing-first regression-тест сохранения подписи; после минимального исправления подпись проходит через существующий `assistant.tool_calls` history format, связанный тест и полный набор снова дают `2 passed` и `157 passed` соответственно.
+- Финальный production rollout:
+  - исправление отправлено коммитом `66b3a9c`, VPS обновлён fast-forward без удаления SQLite WAL/SHM и сохранённых отчётов;
+  - серверный полный `pytest` -> `157 passed`, `compileall` и `git diff --check` -> успешно;
+  - создана дополнительная защищённая rollback-копия `.env`, затем оба процесса загружены с primary `antigravity` / `gemini-3.5-flash-low`, первым fallback `kaigo` / `gpt-5.6-sol` и финальным `google_ai_studio` / `gemini-3.1-flash-lite`;
+  - изолированный товарный диалог на временной копии SQLite вызвал `search_products`; первый model-turn зафиксирован как `antigravity` за 1 566 мс, финальный как `google_ai_studio` со статусом `ok_fallback_from_antigravity_and_kaigo`; клиентский ответ получен, временные файлы удалены;
+  - полное время товарного smoke составило 61.9 секунды из-за трёх retry Antigravity и текущего HTTP 502 Codex; простой вопрос об адресе основной Antigravity обработал без fallback за 7.44 секунды;
+  - `amix-api.service` и `amix-telegram-demo.service` активны; внутренние `/health` и `/ready`, публичный `/health` -> HTTP 200; warning/error в journal за финальный интервал отсутствуют.

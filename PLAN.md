@@ -2,7 +2,7 @@
 
 ## Update 2026-08-28 (Fast Antigravity With Two-Level Failover)
 
-- Status: local implementation verified; production rollout and live verification in progress.
+- Status: completed and verified in production.
 - Goal: restore the fast Antigravity integration on a currently working Flash-low alias while retaining Codex Sol as the first fallback and direct Google AI Studio as the final safety fallback.
 - Model decision: use `gemini-3.5-flash-low`; its real `search_products` turn completed in 1.61-2.41 seconds, while `gemini-3.6-flash-low` took 22.46-43.91 seconds for the same turn and `gemini-3.7-flash-low` returned HTTP 429/502.
 - Provider evidence: the current Antigravity wrapper returns HTTP 502 on the final turn after a tool result for both 3.5 and 3.6; both Codex Luna and Sol return HTTP 502 `codex_unavailable`; direct `gemini-3.1-flash-lite` remains available and completed the control request in 1.24 seconds.
@@ -10,7 +10,7 @@
 - Safety: preserve the current direct-Gemini production rollback, do not add any model tool, keyword router or hidden dialog state, and do not switch services until automated tests plus isolated server function-calling checks pass.
 - Local verification: failing-first provider-chain and default-model tests are green; focused suite `44 passed`, full suite `157 passed`, compileall, diff check and exact two-tool assertion passed.
 - Isolated rollout finding: the first server smoke exposed that the Antigravity adapter discarded the Gemini `thought_signature` attached to a tool call, so the final direct-Gemini fallback rejected cross-provider history with HTTP 400. Production was immediately returned to direct Gemini; a failing-first regression test now verifies that the signature survives parsing and history serialization.
-- Remaining verification: server full suite, production-configured isolated dialog on a temporary SQLite copy, loaded process config, health/readiness, provider audit and fresh journals.
+- Production verification: VPS full suite `157 passed`; isolated product dialog called `search_products`, recorded `antigravity` followed by `google_ai_studio` with `ok_fallback_from_antigravity_and_kaigo`, and returned a customer answer; a separate address turn completed on primary Antigravity without fallback; both services, internal health/readiness and public health are green.
 
 ## Update 2026-08-28 (Recurring Provider Outage Recovery)
 
