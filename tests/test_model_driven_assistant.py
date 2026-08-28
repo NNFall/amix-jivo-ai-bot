@@ -205,6 +205,14 @@ def test_prompt_requires_natural_varied_conversation_without_scripted_fillers() 
     assert "не повторяй одну и ту же связку" in prompt
 
 
+def test_prompt_keeps_standalone_consultation_separate_from_order_intake() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+
+    assert "самостоятельный вопрос о товаре не означает намерение оформить заказ" in prompt
+    assert "не начинай сбор заказа" in prompt
+    assert "не добавляй сведения, о которых клиент не спрашивал" in prompt
+
+
 def test_prompt_keeps_each_unfinished_order_turn_actionable() -> None:
     prompt = SYSTEM_PROMPT.lower()
 

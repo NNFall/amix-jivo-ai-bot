@@ -1,5 +1,14 @@
 # PLAN
 
+## Update 2026-08-28 (Production Response Quality Verification)
+
+- Status: prompt correction verified locally; production retest in progress.
+- Scope: validate real Antigravity/fallback answers for company information, quantity availability, technical handoff and order intake without touching Jivo or production dialog history.
+- Initial findings: tools and factual grounding were correct, but standalone product questions sometimes triggered unsolicited order intake, and a direct company question included unrelated information.
+- Correction: add one generalized boundary between consultation and order intake; do not add unrelated facts or continue the dialog unless clarification is required or the client explicitly started an order.
+- Local verification: failing-first prompt invariant, focused prompt/LLM suite `44 passed`, full suite `158 passed`, compileall, diff check and exact two-tool assertion passed.
+- Remaining: deploy the prompt-only change, rerun the failed live scenarios on a temporary production SQLite snapshot, inspect answers manually, then verify services and health.
+
 ## Update 2026-08-28 (Fast Antigravity With Two-Level Failover)
 
 - Status: completed and verified in production.
