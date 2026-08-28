@@ -280,6 +280,7 @@ def test_antigravity_parses_native_search_products_tool_call(monkeypatch, isolat
                 {
                     "id": "call-antigravity-1",
                     "type": "function",
+                    "thought_signature": "antigravity-gemini-signature",
                     "function": {
                         "name": "search_products",
                         "arguments": {
@@ -303,6 +304,7 @@ def test_antigravity_parses_native_search_products_tool_call(monkeypatch, isolat
     assert len(turn.tool_calls) == 1
     assert turn.tool_calls[0].call_id == "call-antigravity-1"
     assert turn.tool_calls[0].name == "search_products"
+    assert turn.tool_calls[0].thought_signature == "antigravity-gemini-signature"
     assert turn.tool_calls[0].arguments == {
         "queries": [{"query": "770", "requested_quantity": 2}]
     }

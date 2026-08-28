@@ -2659,3 +2659,9 @@
   - связанные LLM/assistant tests -> `44 passed`;
   - полный `python -m pytest -q` -> `157 passed`;
   - `python -m compileall -q .`, `git diff --check` и проверка ровно двух функций -> успешно.
+- Первый изолированный smoke после загрузки конфигурации обнаружил ошибку на реальной межпровайдерной границе:
+  - Antigravity корректно вызвал `search_products`;
+  - после его HTTP 502 и HTTP 502 Codex direct Gemini отклонил историю функции с HTTP 400;
+  - production сразу возвращён на ранее проверенный `google_ai_studio`, оба сервиса и публичный health остались доступны.
+- Сырой ответ `gemini-3.5-flash-low` подтвердил, что Antigravity возвращает непустой `thought_signature` для вызова функции, но адаптер не переносил это поле в `ToolCall`.
+- Добавлен failing-first regression-тест сохранения подписи; после минимального исправления подпись проходит через существующий `assistant.tool_calls` history format, связанный тест и полный набор снова дают `2 passed` и `157 passed` соответственно.

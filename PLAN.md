@@ -9,6 +9,7 @@
 - Required chain: Antigravity receives the same complete history and exactly two AMIX tools; after bounded primary failure, Codex receives the same history/tools through the existing protocol; after Codex failure, direct Gemini receives the same history/tools and must produce the final answer.
 - Safety: preserve the current direct-Gemini production rollback, do not add any model tool, keyword router or hidden dialog state, and do not switch services until automated tests plus isolated server function-calling checks pass.
 - Local verification: failing-first provider-chain and default-model tests are green; focused suite `44 passed`, full suite `157 passed`, compileall, diff check and exact two-tool assertion passed.
+- Isolated rollout finding: the first server smoke exposed that the Antigravity adapter discarded the Gemini `thought_signature` attached to a tool call, so the final direct-Gemini fallback rejected cross-provider history with HTTP 400. Production was immediately returned to direct Gemini; a failing-first regression test now verifies that the signature survives parsing and history serialization.
 - Remaining verification: server full suite, production-configured isolated dialog on a temporary SQLite copy, loaded process config, health/readiness, provider audit and fresh journals.
 
 ## Update 2026-08-28 (Recurring Provider Outage Recovery)

@@ -497,6 +497,9 @@ class OpenAIService:
                     name=name,
                     arguments=arguments,
                     call_id=str(raw_call.get("id") or "").strip() or None,
+                    thought_signature=(
+                        str(raw_call.get("thought_signature") or "").strip() or None
+                    ),
                 )
             )
         return result, None
