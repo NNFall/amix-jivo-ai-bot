@@ -34,6 +34,7 @@ PROVIDER_DELAY_TEXT = (
     "Сейчас автоматическая проверка задерживается. Попробуйте, пожалуйста, ещё раз чуть позже "
     "или позовите менеджера."
 )
+PROVIDER_HANDOFF_TEXT = "Сейчас не получается автоматически проверить данные. Передаю ваш вопрос менеджеру, он поможет вам."
 HANDOFF_TEXT = "Передаю вопрос менеджеру. Он подключится к диалогу и поможет вам."
 HANDOFF_ALREADY_REQUESTED_TEXT = "Менеджер уже вызван, он подключится к диалогу."
 MAX_MODEL_ROUNDS = 5
@@ -142,13 +143,16 @@ class AssistantService:
             return self._superseded_reply()
 
         if not self.openai_service.enabled:
-            return self._store_text_reply(
+            reply = self._store_text_reply(
                 session,
                 external_chat_id=external_chat_id,
                 outbound_event_id=outbound_event_id,
-                text=PROVIDER_DELAY_TEXT,
+                text=PROVIDER_HANDOFF_TEXT if handoff_mode == "jivo" else PROVIDER_DELAY_TEXT,
                 source="llm_disabled",
             )
+            if handoff_mode == "jivo":
+                reply.handoff_reason = "provider_unavailable"
+            return reply
 
         return self._handle_model_turns(
             session,
@@ -204,6 +208,23 @@ class AssistantService:
                 )
 
             if not turn.tool_calls:
+                if not turn.text and handoff_mode == "jivo":
+                    reply = self._store_text_reply(
+                        session,
+                        external_chat_id=external_chat_id,
+                        outbound_event_id=outbound_event_id,
+                        text=PROVIDER_HANDOFF_TEXT,
+                        source="llm_provider_handoff",
+                        extra_payload={"provider_error": turn.error_type},
+                    )
+                    reply.handoff_reason = "provider_unavailable"
+                    if self._turn_is_stale(is_turn_current):
+                        return self._discard_model_turn_and_supersede(
+                            session,
+                            external_chat_id=external_chat_id,
+                            turn_id=outbound_event_id,
+                        )
+                    return reply
                 text = (turn.text or PROVIDER_DELAY_TEXT).strip()
                 reply = self._store_text_reply(
                     session,

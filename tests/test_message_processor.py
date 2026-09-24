@@ -2,11 +2,12 @@ import pytest
 
 from core.assistant_service import AssistantReply, AssistantService
 from core.handoff_service import HandoffService
-from core.message_processor import MessageProcessor
+from core.message_processor import MessageProcessor, PROVIDER_INVITE_FAILED_TEXT
 from database.db import session_scope
 from database.models import Chat, Customer, Handoff, JivoEvent, Message, ProcessingError
 from database.repositories import append_message, get_or_create_chat, get_or_create_customer, mark_chat_status
 from jivo.schemas import JivoIncomingEvent
+from llm.openai_client import LLMTurnResult
 
 
 class _CurrentHandle:
@@ -155,6 +156,14 @@ class _AgentJoinedDuringInviteJivo(_Jivo):
         return result
 
 
+class _AgentUnavailableDuringInviteJivo(_Jivo):
+    def invite_agent(self, **kwargs) -> bool:
+        result = super().invite_agent(**kwargs)
+        with session_scope() as session:
+            mark_chat_status(session, "handoff-chat", "waiting_contact")
+        return result
+
+
 class _InviteAcceptedSendRejectedJivo(_Jivo):
     def send_text_message(self, **kwargs) -> bool:
         self.calls.append("send")
@@ -171,6 +180,23 @@ class _AcceptingSendJivo(_Jivo):
     def send_text_message(self, **kwargs) -> bool:
         self.calls.append("send")
         return True
+
+
+class _RejectedAndCancelledInviteJivo(_AcceptingSendJivo):
+    def __init__(self, calls: list[str], handle: _MutableHandle) -> None:
+        super().__init__(calls, invite_result=False)
+        self.handle = handle
+
+    def invite_agent(self, **kwargs) -> bool:
+        result = super().invite_agent(**kwargs)
+        self.handle.current = False
+        return result
+
+
+class _ProviderUnavailableAssistant:
+    @staticmethod
+    def handle_pending_client_messages(*args, **kwargs) -> AssistantReply:
+        return AssistantReply(text="Передаю вопрос менеджеру.", handoff_reason="provider_unavailable")
 
 
 class _ReplyingAssistant:
@@ -386,6 +412,85 @@ def test_failed_manager_invite_discards_generated_turn_history(isolated_app_env)
     with session_scope() as session:
         assert session.query(Message).count() == 0
         assert session.query(Chat).one().status == "active"
+
+
+def test_provider_failure_invite_rejected_sends_honest_fallback(isolated_app_env) -> None:
+    _create_chat()
+    event_record_id = _create_event_record()
+    calls: list[str] = []
+    event = _event()
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None, tool_calls=[], error_type="http_503"
+    )
+    with session_scope() as session:
+        service.record_client_message(
+            session,
+            external_chat_id=event.chat_id,
+            external_client_id=event.client_id,
+            customer_name="Клиент",
+            customer_text=event.message.text,
+            inbound_event_id=event.id,
+        )
+
+    processor = _processor(calls)
+    processor.assistant_service = service
+    processor.jivo_client = _AcceptingSendJivo(calls, invite_result=False)
+    processor._deliver_bot_reply = MessageProcessor._deliver_bot_reply.__get__(processor)
+    processor._process_pending_client_turn(
+        handle=_CurrentHandle(), event=event, event_record_id=event_record_id
+    )
+
+    assert calls == ["invite", "send"]
+    with session_scope() as session:
+        assert session.query(Chat).one().status == "active"
+        assert session.query(Handoff).count() == 0
+        assert session.get(JivoEvent, event_record_id).status == "processed"
+        assert session.query(Message).filter(Message.sender_role == "bot").one().text == PROVIDER_INVITE_FAILED_TEXT
+
+
+def test_provider_invite_failure_does_not_send_after_turn_is_cancelled(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    handle = _MutableHandle()
+    processor = _processor(calls)
+    processor.assistant_service = _ProviderUnavailableAssistant()
+    processor.jivo_client = _RejectedAndCancelledInviteJivo(calls, handle)
+    processor._deliver_bot_reply = MessageProcessor._deliver_bot_reply.__get__(processor)
+
+    processor._process_pending_client_turn(handle=handle, event=_event())
+
+    assert calls == ["invite"]
+    with session_scope() as session:
+        assert session.query(Message).filter(Message.sender_role == "bot").count() == 0
+
+
+def test_provider_invite_failure_keeps_agent_unavailable_state(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = _processor(calls)
+    processor.assistant_service = _ProviderUnavailableAssistant()
+    processor.jivo_client = _AgentUnavailableDuringInviteJivo(calls, invite_result=False)
+
+    processor._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
+
+    assert calls == ["invite"]
+    with session_scope() as session:
+        assert session.query(Chat).one().status == "waiting_contact"
+
+
+def test_agent_unavailable_during_invite_does_not_restore_handoff_state(isolated_app_env) -> None:
+    _create_chat()
+    calls: list[str] = []
+    processor = _processor(calls)
+    processor.jivo_client = _AgentUnavailableDuringInviteJivo(calls)
+
+    processor._process_pending_client_turn(handle=_CurrentHandle(), event=_event())
+
+    assert calls == ["invite"]
+    with session_scope() as session:
+        assert session.query(Chat).one().status == "waiting_contact"
 
 
 def test_turn_that_becomes_stale_after_generation_is_rolled_back(isolated_app_env) -> None:

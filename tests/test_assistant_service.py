@@ -33,6 +33,54 @@ def test_disabled_llm_returns_safe_service_message(isolated_app_env) -> None:
     assert [message.sender_role for message in messages] == ["client", "bot"]
 
 
+def test_disabled_llm_requests_jivo_handoff(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = False
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="jivo:llm-disabled",
+            external_client_id="jivo-user:llm-disabled",
+            customer_name="Клиент",
+            customer_text="Есть вопрос",
+            inbound_event_id="jivo-llm-disabled-in",
+            outbound_event_id="jivo-llm-disabled-out",
+            handoff_mode="jivo",
+        )
+
+    assert reply.handoff_reason == "provider_unavailable"
+    assert "менеджеру" in reply.text
+
+
+def test_exhausted_providers_request_real_jivo_handoff(isolated_app_env) -> None:
+    service = AssistantService()
+    service.openai_service.enabled = True
+    service.openai_service.run_messages = lambda **kwargs: LLMTurnResult(
+        text=None, tool_calls=[], error_type="http_503"
+    )
+
+    with session_scope() as session:
+        reply = service.handle_client_message(
+            session,
+            external_chat_id="jivo:providers-down",
+            external_client_id="jivo-user:providers-down",
+            customer_name="Клиент",
+            customer_text="Какая цена?",
+            inbound_event_id="providers-down-in",
+            outbound_event_id="providers-down-out",
+            handoff_mode="jivo",
+        )
+        stored = session.query(Message).filter(Message.sender_role == "bot").one()
+
+    assert reply.handoff_reason == "provider_unavailable"
+    assert "менеджеру" in reply.text
+    assert stored.payload["provider_error"] == "http_503"
+    with session_scope() as session:
+        assert session.query(Chat).one().status == "active"
+        assert session.query(Handoff).count() == 0
+
+
 def test_two_pending_user_messages_are_sent_as_two_history_items(isolated_app_env) -> None:
     service = AssistantService()
     service.openai_service.enabled = True

@@ -609,8 +609,6 @@ def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, is
     assert "Главная инструкция AMIX" in request["json"]["system_prompt"]
     assert "search_products" in request["json"]["system_prompt"]
     assert "handoff_to_manager" in request["json"]["system_prompt"]
-    assert "Сначала примени правила основного системного промпта" in request["json"]["system_prompt"]
-    assert "Не заменяй обязательную функцию уточняющим вопросом" in request["json"]["system_prompt"]
     assert "единственный допустимый ответ — tool_call search_products" in request["json"]["system_prompt"]
     assert "обязательный handoff всегда важнее поиска" in request["json"]["system_prompt"]
     assert '"role": "assistant"' in request["json"]["prompt"]
@@ -620,6 +618,21 @@ def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, is
     assert turn.tool_calls == []
     assert turn.usage == {"prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940}
     assert turn.latency_ms == 1234
+
+
+def test_kaigo_real_prompt_stays_within_provider_system_limit() -> None:
+    system_prompt, prompt = OpenAIService._prepare_kaigo_prompt(
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "Какая корпоративная цена у этого товара?"},
+        ],
+        tools=OPENAI_TOOLS,
+    )
+
+    assert len(system_prompt) <= 16000
+    assert len(prompt) <= 64000
+    assert "ТЕХНИЧЕСКИЙ ПРОТОКОЛ ОТВЕТА" in system_prompt
+    assert "Какая корпоративная цена" in prompt
 
 
 def test_kaigo_parses_search_products_tool_call(monkeypatch, isolated_app_env) -> None:

@@ -1,5 +1,17 @@
 # PLAN
 
+## Update 2026-09-24 (Jivo automatic-check incident)
+
+- Status: root cause confirmed; code and 170 local tests complete; independent review incorporated; production rollout pending.
+- Reconstruct the reported Jivo dialog from stored messages, event status, provider call records and server logs; verify the product and corporate-price facts.
+- Identify the failing component and the duration of each fallback step before changing code or provider configuration.
+- Remove redundant wording from the Kaigo tool protocol so the complete system instruction remains high-priority and under its 16,000-character limit without shortening the AMIX instruction or dialog history.
+- If all configured providers fail, hand the Jivo conversation to a manager through the existing invite path; if Jivo rejects the invite, send an honest fallback instead of a false handoff promise.
+- Run relevant tests and isolated live provider checks, then verify the public service and record results in OPERATIONS.md.
+- Open risk: external LLM providers may fail independently; health endpoints alone do not prove successful dialog turns.
+- XML scope: 5,235 verified stale automatic snapshots (16,924,690,191 bytes) removed from the VPS; preserve fresh and manual files, and enforce a 48-hour/three-snapshot floor plus the latest and largest available successful snapshots after scheduled refreshes.
+- Separate existing risk: a structurally valid but incomplete feed could still trigger catalog deletion; assess transaction/completeness safeguards separately from this retention and provider incident.
+
 ## Update 2026-08-28 (Production Response Quality Verification)
 
 - Status: completed, deployed and verified on production configuration.

@@ -33,6 +33,10 @@ AGENT_UNAVAILABLE_TEXT = (
     "Сейчас менеджер недоступен. Можете оставить телефон или e-mail, "
     "и коллеги свяжутся с вами позже."
 )
+PROVIDER_INVITE_FAILED_TEXT = (
+    "Сейчас не получается проверить данные автоматически и подключить менеджера. "
+    "Попробуйте, пожалуйста, немного позже."
+)
 
 
 class MessageProcessor:
@@ -225,7 +229,7 @@ class MessageProcessor:
                 delete_generated_messages_for_turn(session, event.chat_id, f"{event.id}:bot")
                 session.expire_all()
                 chat = get_chat_by_external_id(session, event.chat_id)
-                if chat is not None and chat.status not in {"agent_joined", "closed"}:
+                if chat is not None and chat.status not in {"agent_joined", "closed", "waiting_contact"}:
                     mark_chat_status(session, event.chat_id, "active")
                 session.commit()
                 logger.exception(
@@ -233,6 +237,27 @@ class MessageProcessor:
                     event.chat_id,
                     event.id,
                 )
+                if assistant_reply.handoff_reason == "provider_unavailable":
+                    session.expire_all()
+                    chat = get_chat_by_external_id(session, event.chat_id)
+                    if chat is not None and chat.status in {"agent_joined", "closed", "waiting_contact"}:
+                        self._set_event_record_status(session, event_record_id, status="processed")
+                        return
+                    if not handle.is_current():
+                        self._set_event_record_status(session, event_record_id, status="superseded")
+                        return
+                    delivered = self._send_and_store_bot_reply(
+                        session,
+                        event,
+                        PROVIDER_INVITE_FAILED_TEXT,
+                        is_turn_current=handle.is_current,
+                    )
+                    self._set_event_record_status(
+                        session,
+                        event_record_id,
+                        status="processed" if delivered else "superseded",
+                    )
+                    return
                 raise
 
             self.handoff_service.register_handoff(
@@ -247,7 +272,7 @@ class MessageProcessor:
                 return
             session.expire_all()
             chat = get_chat_by_external_id(session, event.chat_id)
-            if chat is not None and chat.status in {"agent_joined", "closed"}:
+            if chat is not None and chat.status in {"agent_joined", "closed", "waiting_contact"}:
                 self._set_event_record_status(session, event_record_id, status="processed")
                 logger.info(
                     "Skipping Jivo handoff message for chat %s because status is %s",
@@ -338,9 +363,11 @@ class MessageProcessor:
         )
         return True
 
-    def _send_and_store_bot_reply(self, session, event: JivoIncomingEvent, text: str) -> None:
-        if not self._deliver_bot_reply(session, event=event, text=text):
-            return
+    def _send_and_store_bot_reply(
+        self, session, event: JivoIncomingEvent, text: str, is_turn_current=None
+    ) -> bool:
+        if not self._deliver_bot_reply(session, event=event, text=text, is_turn_current=is_turn_current):
+            return False
         append_message(
             session,
             external_chat_id=event.chat_id,
@@ -349,6 +376,7 @@ class MessageProcessor:
             external_event_id=f"{event.id}:bot",
             payload={"event": JivoEventType.BOT_MESSAGE, "text": text},
         )
+        return True
 
 
 def process_event_record(event_record_id: int) -> None:

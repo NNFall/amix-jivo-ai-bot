@@ -137,7 +137,7 @@ def mark_chat_handoff_requested_if_not_terminal(session, external_chat_id: str) 
         update(Chat)
         .where(
             Chat.external_chat_id == external_chat_id,
-            Chat.status.notin_({"agent_joined", "closed"}),
+            Chat.status.notin_({"agent_joined", "closed", "waiting_contact"}),
         )
         .values(status="handoff_requested")
         .execution_options(synchronize_session="fetch")
