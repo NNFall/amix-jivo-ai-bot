@@ -2,7 +2,7 @@
 
 ## Update 2026-09-24 (Jivo automatic-check incident)
 
-- Status: root cause confirmed; code and 170 local tests complete; independent review incorporated; production rollout pending.
+- Status: complete and deployed to the AMIX VPS; 170 tests passed locally and on the server, both services and health probes passed, and the first post-restart XML import completed.
 - Reconstruct the reported Jivo dialog from stored messages, event status, provider call records and server logs; verify the product and corporate-price facts.
 - Identify the failing component and the duration of each fallback step before changing code or provider configuration.
 - Remove redundant wording from the Kaigo tool protocol so the complete system instruction remains high-priority and under its 16,000-character limit without shortening the AMIX instruction or dialog history.
@@ -11,7 +11,8 @@
 - Open risk: external LLM providers may fail independently; health endpoints alone do not prove successful dialog turns.
 - XML scope: 5,235 verified stale automatic snapshots (16,924,690,191 bytes) removed from the VPS; preserve fresh and manual files, and enforce a 48-hour/three-snapshot floor plus the latest and largest available successful snapshots after scheduled refreshes.
 - Separate existing risk: a structurally valid but incomplete feed could still trigger catalog deletion; assess transaction/completeness safeguards separately from this retention and provider incident.
-- Provider follow-up: AMIX DNS still points to its original VPS; both Kaigo hostnames resolve to the new API VPS, and Codex Sol now returns HTTP 200 from AMIX. Make `kaigo.online` the canonical Codex endpoint, then verify a complete AMIX tool turn after deployment.
+- Provider follow-up: AMIX DNS still points to its original VPS; both Kaigo hostnames resolve to the new API VPS. `kaigo.online` is the configured Codex endpoint; an isolated two-step AMIX product search and corporate-price answer succeeded through Sol.
+- Remaining verification gap: do not send synthetic events into a real customer Jivo chat; the invite-failure and agent-unavailable paths are covered by integration tests, not a live customer handoff.
 
 ## Update 2026-08-28 (Production Response Quality Verification)
 
