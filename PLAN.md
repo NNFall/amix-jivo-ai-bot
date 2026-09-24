@@ -11,6 +11,7 @@
 - Open risk: external LLM providers may fail independently; health endpoints alone do not prove successful dialog turns.
 - XML scope: 5,235 verified stale automatic snapshots (16,924,690,191 bytes) removed from the VPS; preserve fresh and manual files, and enforce a 48-hour/three-snapshot floor plus the latest and largest available successful snapshots after scheduled refreshes.
 - Separate existing risk: a structurally valid but incomplete feed could still trigger catalog deletion; assess transaction/completeness safeguards separately from this retention and provider incident.
+- Provider follow-up: AMIX DNS still points to its original VPS; both Kaigo hostnames resolve to the new API VPS, and Codex Sol now returns HTTP 200 from AMIX. Make `kaigo.online` the canonical Codex endpoint, then verify a complete AMIX tool turn after deployment.
 
 ## Update 2026-08-28 (Production Response Quality Verification)
 

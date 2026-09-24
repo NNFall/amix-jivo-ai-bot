@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     google_ai_min_request_interval_seconds: float = 13.0
     google_ai_rate_limit_retry_delay_seconds: float = 65.0
     kaigo_api_key: str | None = None
-    kaigo_api_url: str = "https://kaigo.space/codex-api/v1/respond"
+    kaigo_api_url: str = "https://kaigo.online/codex-api/v1/respond"
     kaigo_model: str = "gpt-5.6-sol"
     kaigo_reasoning_effort: str = "low"
     kaigo_http_connect_timeout_seconds: int = 20

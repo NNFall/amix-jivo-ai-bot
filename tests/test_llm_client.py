@@ -165,7 +165,7 @@ class DummyProviderRouterClient:
 def _configure_kaigo(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "kaigo")
     monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
-    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.online/codex-api/v1/respond")
     monkeypatch.setenv("KAIGO_MODEL", "gpt-5.6-sol")
     monkeypatch.setenv("KAIGO_REASONING_EFFORT", "low")
     monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "2")
@@ -383,7 +383,7 @@ def test_antigravity_falls_back_to_sol_after_three_502_attempts(
     _configure_antigravity(monkeypatch)
     monkeypatch.setenv("ANTIGRAVITY_RETRY_MAX_ATTEMPTS", "3")
     monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
-    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.online/codex-api/v1/respond")
     monkeypatch.setenv("KAIGO_MODEL", "gpt-5.6-sol")
     monkeypatch.setenv("KAIGO_REASONING_EFFORT", "low")
     monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "1")
@@ -392,7 +392,7 @@ def test_antigravity_falls_back_to_sol_after_three_502_attempts(
     monkeypatch.setenv("LLM_AUDIT_LOG_PATH", str(audit_path))
     get_settings.cache_clear()
     antigravity_url = "https://kaigo.space/antigravity-api/v1/respond"
-    kaigo_url = "https://kaigo.space/codex-api/v1/respond"
+    kaigo_url = "https://kaigo.online/codex-api/v1/respond"
     responses_by_url = {
         antigravity_url: [
             DummyKaigoResponse(
@@ -454,7 +454,7 @@ def test_antigravity_falls_back_to_direct_gemini_after_sol_failure(
     _configure_antigravity(monkeypatch)
     monkeypatch.setenv("ANTIGRAVITY_RETRY_MAX_ATTEMPTS", "3")
     monkeypatch.setenv("KAIGO_API_KEY", "test-kaigo-key")
-    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.space/codex-api/v1/respond")
+    monkeypatch.setenv("KAIGO_API_URL", "https://kaigo.online/codex-api/v1/respond")
     monkeypatch.setenv("KAIGO_RETRY_MAX_ATTEMPTS", "1")
     monkeypatch.setenv("KAIGO_MIN_REQUEST_INTERVAL_SECONDS", "0")
     monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-google-key")
@@ -469,7 +469,7 @@ def test_antigravity_falls_back_to_direct_gemini_after_sol_failure(
     monkeypatch.setenv("LLM_AUDIT_LOG_PATH", str(audit_path))
     get_settings.cache_clear()
     antigravity_url = "https://kaigo.space/antigravity-api/v1/respond"
-    kaigo_url = "https://kaigo.space/codex-api/v1/respond"
+    kaigo_url = "https://kaigo.online/codex-api/v1/respond"
     google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     responses_by_url = {
         antigravity_url: [
@@ -601,7 +601,7 @@ def test_kaigo_payload_serializes_full_history_and_tool_protocol(monkeypatch, is
     )
 
     request = collector["requests"][0]
-    assert request["url"] == "https://kaigo.space/codex-api/v1/respond"
+    assert request["url"] == "https://kaigo.online/codex-api/v1/respond"
     assert request["headers"]["Authorization"] == "Bearer test-kaigo-key"
     assert request["json"]["model"] == "gpt-5.6-sol"
     assert request["json"]["reasoning_effort"] == "low"
