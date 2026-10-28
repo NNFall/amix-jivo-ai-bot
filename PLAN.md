@@ -1,5 +1,14 @@
 # PLAN
 
+## Update 2026-10-28 (Russian response language)
+
+- Status: raw provider response confirmed; general language instruction added; 170 local tests and isolated model/fallback verification passed; deployment pending.
+- Find the exact stored replies and provider/model records, inspect the complete request instructions and history, and reproduce the affected turns in isolation.
+- Strengthen general customer-language guidance while preserving product identifiers and exactly two tools; avoid word replacement lists or backend semantic routing.
+- Verify related dialog behavior with actual model calls and relevant automated checks, then deploy the scoped fix and record evidence in OPERATIONS.md.
+- Evidence: the exact reported reply came from the Antigravity response; the configured Gemini 3.5 alias was served by actual Gemini 3.6. Successful isolated replies from Gemini and Codex used Russian, including handoff text and continuation after a mixed-language history. Current Kaigo system field is 15,730 characters, below 16,000.
+- Both extra configured-chain product scenarios completed in Russian after Gemini HTTP 429/502 recovery through Codex; actual customer messages and Jivo events were not created during evaluation.
+
 ## Update 2026-09-24 (Jivo automatic-check incident)
 
 - Status: complete and deployed to the AMIX VPS; 170 tests passed locally and on the server, both services and health probes passed, and the first post-restart XML import completed.
