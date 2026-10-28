@@ -2,7 +2,7 @@
 
 ## Update 2026-10-28 (Russian response language)
 
-- Status: raw provider response confirmed; general language instruction added; 170 local tests and isolated model/fallback verification passed; deployment pending.
+- Status: completed and deployed; 170 local tests, 14 server checks, isolated model/fallback evaluation and a post-deploy API smoke passed. Both services and public/internal health are healthy.
 - Find the exact stored replies and provider/model records, inspect the complete request instructions and history, and reproduce the affected turns in isolation.
 - Strengthen general customer-language guidance while preserving product identifiers and exactly two tools; avoid word replacement lists or backend semantic routing.
 - Verify related dialog behavior with actual model calls and relevant automated checks, then deploy the scoped fix and record evidence in OPERATIONS.md.
